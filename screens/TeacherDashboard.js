@@ -1,67 +1,9 @@
 /**
- * TeacherDashboard.js
- * 
- * This is the **main dashboard for Teacher account type** in Brain Board.
- * It allows teachers to:
- *   • View, search, and manage their created games
- *   • Host, edit, or delete games
- *   • Create new games with a title prompt
- *   • Access Library, Settings, Profile, and Logout
- * 
- * What it does:
- * 1. **Header Bar**:
- *    • App logo + search (filters by title/tags)
- *    • Nav: Library, Settings, Profile dropdown
- *    • Hover effects on web
- * 
- * 2. **Welcome Section**:
- *    • Personalized greeting
- *    • "Create New Game" button → opens title modal
- * 
- * 3. **Game List**:
- *    • Displays all games where `creatorId === user.uid`
- *    • Each card shows: title, tags, # questions, description
- *    • Action buttons: **Host**, **Edit**, **Delete**
- * 
- * 4. **Create Game Flow**:
- *    • Click "Create New Game" → modal asks for title
- *    • On save → navigates to `CreateGameMenu` with `initialTitle`
- * 
- * 5. **Edit Game**:
- *    • Click "Edit" → navigates to `CreateGameMenu` with `gameId` + `gameData`
- * 
- * 6. **Delete Game**:
- *    • Click "Delete" → confirmation modal
- *    • Deletes:
- *      - All associated images from Firebase Storage
- *      - Game document from Firestore
- *    • Shows loading spinner during deletion
- *    • Removes from UI on success
- * 
- * 7. **Profile Dropdown**:
- *    • Click username → opens menu
- *    • Options: View Profile, Log Out
- *    • Positioned dynamically
- * 
- * 8. **Data Flow**:
- *    • On mount: fetches user + games via `userToken`
- *    • Listens for `route.params.newGame` → adds to list
- *    • Real-time search filtering
- * 
- * 9. **Logout**:
- *    • Firebase `signOut()`
- *    • Clears `userToken`
- *    • Resets navigation stack to Home
- * 
- * Important:
- *    • Uses **custom modals** (not Alert) for better UX
- *    • Handles image cleanup in Storage on delete
- *    • Prevents double-delete with `deletingIds` Set
- *    • Web: hover animations on all buttons
- *    • Mobile: tap-to-open menus
+ * TeacherDashboard.js - FINAL CLEAN VERSION
+ * No errors, no jiggle, beautiful sidebar
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -69,12 +11,12 @@ import {
   TouchableOpacity,
   TextInput,
   FlatList,
-  Platform,
   Modal,
   ActivityIndicator,
+  Image,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { db, auth, storage } from '../firebaseConfig';
+import { db, auth } from '../firebaseConfig';
 import {
   collection,
   query,
@@ -83,562 +25,386 @@ import {
   doc,
   getDoc,
   deleteDoc,
+  updateDoc,
+  addDoc,
 } from 'firebase/firestore';
 import { signOut } from 'firebase/auth';
-import { ref, deleteObject } from 'firebase/storage';
+import { ref as storageRef, deleteObject } from 'firebase/storage';
+import { storage } from '../firebaseConfig';
 
-/**
- * TeacherDashboard – central hub for teachers to manage their games
- * @param {object} navigation – React Navigation prop
- * @param {object} route – Route params (e.g., newGame from CreateGameMenu)
- */
 export default function TeacherDashboard({ navigation, route }) {
-  // ——————————————————————————————————————
-  // 1. STATE MANAGEMENT
-  // ——————————————————————————————————————
-  const [hoveredButton, setHoveredButton] = useState(null);           // Web hover tracking
-  const [games, setGames] = useState([]);                             // Teacher's games
-  const [searchQuery, setSearchQuery] = useState('');                 // Search input
-  const [userData, setUserData] = useState(null);                     // Firestore user doc
-  const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);  // Profile dropdown
-  const profileButtonRef = useRef(null);                              // For menu positioning
-  const [menuPosition, setMenuPosition] = useState({ x: 0, y: 0 });   // Dropdown coords
-  const [deletingIds, setDeletingIds] = useState(new Set());          // Prevent double-delete
+  const [hoveredButton, setHoveredButton] = useState(null);
+  const [myGames, setMyGames] = useState([]);
+  const [publicGames, setPublicGames] = useState([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [userData, setUserData] = useState(null);
+  const [deletingIds, setDeletingIds] = useState(new Set());
+  const [currentTab, setCurrentTab] = useState('home');
+  const [filter, setFilter] = useState('all');
 
-  // Delete confirmation modal state
-  const [deleteModal, setDeleteModal] = useState({
-    isOpen: false,
-    gameId: null,
-    gameTitle: '',
-  });
+  const [deleteModal, setDeleteModal] = useState({ isOpen: false, gameId: null, gameTitle: '' });
+  const [publishModal, setPublishModal] = useState({ isOpen: false, gameId: null, gameTitle: '', willPublish: true });
+  const [titleModal, setTitleModal] = useState({ isOpen: false, currentTitle: '', onSave: () => {} });
 
-  // Title input modal (for new game or edit)
-  const [titleModal, setTitleModal] = useState({
-    isOpen: false,
-    currentTitle: '',
-    onSave: (title) => {}, // Callback when user saves title
-  });
-
-  // ——————————————————————————————————————
-  // 2. FETCH USER DATA & GAMES (on mount)
-  // ——————————————————————————————————————
-  /**
-   * Loads user profile and all games created by this teacher
-   */
   useEffect(() => {
-    const fetchUserDataAndGames = async () => {
-      try {
-        const userToken = await AsyncStorage.getItem('userToken');
-        if (!userToken) {
-          console.error('No user token found');
-          navigation.replace('Home');
-          return;
-        }
-
-        // ——— Fetch User Data ———
-        const userDoc = await getDoc(doc(db, 'users', userToken));
-        if (userDoc.exists()) {
-          setUserData(userDoc.data());
-        }
-
-        // ——— Fetch Teacher's Games ———
-        const gamesRef = collection(db, 'games');
-        const q = query(gamesRef, where('creatorId', '==', userToken));
-        const querySnapshot = await getDocs(q);
-        const fetchedGames = querySnapshot.docs.map((d) => ({
-          id: d.id,
-          ...d.data(),
-        }));
-        setGames(fetchedGames);
-      } catch (error) {
-        console.error('Error fetching user data or games:', error);
+    const fetchData = async () => {
+      const userToken = await AsyncStorage.getItem('userToken');
+      if (!userToken) {
+        navigation.replace('Home');
+        return;
       }
+
+      const userDoc = await getDoc(doc(db, 'users', userToken));
+      if (userDoc.exists()) setUserData(userDoc.data());
+
+      const myQ = query(collection(db, 'games'), where('creatorId', '==', userToken));
+      const mySnapshot = await getDocs(myQ);
+      const fetchedMy = mySnapshot.docs.map(d => ({
+        id: d.id,
+        ...d.data(),
+        isPublished: d.data().isPublished || false,
+      }));
+      setMyGames(fetchedMy);
+
+      const publicQ = query(collection(db, 'games'), where('isPublished', '==', true));
+      const publicSnapshot = await getDocs(publicQ);
+      setPublicGames(publicSnapshot.docs.map(d => ({ id: d.id, ...d.data() })));
     };
 
-    fetchUserDataAndGames();
+    fetchData();
   }, [navigation]);
 
-  // ——————————————————————————————————————
-  // 3. HANDLE NEW GAME FROM CreateGameMenu
-  // ——————————————————————————————————————
-  /**
-   * Listens for `route.params.newGame` to add newly created game to list
-   */
   useEffect(() => {
     if (route.params?.newGame) {
-      setGames((prevGames) => [...prevGames, route.params.newGame]);
-      navigation.setParams({ newGame: undefined }); // Clear param
+      setMyGames(prev => [...prev, route.params.newGame]);
+      navigation.setParams({ newGame: undefined });
     }
-  }, [route.params, navigation]);
+  }, [route.params]);
 
-  // ——————————————————————————————————————
-  // 4. PROFILE MENU POSITIONING
-  // ——————————————————————————————————————
-  /**
-   * Measures profile button to position dropdown menu correctly
-   */
-  const handleProfileButtonLayout = () => {
-    if (profileButtonRef.current) {
-      profileButtonRef.current.measureInWindow((x, y, width, height) => {
-        setMenuPosition({ x: x - 100, y: y + height + 5 });
-      });
-    }
-  };
+  const totalQuestions = myGames.reduce((acc, g) => acc + (g.numQuestions || 0), 0);
+  const recentGames = myGames.slice(0, 8);
 
-  // ——————————————————————————————————————
-  // 5. LOGOUT HANDLER
-  // ——————————————————————————————————————
-  /**
-   * Signs out user and resets navigation to Home
-   */
-  const handleLogout = async () => {
-    try {
-      await signOut(auth);
-      await AsyncStorage.removeItem('userToken');
-      setIsProfileMenuOpen(false);
-      navigation.reset({
-        index: 0,
-        routes: [{ name: 'Home' }],
-      });
-    } catch (error) {
-      console.error('Logout error:', error);
-      // Fallback navigation
-      navigation.reset({
-        index: 0,
-        routes: [{ name: 'Home' }],
-      });
-    }
-  };
-
-  // ——————————————————————————————————————
-  // 6. DELETE MODAL CONTROLS
-  // ——————————————————————————————————————
-  /**
-   * Opens delete confirmation modal
-   * @param {string} gameId - Firestore doc ID
-   * @param {string} gameTitle - Display title
-   */
-  const openDeleteModal = (gameId, gameTitle) => {
-    setDeleteModal({
-      isOpen: true,
-      gameId,
-      gameTitle,
-    });
-  };
-
-  /** Closes delete modal */
-  const closeDeleteModal = () => {
-    setDeleteModal({ isOpen: false, gameId: null, gameTitle: '' });
-  };
-
-  /**
-   * Confirms deletion: removes images + Firestore doc
-   */
-  const confirmDelete = async () => {
-    const { gameId } = deleteModal;
-    if (!gameId || deletingIds.has(gameId)) return;
-
-    // Prevent double-click
-    const newDeleting = new Set(deletingIds);
-    newDeleting.add(gameId);
-    setDeletingIds(newDeleting);
-    closeDeleteModal();
-
-    try {
-      const gameDocRef = doc(db, "games", gameId);
-      const gameSnap = await getDoc(gameDocRef);
-      if (!gameSnap.exists()) throw new Error("Game not found");
-
-      const gameData = gameSnap.data();
-
-      // ——— Delete associated images from Storage ———
-      if (gameData.images && Array.isArray(gameData.images)) {
-        await Promise.all(
-          gameData.images.map(async (imageUrl) => {
-            try {
-              const path = decodeURIComponent(imageUrl.split("/o/")[1].split("?")[0]);
-              const imageRef = ref(storage, path);
-              await deleteObject(imageRef);
-            } catch (err) {
-              console.warn("Failed to delete image:", imageUrl, err);
-            }
-          })
-        );
-      }
-
-      // ——— Delete Firestore document ———
-      await deleteDoc(gameDocRef);
-
-      // ——— Update UI ———
-      setGames((prev) => prev.filter((g) => g.id !== gameId));
-      console.log("Game deleted:", gameId);
-    } catch (error) {
-      console.error("Delete failed:", error);
-    } finally {
-      const newDeleting = new Set(deletingIds);
-      newDeleting.delete(gameId);
-      setDeletingIds(newDeleting);
-    }
-  };
-
-  // ——————————————————————————————————————
-  // 7. GAME FILTERING
-  // ——————————————————————————————————————
-  /**
-   * Filters games by title or tags
-   */
-  const filteredGames = games.filter(
-    (game) =>
-      game.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (game.tags &&
-        game.tags.some((tag) =>
-          tag.toLowerCase().includes(searchQuery.toLowerCase())
-        ))
-  );
-
-  // ——————————————————————————————————————
-  // 8. GAME CARD RENDERER
-  // ——————————————————————————————————————
-  /**
-   * Renders a single game card with Host/Edit/Delete buttons
-   * @param {object} item - Game object
-   */
-  const renderGameItem = ({ item }) => {
-    // Host button style
-    const getHostBtnStyle = () => [
-      styles.hostBtn,
-      {
-        backgroundColor:
-          hoveredButton === `host-${item.id}` ? '#00e092' : '#00c781',
-      },
-    ];
-
-    // Edit button style
-    const getEditBtnStyle = () => [
-      styles.editBtn,
-      {
-        backgroundColor:
-          hoveredButton === `edit-${item.id}` ? '#00e092' : '#00c781',
-      },
-    ];
-
-    // Delete button style (with loading state)
-    const getDeleteBtnStyle = (gameId) => [
-      styles.deleteBtn,
-      {
-        backgroundColor:
-          hoveredButton === `delete-${gameId}` ? '#ff4d4d' : '#ff3333',
-        opacity: deletingIds.has(gameId) ? 0.5 : 1,
-      },
-    ];
-
-    /** Navigates to edit screen with full game data */
-    const handleEdit = () => {
-      navigation.navigate('CreateGameMenu', { gameId: item.id, gameData: item });
-    };
-
-    return (
-      <View style={styles.gameCard}>
-        <Text style={styles.gameTitle}>{item.title}</Text>
-        <Text style={styles.gameDetails}>
-          {item.tags ? item.tags.join(', ') : 'No tags'} | {item.numQuestions}{' '}
-          Questions
-        </Text>
-        <Text style={styles.gameDescription}>
-          {item.description || 'No description'}
-        </Text>
-        <View style={styles.buttonRow}>
-          {/* Host Game */}
-          <TouchableOpacity
-            style={getHostBtnStyle()}
-            onPress={() =>
-              navigation.navigate('HostGameMenu', { gameId: item.id })
-            }
-            // Web hover
-            {...(Platform.OS === 'web' && {
-              onMouseEnter: () => setHoveredButton(`host-${item.id}`),
-              onMouseLeave: () => setHoveredButton(null),
-            })}
-          >
-            <Text style={styles.hostBtnText}>Host Game</Text>
-          </TouchableOpacity>
-
-          {/* Edit Game */}
-          <TouchableOpacity
-            style={getEditBtnStyle()}
-            onPress={handleEdit}
-            // Web hover
-            {...(Platform.OS === 'web' && {
-              onMouseEnter: () => setHoveredButton(`edit-${item.id}`),
-              onMouseLeave: () => setHoveredButton(null),
-            })}
-          >
-            <Text style={styles.editBtnText}>Edit</Text>
-          </TouchableOpacity>
-
-          {/* Delete Game */}
-          <TouchableOpacity
-            style={getDeleteBtnStyle(item.id)}
-            onPress={() => {
-              if (isProfileMenuOpen) setIsProfileMenuOpen(false);
-              openDeleteModal(item.id, item.title);
-            }}
-            disabled={deletingIds.has(item.id)}
-            // Web hover
-            {...(Platform.OS === 'web' && {
-              onMouseEnter: () => setHoveredButton(`delete-${item.id}`),
-              onMouseLeave: () => setHoveredButton(null),
-            })}
-          >
-            {deletingIds.has(item.id) ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <Text style={styles.deleteBtnText}>Delete</Text>
-            )}
-          </TouchableOpacity>
-        </View>
-      </View>
-    );
-  };
-
-  // ——————————————————————————————————————
-  // 9. CREATE GAME FLOW
-  // ——————————————————————————————————————
-  /**
-   * Opens title input modal for new game
-   */
   const handleCreateGame = () => {
     setTitleModal({
       isOpen: true,
       currentTitle: '',
       onSave: (title) => {
         navigation.navigate('CreateGameMenu', { initialTitle: title });
-        setTitleModal((s) => ({ ...s, isOpen: false }));
+        setTitleModal(prev => ({ ...prev, isOpen: false }));
       },
     });
   };
 
-  // ——————————————————————————————————————
-  // 10. DYNAMIC STYLES
-  // ——————————————————————————————————————
-  /** Navigation button hover style */
-  const getNavBtnStyle = (buttonName) => [
-    styles.navBtn,
-    {
-      backgroundColor: hoveredButton === buttonName ? '#333' : 'transparent',
-    },
-  ];
+  const handleLogout = async () => {
+    await signOut(auth);
+    await AsyncStorage.removeItem('userToken');
+    navigation.reset({ index: 0, routes: [{ name: 'Home' }] });
+  };
 
-  /** Create button hover style */
-  const getCreateBtnStyle = () => [
-    styles.createBtn,
-    {
-      backgroundColor: hoveredButton === 'create' ? '#00e092' : '#00c781',
-    },
-  ];
+  const confirmDelete = async () => {
+    const { gameId } = deleteModal;
+    if (!gameId || deletingIds.has(gameId)) return;
 
-  /** Profile menu item hover style */
-  const getProfileMenuItemStyle = (buttonName) => [
-    styles.profileMenuItem,
-    {
-      backgroundColor: hoveredButton === buttonName ? '#333' : '#222',
-    },
-  ];
+    setDeletingIds(prev => new Set(prev).add(gameId));
+    setDeleteModal({ isOpen: false, gameId: null, gameTitle: '' });
 
-  // ——————————————————————————————————————
-  // 11. MAIN RENDER
-  // ——————————————————————————————————————
-  return (
-    <View style={styles.container}>
-      {/* ——————— HEADER ——————— */}
-      <View style={styles.header}>
-        <View style={styles.leftSection}>
-          <Text style={styles.logo}>Brain Board</Text>
-          <View style={styles.searchContainer}>
-            <Text style={styles.searchIcon}>Search</Text>
-            <TextInput
-              style={styles.searchInput}
-              placeholder="Search your games..."
-              placeholderTextColor="#ccc"
-              value={searchQuery}
-              onChangeText={setSearchQuery}
-            />
-          </View>
+    try {
+      const gameDocRef = doc(db, 'games', gameId);
+      const gameSnap = await getDoc(gameDocRef);
+      if (gameSnap.exists()) {
+        const data = gameSnap.data();
+        if (data.images && Array.isArray(data.images)) {
+          await Promise.all(data.images.map(async url => {
+            try {
+              const path = decodeURIComponent(url.split('/o/')[1].split('?')[0]);
+              await deleteObject(storageRef(storage, path));
+            } catch (err) { console.warn('Image delete failed:', err); }
+          }));
+        }
+      }
+      await deleteDoc(gameDocRef);
+      setMyGames(prev => prev.filter(g => g.id !== gameId));
+    } catch (error) {
+      console.error('Delete failed:', error);
+    } finally {
+      setDeletingIds(prev => { const s = new Set(prev); s.delete(gameId); return s; });
+    }
+  };
+
+  const confirmPublishToggle = async () => {
+    const { gameId, willPublish } = publishModal;
+    if (!gameId) return;
+
+    try {
+      await updateDoc(doc(db, 'games', gameId), { isPublished: willPublish });
+      setMyGames(prev => prev.map(g => g.id === gameId ? { ...g, isPublished: willPublish } : g));
+    } catch (error) {
+      console.error('Publish toggle failed:', error);
+    } finally {
+      setPublishModal({ isOpen: false, gameId: null, gameTitle: '', willPublish: true });
+    }
+  };
+
+  const copyGame = async (game) => {
+    try {
+      const userToken = await AsyncStorage.getItem('userToken');
+      const newGameData = {
+        ...game,
+        creatorId: userToken,
+        isPublished: false,
+        title: `${game.title} (Copy)`,
+      };
+      delete newGameData.id;
+      const docRef = await addDoc(collection(db, 'games'), newGameData);
+      setMyGames(prev => [...prev, { id: docRef.id, ...newGameData }]);
+    } catch (error) {
+      console.error('Copy failed:', error);
+    }
+  };
+
+  const getDisplayedGames = () => {
+    let list = currentTab === 'library' ? myGames : publicGames;
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      list = list.filter(g => 
+        g.title.toLowerCase().includes(q) || 
+        (g.tags && g.tags.some(t => t.toLowerCase().includes(q)))
+      );
+    }
+    if (currentTab === 'library' && filter !== 'all') {
+      list = list.filter(g => filter === 'published' ? g.isPublished : !g.isPublished);
+    }
+    return list;
+  };
+
+  const renderGameCard = ({ item }) => {
+    const isMine = currentTab === 'library';
+    return (
+      <View style={[styles.gameCard, hoveredButton === item.id && styles.gameCardHover]}
+            onMouseEnter={() => setHoveredButton(item.id)}
+            onMouseLeave={() => setHoveredButton(null)}>
+        <View style={styles.gameCoverPlaceholder}>
+          <Text style={{ fontSize: 40 }}>🎯</Text>
         </View>
-        <View style={styles.navLinks}>
-          <TouchableOpacity
-            style={getNavBtnStyle('library')}
-            onPress={() => navigation.navigate('Library')}
-            // Web hover
-            {...(Platform.OS === 'web' && {
-              onMouseEnter: () => setHoveredButton('library'),
-              onMouseLeave: () => setHoveredButton(null),
-            })}
-          >
-            <Text style={styles.navText}>Library</Text>
+        {item.isPublished && <View style={styles.publishedBadge}><Text style={styles.badgeText}>Published</Text></View>}
+        <Text style={styles.gameTitle}>{item.title}</Text>
+        <Text style={styles.gameDetails}>{item.numQuestions || 0} questions</Text>
+        <View style={styles.buttonRow}>
+          <TouchableOpacity style={styles.hostBtn} onPress={() => navigation.navigate('HostGameMenu', { gameId: item.id })}>
+            <Text style={styles.btnText}>Host</Text>
           </TouchableOpacity>
-          <TouchableOpacity
-            style={getNavBtnStyle('settings')}
-            onPress={() => navigation.navigate('Settings')}
-            // Web hover
-            {...(Platform.OS === 'web' && {
-              onMouseEnter: () => setHoveredButton('settings'),
-              onMouseLeave: () => setHoveredButton(null),
-            })}
-          >
-            <Text style={styles.navText}>Settings</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            ref={profileButtonRef}
-            style={getNavBtnStyle('profile')}
-            onPress={() => {
-              handleProfileButtonLayout();
-              setIsProfileMenuOpen(true);
-            }}
-            onLayout={handleProfileButtonLayout}
-            // Web hover
-            {...(Platform.OS === 'web' && {
-              onMouseEnter: () => setHoveredButton('profile'),
-              onMouseLeave: () => setHoveredButton(null),
-            })}
-          >
-            <Text style={styles.navText}>
-              {userData ? userData.username : 'Profile'}
-            </Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      {/* ——————— PROFILE DROPDOWN ——————— */}
-      <Modal
-        visible={isProfileMenuOpen}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setIsProfileMenuOpen(false)}
-      >
-        <TouchableOpacity
-          style={styles.modalOverlay}
-          activeOpacity={1}
-          onPress={() => setIsProfileMenuOpen(false)}
-        >
-          <View
-            style={[
-              styles.profileMenu,
-              {
-                top: menuPosition.y,
-                left: menuPosition.x,
-              },
-            ]}
-          >
-            <TouchableOpacity
-              style={getProfileMenuItemStyle('profile-view')}
-              onPress={() => {
-                setIsProfileMenuOpen(false);
-                navigation.navigate('Profile');
-              }}
-              // Web hover
-              {...(Platform.OS === 'web' && {
-                onMouseEnter: () => setHoveredButton('profile-view'),
-                onMouseLeave: () => setHoveredButton(null),
-              })}
-            >
-              <Text style={styles.profileMenuItemText}>View Profile</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={getProfileMenuItemStyle('logout')}
-              onPress={handleLogout}
-              // Web hover
-              {...(Platform.OS === 'web' && {
-                onMouseEnter: () => setHoveredButton('logout'),
-                onMouseLeave: () => setHoveredButton(null),
-              })}
-            >
-              <Text style={styles.profileMenuItemText}>Log Out</Text>
-            </TouchableOpacity>
-          </View>
-        </TouchableOpacity>
-      </Modal>
-
-      {/* ——————— MAIN CONTENT ——————— */}
-      <View style={styles.content}>
-        <View style={styles.welcomeSection}>
-          <Text style={styles.welcomeText}>
-            Welcome, {userData ? userData.username : 'Teacher'}!
-          </Text>
-          <TouchableOpacity
-            style={getCreateBtnStyle()}
-            onPress={handleCreateGame}
-            // Web hover
-            {...(Platform.OS === 'web' && {
-              onMouseEnter: () => setHoveredButton('create'),
-              onMouseLeave: () => setHoveredButton(null),
-            })}
-          >
-            <Text style={styles.createBtnText}>Create New Game</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Games List */}
-        <View style={styles.gamesSection}>
-          <Text style={styles.sectionTitle}>Your Games</Text>
-          {filteredGames.length > 0 ? (
-            <FlatList
-              data={filteredGames}
-              renderItem={renderGameItem}
-              keyExtractor={(item) => item.id}
-              style={styles.gamesList}
-            />
+          {isMine ? (
+            <>
+              <TouchableOpacity style={styles.editBtn} onPress={() => navigation.navigate('CreateGameMenu', { gameId: item.id, gameData: item })}>
+                <Text style={styles.btnText}>Edit</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.publishBtn, item.isPublished && styles.unpublishBtn]}
+                onPress={() => setPublishModal({ isOpen: true, gameId: item.id, gameTitle: item.title, willPublish: !item.isPublished })}>
+                <Text style={styles.btnText}>{item.isPublished ? 'Unpublish' : 'Publish'}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.deleteBtn} onPress={() => setDeleteModal({ isOpen: true, gameId: item.id, gameTitle: item.title })}>
+                {deletingIds.has(item.id) ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.btnText}>Delete</Text>}
+              </TouchableOpacity>
+            </>
           ) : (
-            <Text style={styles.noGamesText}>
-              No games found. Create one to get started!
-            </Text>
+            <TouchableOpacity style={styles.copyBtn} onPress={() => copyGame(item)}>
+              <Text style={styles.btnText}>Copy to Library</Text>
+            </TouchableOpacity>
           )}
         </View>
       </View>
+    );
+  };
 
-      {/* ——————— TITLE INPUT MODAL ——————— */}
-      <Modal
-        visible={titleModal.isOpen}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setTitleModal((s) => ({ ...s, isOpen: false }))}
-      >
+  return (
+    <View style={styles.container}>
+      {/* Sidebar */}
+      <View style={styles.sidebar}>
+        <Text style={styles.logo}>Brain Board</Text>
+        
+        {/* Home */}
+        <TouchableOpacity 
+          style={[
+            styles.tabRow,
+            (currentTab === 'home' || hoveredButton === 'home') && styles.tabRowActive,
+          ]}
+          onPress={() => setCurrentTab('home')}
+          onMouseEnter={() => setHoveredButton('home')}
+          onMouseLeave={() => setHoveredButton(null)}
+        >
+          <Image source={require('../assets/home.png')} style={[
+            styles.tabIcon,
+            currentTab === 'home' && styles.tabIconActive
+          ]} resizeMode="contain" />
+          <Text style={[
+            styles.tabLabel,
+            currentTab === 'home' && styles.tabLabelActive
+          ]}>Home</Text>
+        </TouchableOpacity>
+        
+        {/* Your library */}
+        <TouchableOpacity 
+          style={[
+            styles.tabRow,
+            (currentTab === 'library' || hoveredButton === 'library') && styles.tabRowActive,
+          ]}
+          onPress={() => setCurrentTab('library')}
+          onMouseEnter={() => setHoveredButton('library')}
+          onMouseLeave={() => setHoveredButton(null)}
+        >
+          <Image source={require('../assets/library.png')} style={[
+            styles.tabIcon,
+            currentTab === 'library' && styles.tabIconActive
+          ]} resizeMode="contain" />
+          <Text style={[
+            styles.tabLabel,
+            currentTab === 'library' && styles.tabLabelActive
+          ]}>Your library</Text>
+        </TouchableOpacity>
+        
+        {/* Discover */}
+        <TouchableOpacity 
+          style={[
+            styles.tabRow,
+            (currentTab === 'discover' || hoveredButton === 'discover') && styles.tabRowActive,
+          ]}
+          onPress={() => setCurrentTab('discover')}
+          onMouseEnter={() => setHoveredButton('discover')}
+          onMouseLeave={() => setHoveredButton(null)}
+        >
+          <Image source={require('../assets/discover.png')} style={[
+            styles.tabIcon,
+            currentTab === 'discover' && styles.tabIconActive
+          ]} resizeMode="contain" />
+          <Text style={[
+            styles.tabLabel,
+            currentTab === 'discover' && styles.tabLabelActive
+          ]}>Discover</Text>
+        </TouchableOpacity>
+
+        <View style={{ flex: 1 }} />
+
+        {/* Profile */}
+        <TouchableOpacity 
+          style={[
+            styles.tabRow,
+            hoveredButton === 'profile' && styles.tabRowActive,
+          ]}
+          onPress={() => navigation.navigate('Profile')}
+          onMouseEnter={() => setHoveredButton('profile')}
+          onMouseLeave={() => setHoveredButton(null)}
+        >
+          <Image source={require('../assets/profile.png')} style={styles.tabIcon} resizeMode="contain" />
+          <Text style={styles.tabLabel}>Profile</Text>
+        </TouchableOpacity>
+        
+        {/* Logout */}
+        <TouchableOpacity 
+          style={[
+            styles.tabRow,
+            hoveredButton === 'logout' && styles.tabRowActive,
+          ]}
+          onPress={handleLogout}
+          onMouseEnter={() => setHoveredButton('logout')}
+          onMouseLeave={() => setHoveredButton(null)}
+        >
+          <Image source={require('../assets/logout.png')} style={styles.tabIcon} resizeMode="contain" />
+          <Text style={styles.tabLabel}>Logout</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Main Content */}
+      <View style={styles.main}>
+        {currentTab === 'home' ? (
+          <View style={{ flex: 1, padding: 40 }}>
+            <Text style={styles.welcome}>Welcome back, {userData?.username || 'Teacher'}!</Text>
+            <Text style={styles.subtitle}>You have {myGames.length} games • {totalQuestions} questions created</Text>
+            
+            <TouchableOpacity style={styles.bigCreateBtn} onPress={handleCreateGame}>
+              <Text style={styles.bigCreateText}>+ Create New Game</Text>
+            </TouchableOpacity>
+
+            {recentGames.length > 0 && (
+              <>
+                <Text style={styles.section}>Your Recent Games</Text>
+                <FlatList
+                  data={recentGames}
+                  renderItem={renderGameCard}
+                  keyExtractor={item => item.id}
+                  numColumns={4}
+                  columnWrapperStyle={{ justifyContent: 'flex-start' }}
+                />
+              </>
+            )}
+          </View>
+        ) : (
+          <>
+            <View style={styles.header}>
+              <View style={styles.searchBox}>
+                <Text style={{ fontSize: 20 }}>🔍</Text>
+                <TextInput
+                  style={styles.searchInput}
+                  placeholder={`Search ${currentTab === 'library' ? 'your library' : 'discover'}...`}
+                  placeholderTextColor="#666"
+                  value={searchQuery}
+                  onChangeText={setSearchQuery}
+                />
+              </View>
+              {currentTab === 'library' && (
+                <TouchableOpacity style={styles.createBtn} onPress={handleCreateGame}>
+                  <Text style={styles.createBtnText}>+ Create New Game</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {currentTab === 'library' && (
+              <View style={styles.filters}>
+                <TouchableOpacity onPress={() => setFilter('all')} style={[styles.filterBtn, filter === 'all' && styles.filterActive]}>
+                  <Text style={styles.filterText}>All</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => setFilter('drafts')} style={[styles.filterBtn, filter === 'drafts' && styles.filterActive]}>
+                  <Text style={styles.filterText}>Drafts</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => setFilter('published')} style={[styles.filterBtn, filter === 'published' && styles.filterActive]}>
+                  <Text style={styles.filterText}>Published</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            <FlatList
+              data={getDisplayedGames()}
+              renderItem={renderGameCard}
+              keyExtractor={item => item.id}
+              numColumns={4}
+              columnWrapperStyle={{ justifyContent: 'flex-start' }}
+              ListEmptyComponent={<Text style={styles.emptyText}>
+                {currentTab === 'library' ? 'No games yet. Create your first one!' : 'No public games found.'}
+              </Text>}
+            />
+          </>
+        )}
+      </View>
+
+      {/* Modals */}
+      <Modal visible={titleModal.isOpen} transparent animationType="fade">
         <View style={styles.modalOverlay}>
           <View style={styles.titleModal}>
-            <Text style={styles.titleModalHeader}>
-              {titleModal.currentTitle ? 'Edit Title' : 'Game Title'}
-            </Text>
-
+            <Text style={styles.titleModalHeader}>New Game Title</Text>
             <TextInput
               style={styles.titleInput}
               placeholder="Enter a title..."
-              placeholderTextColor="#999"
+              placeholderTextColor="#888"
               value={titleModal.currentTitle}
-              onChangeText={(t) =>
-                setTitleModal((s) => ({ ...s, currentTitle: t }))
-              }
+              onChangeText={t => setTitleModal(prev => ({ ...prev, currentTitle: t }))}
               autoFocus
             />
-
             <View style={styles.titleModalButtons}>
-              <TouchableOpacity
-                style={styles.titleModalCancel}
-                onPress={() => setTitleModal((s) => ({ ...s, isOpen: false }))}
-              >
+              <TouchableOpacity style={styles.titleModalCancel} onPress={() => setTitleModal(prev => ({ ...prev, isOpen: false }))}>
                 <Text style={styles.titleModalCancelText}>Cancel</Text>
               </TouchableOpacity>
-
               <TouchableOpacity
-                style={[
-                  styles.titleModalSave,
-                  !titleModal.currentTitle.trim() && styles.disabledBtn,
-                ]}
-                onPress={() => {
-                  const title = titleModal.currentTitle.trim();
-                  if (title) {
-                    titleModal.onSave(title);
-                  }
-                }}
+                style={[styles.titleModalSave, !titleModal.currentTitle.trim() && styles.disabledBtn]}
+                onPress={() => titleModal.currentTitle.trim() && titleModal.onSave(titleModal.currentTitle.trim())}
                 disabled={!titleModal.currentTitle.trim()}
               >
                 <Text style={styles.titleModalSaveText}>Create</Text>
@@ -648,35 +414,44 @@ export default function TeacherDashboard({ navigation, route }) {
         </View>
       </Modal>
 
-      {/* ——————— DELETE CONFIRMATION MODAL ——————— */}
-      <Modal
-        visible={deleteModal.isOpen}
-        transparent
-        animationType="fade"
-        onRequestClose={closeDeleteModal}
-      >
+      <Modal visible={deleteModal.isOpen} transparent animationType="fade">
         <View style={styles.modalOverlay}>
           <View style={styles.deleteModal}>
             <Text style={styles.deleteModalTitle}>Delete Game?</Text>
             <Text style={styles.deleteModalText}>
-              Are you sure you want to delete "
-              <Text style={{ fontWeight: 'bold' }}>{deleteModal.gameTitle}</Text>
-              "? This action cannot be undone.
+              Are you sure you want to delete "{deleteModal.gameTitle}"? This cannot be undone.
             </Text>
-
             <View style={styles.deleteModalButtons}>
-              <TouchableOpacity
-                style={styles.deleteModalCancel}
-                onPress={closeDeleteModal}
-              >
+              <TouchableOpacity style={styles.deleteModalCancel} onPress={() => setDeleteModal({ isOpen: false, gameId: null, gameTitle: '' })}>
                 <Text style={styles.deleteModalCancelText}>Cancel</Text>
               </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.deleteModalConfirm}
-                onPress={confirmDelete}
-              >
+              <TouchableOpacity style={styles.deleteModalConfirm} onPress={confirmDelete}>
                 <Text style={styles.deleteModalConfirmText}>Delete</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={publishModal.isOpen} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.deleteModal}>
+            <Text style={styles.deleteModalTitle}>
+              {publishModal.willPublish ? 'Publish Game?' : 'Unpublish Game?'}
+            </Text>
+            <Text style={styles.deleteModalText}>
+              {publishModal.willPublish
+                ? `"${publishModal.gameTitle}" will be visible in Discover.`
+                : `"${publishModal.gameTitle}" will no longer be public.`}
+            </Text>
+            <View style={styles.deleteModalButtons}>
+              <TouchableOpacity style={styles.deleteModalCancel} onPress={() => setPublishModal({ isOpen: false, gameId: null, gameTitle: '', willPublish: true })}>
+                <Text style={styles.deleteModalCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.deleteModalConfirm} onPress={confirmPublishToggle}>
+                <Text style={styles.deleteModalConfirmText}>
+                  {publishModal.willPublish ? 'Publish' : 'Unpublish'}
+                </Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -686,339 +461,114 @@ export default function TeacherDashboard({ navigation, route }) {
   );
 }
 
-// ——————————————————————————————————————
-// STYLES – Dark, modern, teacher-focused UI
-// ——————————————————————————————————————
 const styles = StyleSheet.create({
-  // Full screen
-  container: {
-    flex: 1,
-    backgroundColor: '#111',
-  },
-
-  // Fixed header
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 14,
-    paddingHorizontal: 24,
-    backgroundColor: 'rgba(17, 17, 17, 0.95)',
-    backdropFilter: 'blur(8px)',
-    position: 'fixed',
-    top: 0,
-    left: 0,
-    right: 0,
-    zIndex: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(17, 17, 17, 0.95)',
-  },
-
-  // Left: logo + search
-  leftSection: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  logo: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#fff',
-    marginRight: 12,
-  },
-  searchContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#222',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    marginLeft: 12,
-    height: 36,
-    borderWidth: 2,
-    borderColor: '#222',
-  },
-  searchIcon: {
-    color: '#ccc',
-    fontSize: 18,
-    marginRight: 6,
-  },
-  searchInput: {
-    flex: 1,
-    color: '#fff',
-    fontSize: 16,
-  },
-
-  // Right: nav links
-  navLinks: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  navBtn: {
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: 8,
-    marginHorizontal: 5,
-  },
-  navText: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#fff',
-    textAlign: 'center',
-  },
-
-  // Scrollable content
-  content: {
+  container: { flex: 1, flexDirection: 'row', backgroundColor: '#111' },
+  sidebar: { 
+    width: 260, 
+    backgroundColor: '#0d0d0d', 
+    paddingVertical: 40,
     paddingHorizontal: 20,
-    paddingTop: 100,
-    paddingBottom: 20,
+    borderRightWidth: 1, 
+    borderRightColor: '#222' 
   },
-
-  // Welcome + Create button
-  welcomeSection: {
-    alignItems: 'center',
-    marginVertical: 20,
+  logo: { 
+    fontSize: 28, 
+    fontWeight: 'bold', 
+    color: '#00c781', 
+    marginBottom: 60,
+    marginLeft: 8 
   },
-  welcomeText: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#fff',
-    marginBottom: 20,
-  },
-  createBtn: {
-    paddingVertical: 12,
-    paddingHorizontal: 25,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  createBtnText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-
-  // Games section
-  gamesSection: {
-    marginVertical: 20,
-  },
-  sectionTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#fff',
-    marginBottom: 15,
-  },
-  gamesList: {
-    width: '100%',
-  },
-
-  // Game card
-  gameCard: {
-    backgroundColor: '#222',
-    borderRadius: 8,
-    padding: 15,
-    marginBottom: 10,
-  },
-  gameTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#fff',
-  },
-  gameDetails: {
-    fontSize: 14,
-    color: '#ccc',
-    marginVertical: 5,
-  },
-  gameDescription: {
-    fontSize: 14,
-    color: '#ccc',
-    marginBottom: 10,
-  },
-
-  // Action button row
-  buttonRow: {
+  tabRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  hostBtn: {
-    flex: 1,
-    paddingVertical: 8,
-    paddingHorizontal: 15,
-    borderRadius: 8,
     alignItems: 'center',
-    marginRight: 5,
-    backgroundColor: '#00c781',
-  },
-  hostBtnText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: 'bold',
-  },
-  editBtn: {
-    flex: 1,
-    paddingVertical: 8,
-    paddingHorizontal: 15,
-    borderRadius: 8,
-    alignItems: 'center',
-    marginHorizontal: 5,
-    backgroundColor: '#00c781',
-  },
-  editBtnText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: 'bold',
-  },
-  deleteBtn: {
-    flex: 1,
-    paddingVertical: 8,
-    paddingHorizontal: 15,
-    borderRadius: 8,
-    alignItems: 'center',
-    marginLeft: 5,
-    backgroundColor: '#ff3333',
-    zIndex: 1,
-  },
-  deleteBtnText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: 'bold',
-  },
-
-  // Empty state
-  noGamesText: {
-    fontSize: 16,
-    color: '#ccc',
-    textAlign: 'center',
-  },
-
-  // Modal overlay
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-
-  // Profile menu
-  profileMenu: {
-    backgroundColor: '#222',
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#222',
-    width: 150,
-    position: 'absolute',
-    zIndex: 30,
-  },
-  profileMenuItem: {
-    padding: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#333',
-  },
-  profileMenuItemText: {
-    color: '#fff',
-    fontSize: 16,
-  },
-
-  // ——— DELETE MODAL ———
-  deleteModal: {
-    backgroundColor: '#222',
-    borderRadius: 12,
-    padding: 20,
-    width: 320,
-    alignSelf: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 10,
-  },
-  deleteModalTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#fff',
+    paddingVertical: 16,
+    paddingHorizontal: 16,
+    borderRadius: 16,
     marginBottom: 8,
-    textAlign: 'center',
+    borderWidth: 1,
+    borderColor: 'transparent',
   },
-  deleteModalText: {
-    fontSize: 15,
-    color: '#ccc',
-    marginBottom: 20,
-    lineHeight: 20,
+  tabRowActive: {
+    backgroundColor: '#003322',
+    borderColor: '#00c781',
   },
-  deleteModalButtons: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+  tabIcon: {
+    width: 24,
+    height: 24,
+    marginRight: 16,
+    tintColor: '#ccc',
   },
-  deleteModalCancel: {
-    flex: 1,
-    paddingVertical: 10,
-    marginRight: 8,
-    backgroundColor: '#444',
-    borderRadius: 8,
-    alignItems: 'center',
+  tabIconActive: {
+    tintColor: '#00c781',
   },
-  deleteModalCancelText: {
-    color: '#fff',
-    fontSize: 15,
-    fontWeight: 'bold',
-  },
-  deleteModalConfirm: {
-    flex: 1,
-    paddingVertical: 10,
-    marginLeft: 8,
-    backgroundColor: '#ff3333',
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  deleteModalConfirmText: {
-    color: '#fff',
-    fontSize: 15,
-    fontWeight: 'bold',
-  },
-
-  // ——— TITLE MODAL ———
-  titleModal: {
-    backgroundColor: '#222',
-    borderRadius: 12,
-    padding: 20,
-    width: 340,
-    alignSelf: 'center',
-  },
-  titleModalHeader: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#fff',
-    marginBottom: 12,
-    textAlign: 'center',
-  },
-  titleInput: {
-    backgroundColor: '#333',
-    color: '#fff',
-    padding: 12,
-    borderRadius: 8,
+  tabLabel: {
     fontSize: 16,
-    marginBottom: 20,
+    color: '#ccc',
+    fontWeight: '500',
   },
-  titleModalButtons: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+  tabLabelActive: {
+    color: '#00c781',
+    fontWeight: 'bold',
   },
-  titleModalCancel: {
-    flex: 1,
-    backgroundColor: '#444',
-    paddingVertical: 10,
-    marginRight: 8,
-    borderRadius: 8,
-    alignItems: 'center',
+  main: { flex: 1, padding: 30, backgroundColor: '#111' },
+  welcome: { fontSize: 36, fontWeight: 'bold', color: '#fff', marginBottom: 10 },
+  subtitle: { fontSize: 18, color: '#aaa', marginBottom: 40 },
+  bigCreateBtn: { backgroundColor: '#00c781', padding: 24, borderRadius: 16, alignItems: 'center', marginBottom: 50 },
+  bigCreateText: { color: '#fff', fontSize: 20, fontWeight: 'bold' },
+  section: { fontSize: 24, fontWeight: 'bold', color: '#fff', marginBottom: 20 },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
+  searchBox: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#222', borderRadius: 12, paddingHorizontal: 16, flex: 1, height: 52, borderWidth: 1, borderColor: '#333' },
+  searchInput: { flex: 1, color: '#fff', fontSize: 16, marginLeft: 10 },
+  createBtn: { backgroundColor: '#00c781', paddingVertical: 16, paddingHorizontal: 30, borderRadius: 12, marginLeft: 20 },
+  createBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
+  filters: { flexDirection: 'row', gap: 12, marginBottom: 20 },
+  filterBtn: { paddingHorizontal: 20, paddingVertical: 10, borderRadius: 10, backgroundColor: '#222' },
+  filterActive: { backgroundColor: '#003322', borderWidth: 1, borderColor: '#00c781' },
+  filterText: { color: '#fff', fontWeight: 'bold' },
+  gameCard: { 
+    backgroundColor: '#1e1e1e', 
+    borderRadius: 16, 
+    padding: 18, 
+    margin: 12, 
+    flex: 1, 
+    maxWidth: '23%', 
+    borderWidth: 1, 
+    borderColor: '#333' 
   },
+  gameCardHover: { 
+    borderColor: '#00c781', 
+    shadowOpacity: 0.5,
+  },
+  gameCoverPlaceholder: { height: 120, backgroundColor: '#2a2a2a', borderRadius: 12, marginBottom: 12, justifyContent: 'center', alignItems: 'center' },
+  publishedBadge: { position: 'absolute', top: 12, right: 12, backgroundColor: '#00c781', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20 },
+  badgeText: { color: '#fff', fontSize: 11, fontWeight: 'bold' },
+  gameTitle: { fontSize: 18, fontWeight: 'bold', color: '#fff', marginBottom: 6 },
+  gameDetails: { fontSize: 14, color: '#aaa', marginBottom: 16 },
+  buttonRow: { flexDirection: 'row', gap: 8 },
+  hostBtn: { backgroundColor: '#00c781', padding: 10, borderRadius: 10, flex: 1, alignItems: 'center' },
+  editBtn: { backgroundColor: '#00a670', padding: 10, borderRadius: 10, flex: 1, alignItems: 'center' },
+  publishBtn: { backgroundColor: '#00c781', padding: 10, borderRadius: 10, flex: 1, alignItems: 'center' },
+  unpublishBtn: { backgroundColor: '#e67e22' },
+  deleteBtn: { backgroundColor: '#c0392b', padding: 10, borderRadius: 10, flex: 1, alignItems: 'center' },
+  copyBtn: { backgroundColor: '#3498db', padding: 10, borderRadius: 10, flex: 1, alignItems: 'center' },
+  btnText: { color: '#fff', fontSize: 13, fontWeight: 'bold' },
+  emptyText: { color: '#666', fontSize: 18, textAlign: 'center', marginTop: 100 },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.8)', justifyContent: 'center', alignItems: 'center' },
+  titleModal: { backgroundColor: '#1e1e1e', borderRadius: 16, padding: 24, width: 380, borderWidth: 1, borderColor: '#333' },
+  titleModalHeader: { fontSize: 22, fontWeight: 'bold', color: '#fff', marginBottom: 16, textAlign: 'center' },
+  titleInput: { backgroundColor: '#2a2a2a', color: '#fff', padding: 14, borderRadius: 12, fontSize: 16, marginBottom: 20, borderWidth: 1, borderColor: '#444' },
+  titleModalButtons: { flexDirection: 'row', justifyContent: 'space-between', gap: 12 },
+  titleModalCancel: { flex: 1, backgroundColor: '#444', paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
   titleModalCancelText: { color: '#fff', fontWeight: 'bold' },
-  titleModalSave: {
-    flex: 1,
-    backgroundColor: '#00c781',
-    paddingVertical: 10,
-    marginLeft: 8,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
+  titleModalSave: { flex: 1, backgroundColor: '#00c781', paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
   titleModalSaveText: { color: '#fff', fontWeight: 'bold' },
-  disabledBtn: {
-    opacity: 0.5,
-  },
+  disabledBtn: { opacity: 0.5 },
+  deleteModal: { backgroundColor: '#1e1e1e', borderRadius: 16, padding: 24, width: 360, borderWidth: 1, borderColor: '#333' },
+  deleteModalTitle: { fontSize: 20, fontWeight: 'bold', color: '#fff', marginBottom: 12, textAlign: 'center' },
+  deleteModalText: { fontSize: 15, color: '#ccc', marginBottom: 24, textAlign: 'center', lineHeight: 22 },
+  deleteModalButtons: { flexDirection: 'row', justifyContent: 'space-between', gap: 12 },
+  deleteModalCancel: { flex: 1, backgroundColor: '#444', paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
+  deleteModalCancelText: { color: '#fff', fontWeight: 'bold' },
+  deleteModalConfirm: { flex: 1, backgroundColor: '#c0392b', paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
+  deleteModalConfirmText: { color: '#fff', fontWeight: 'bold' },
 });

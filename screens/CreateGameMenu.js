@@ -1,1511 +1,451 @@
 /**
- * CreateGameMenu.js
- * 
- * This screen lets a teacher **create a new quiz** or **edit an existing one**.
- *
- * Features
- *   • Title + tags (comma-separated)
- *   • Add / edit / delete questions
- *   • Two question types:
- *        – Multiple-Choice (up to 4 answers, any number can be correct)
- *        – True/False (fixed answers, exactly one correct)
- *   • Optional image upload for each question (web only)
- *   • Preview of every question with correct-answer highlighting
- *   • Save & Exit  →  back to the dashboard
- *   • Save & Host  →  go straight to the host screen
- *   • Confirmation dialogs for cancel / errors
- *
- * Navigation
- *   • Comes from TeacherDashboard
- *   • Receives:
- *        – `initialTitle`  (new game)
- *        – `gameId` + `gameData` (edit mode)
- *
- * Firebase
- *   • Firestore collection: **games**
- *   • Storage folder: **games/<uid>/...**
- * 
+ * CreateGameMenu.js - Reimagined Modern Version
+ * Three-column layout with embedded editor
  */
 
 import React, { useState, useEffect } from 'react';
 import {
-  View,               // Basic container
-  Text,               // Simple text
-  StyleSheet,         // CSS-like styling
-  TouchableOpacity,   // Clickable button/area
-  TextInput,          // Editable text field
-  ScrollView,         // Scrollable area
-  Modal,              // Pop-up overlay
-  FlatList,           // Efficient list rendering
-  ActivityIndicator,  // Loading spinner
-  Image,              // Show images (local or remote)
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  TextInput,
+  ScrollView,
+  Image,
+  ActivityIndicator,
 } from 'react-native';
-
-// Firebase config (must be set up in ../firebaseConfig)
+import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import { db, auth, storage } from '../firebaseConfig';
-
-// Firestore helpers
 import {
-  collection,   // Reference to a collection
-  addDoc,       // Add a new document (returns ref)
-  doc,          // Reference to a specific document
-  updateDoc,    // Update an existing document
-  getDoc,       // Read a document once
+  doc,
+  getDoc,
+  addDoc,
+  updateDoc,
+  collection,
 } from 'firebase/firestore';
-
-// Storage helpers
 import {
-  ref,           // Reference to a file location
-  uploadBytes,   // Upload raw bytes
-  getDownloadURL,// Get public URL after upload
+  ref,
+  uploadBytes,
+  getDownloadURL,
 } from 'firebase/storage';
 
-/* ------------------------------------------------------------------
- * MAIN COMPONENT
- * ------------------------------------------------------------------ */
+const reorder = (list, startIndex, endIndex) => {
+  const result = Array.from(list);
+  const [removed] = result.splice(startIndex, 1);
+  result.splice(endIndex, 0, removed);
+  return result;
+};
+
 export default function CreateGameMenu({ navigation, route }) {
-  /* ----------------------------------------------------------------
-   * 1. ROUTE PARAMETERS & INITIAL STATE
-   * ---------------------------------------------------------------- */
-  // If a title was passed from the dashboard (new game) use it,
-  // otherwise fall back to the title of an existing game (edit mode)
-  const initialTitle =
-    route.params?.initialTitle || route.params?.gameData?.title || '';
+  const gameId = route.params?.gameId;
+  const initialTitle = route.params?.initialTitle || '';
 
-  // ── Game-level fields ────────────────────────────────────────
-  const [gameTitle, setGameTitle] = useState(initialTitle); // Visible title
-  const [tags, setTags] = useState('');                     // CSV tags string
-  const [questions, setQuestions] = useState([]);           // Array of question objects
+  const [gameTitle, setGameTitle] = useState(initialTitle);
+  const [coverImage, setCoverImage] = useState(null);
+  const [tags, setTags] = useState('');
+  const [questions, setQuestions] = useState([]);
+  const [selectedQuestionIndex, setSelectedQuestionIndex] = useState(0);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
 
-  // ── Question modal state ───────────────────────────────────────
-  const [isCreateQuestionModalVisible, setIsCreateQuestionModalVisible] =
-    useState(false);                     // Show/hide the question editor
-  const [editingQuestionIndex, setEditingQuestionIndex] = useState(null); // null = new, number = edit
-  const [currentQuestion, setCurrentQuestion] = useState({
-    type: 'multipleChoice',            // 'multipleChoice' | 'trueFalse'
-    question: '',                      // The question text
-    answers: ['', '', '', ''],         // Up to 4 answer strings (MC)
-    correctAnswers: [false, false, false, false], // Booleans for each answer
-    imageUrl: null,                    // Optional image URL
-  });
+  const currentQuestion = questions[selectedQuestionIndex] || {
+    type: 'multipleChoice',
+    question: '',
+    answers: ['', '', '', ''],
+    correctAnswers: [false, false, false, false],
+    imageUrl: null,
+    timeLimit: 20,
+    points: 'standard',
+  };
 
-  // ── UI helpers ───────────────────────────────────────────────────
-  const [isLoading, setIsLoading] = useState(false); // Global spinner
-  const [isEditing, setIsEditing] = useState(false); // Edit vs Create mode
-  const [hoveredButton, setHoveredButton] = useState(null); // Web hover effect
-  const [hoveredEditTitle, setHoveredEditTitle] = useState(false); // Title edit icon hover
-  const gameId = route.params?.gameId; // Firestore doc ID when editing
-
-  // ── Confirmation / Alert modal ───────────────────────────────────
-  const [confirmModal, setConfirmModal] = useState({
-    isOpen: false,
-    title: '',
-    message: '',
-    onConfirm: () => {},
-    onCancel: () => {},
-    showSaveOption: false, // true → shows Discard / Save / Resume
-  });
-
-  // ── Title edit modal ─────────────────────────────────────────────
-  const [titleEditModal, setTitleEditModal] = useState({
-    isOpen: false,
-    currentTitle: '',
-  });
-
-  /* ----------------------------------------------------------------
-   * 2. LOAD EXISTING GAME (EDIT MODE)
-   * ---------------------------------------------------------------- */
   useEffect(() => {
-    // Only run when a gameId is supplied (editing an existing game)
     if (gameId) {
-      const loadGameData = async () => {
-        try {
-          setIsLoading(true);                         // Show spinner
-          const gameDoc = await getDoc(doc(db, 'games', gameId));
-          if (gameDoc.exists()) {
-            const data = gameDoc.data();
-            setGameTitle(data.title || '');
-            setTags(data.tags ? data.tags.join(', ') : '');
-            setQuestions(data.questions || []);
-            setIsEditing(true);                       // Switch UI to "Edit"
-          }
-        } catch (error) {
-          console.error('Error loading game:', error);
-        } finally {
-          setIsLoading(false);                        // Hide spinner
+      const loadGame = async () => {
+        setIsLoading(true);
+        const docSnap = await getDoc(doc(db, 'games', gameId));
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          setGameTitle(data.title || '');
+          setTags(data.tags?.join(', ') || '');
+          setQuestions(data.questions || []);
+          setCoverImage(data.coverImage || null);
+          setIsEditing(true);
         }
+        setIsLoading(false);
       };
-      loadGameData();
+      loadGame();
     }
-  }, [gameId]); // Re-run only if gameId changes
+  }, [gameId]);
 
-  // If a title was passed for a *new* game, set it immediately
-  useEffect(() => {
-    if (route.params?.initialTitle && !gameId) {
-      setGameTitle(route.params.initialTitle);
-    }
-  }, [route.params?.initialTitle, gameId]);
+  const updateCurrentQuestion = (updates) => {
+    setQuestions(prev => {
+      const updated = [...prev];
+      updated[selectedQuestionIndex] = { ...updated[selectedQuestionIndex], ...updates };
+      return updated;
+    });
+  };
 
-  /* ----------------------------------------------------------------
-   * 3. HELPER FUNCTIONS (pure JS)
-   * ---------------------------------------------------------------- */
-  // Update the tags TextInput
-  const handleTagsChange = (text) => setTags(text);
-
-  // Convert "math, science, grade8" → ['math','science','grade8']
-  const parseTags = () =>
-    tags
-      .split(',')
-      .map((t) => t.trim())
-      .filter((t) => t.length > 0);
-
-  // Detect if a question has more than one correct answer
-  const isMultiSelectQuestion = (question) =>
-    question.correctAnswers.filter(Boolean).length > 1;
-
-  /* ----------------------------------------------------------------
-   * 4. QUESTION CRUD
-   * ---------------------------------------------------------------- */
-  // Open modal to create a brand-new question
   const addQuestion = () => {
-    setEditingQuestionIndex(null);
-    setCurrentQuestion({
+    const newQ = {
       type: 'multipleChoice',
       question: '',
       answers: ['', '', '', ''],
       correctAnswers: [false, false, false, false],
       imageUrl: null,
-    });
-    setIsCreateQuestionModalVisible(true);
+      timeLimit: 20,
+      points: 'standard',
+    };
+    setQuestions(prev => [...prev, newQ]);
+    setSelectedQuestionIndex(questions.length);
   };
 
-  // Save the question that is currently being edited
-  const saveQuestion = () => {
-    // ---- Validation ------------------------------------------------
-    if (!currentQuestion.question.trim()) {
-      showAlert('Missing Question', 'Please enter a question.');
-      return;
-    }
-    const correctCount = currentQuestion.correctAnswers.filter(Boolean).length;
-    if (correctCount === 0) {
-      showAlert('No Correct Answer', 'Please select at least one correct answer.');
-      return;
-    }
-
-    // ---- Persist ---------------------------------------------------
-    const questionData = { ...currentQuestion };
-    if (editingQuestionIndex !== null) {
-      // Editing an existing question
-      const updated = [...questions];
-      updated[editingQuestionIndex] = questionData;
-      setQuestions(updated);
-    } else {
-      // Adding a new question
-      setQuestions((prev) => [...prev, questionData]);
-    }
-    setIsCreateQuestionModalVisible(false); // Close modal
-  };
-
-  // Open modal with existing question data for editing
-  const editQuestion = (index) => {
-    setEditingQuestionIndex(index);
-    setCurrentQuestion({ ...questions[index] });
-    setIsCreateQuestionModalVisible(true);
-  };
-
-  // Remove a question from the list
   const deleteQuestion = (index) => {
-    setQuestions((prev) => prev.filter((_, i) => i !== index));
+    setQuestions(prev => prev.filter((_, i) => i !== index));
+    if (selectedQuestionIndex >= questions.length - 1) {
+      setSelectedQuestionIndex(Math.max(0, questions.length - 2));
+    }
   };
 
-  /* ----------------------------------------------------------------
-   * 5. IMAGE UPLOAD (WEB ONLY)
-   * ---------------------------------------------------------------- */
-  const uploadImage = async (event) => {
-    const file = event.target.files[0];
+  const onDragEnd = (result) => {
+    if (!result.destination) return;
+    const reordered = reorder(questions, result.source.index, result.destination.index);
+    setQuestions(reordered);
+  };
+
+  const uploadImage = async (e, isCover = false) => {
+    const file = e.target.files[0];
     if (!file) return;
 
+    const user = auth.currentUser;
+    if (!user) return;
+
+    const ext = file.name.split('.').pop();
+    const name = `${isCover ? 'cover' : 'question'}-${Date.now()}.${ext}`;
+    const storagePath = `games/${user.uid}/${name}`;
+    const storageRefPath = ref(storage, storagePath);
+
     try {
-      const user = auth.currentUser;
-      if (!user) {
-        showAlert('Authentication Error', 'User not authenticated.');
-        return;
-      }
-
-      // Build a unique file name
-      const ext = file.name.split('.').pop();
-      const name = `question-${Date.now()}.${ext}`;
-      const storageRef = ref(storage, `games/${user.uid}/${name}`);
-
-      // Upload raw bytes
-      const snapshot = await uploadBytes(storageRef, file);
+      const snapshot = await uploadBytes(storageRefPath, file);
       const url = await getDownloadURL(snapshot.ref);
-
-      // Store the public URL in the current question
-      setCurrentQuestion((prev) => ({ ...prev, imageUrl: url }));
-      event.target.value = ''; // Reset file input
-    } catch (error) {
-      console.error('Image upload error:', error);
-      showAlert('Upload Failed', `Failed to upload image: ${error.message}`);
+      if (isCover) {
+        setCoverImage(url);
+      } else {
+        updateCurrentQuestion({ imageUrl: url });
+      }
+    } catch (err) {
+      console.error('Upload failed', err);
     }
   };
 
-  /* ----------------------------------------------------------------
-   * 6. SAVE GAME TO FIRESTORE
-   * ---------------------------------------------------------------- */
-  const saveGame = async (shouldHost = false, onSuccess = () => {}) => {
-    // ---- Basic validation -----------------------------------------
-    if (!gameTitle.trim()) {
-      showAlert('Missing Title', 'Please enter a game title.');
-      return;
-    }
-    if (questions.length === 0) {
-      showAlert('No Questions', 'Please add at least one question.');
-      return;
-    }
+  const saveGame = async (host = false) => {
+    if (!gameTitle.trim() || questions.length === 0) return;
+
+    const gameData = {
+      title: gameTitle.trim(),
+      titleLower: gameTitle.trim().toLowerCase(),
+      tags: tags.split(',').map(t => t.trim().toLowerCase()).filter(t => t),
+      questions,
+      numQuestions: questions.length,
+      coverImage,
+      creatorId: auth.currentUser.uid,
+      updatedAt: new Date().toISOString(),
+      isPublished: false,
+    };
 
     try {
-      const user = auth.currentUser;
-      const gameData = {
-        title: gameTitle,
-        tags: parseTags(),
-        questions,
-        numQuestions: questions.length,
-        creatorId: user.uid,
-        updatedAt: new Date().toISOString(),
-      };
-
-      let savedGame;
-      if (isEditing) {
-        // UPDATE existing document
+      let savedId = gameId;
+      if (isEditing && gameId) {
         await updateDoc(doc(db, 'games', gameId), gameData);
-        savedGame = { id: gameId, ...gameData };
       } else {
-        // CREATE new document
-        const docRef = await addDoc(collection(db, 'games'), gameData);
-        savedGame = { id: docRef.id, ...gameData };
+        const ref = await addDoc(collection(db, 'games'), gameData);
+        savedId = ref.id;
       }
-
-      const successMsg = shouldHost
-        ? 'Game saved and ready to host!'
-        : 'Game saved successfully!';
-
-      // Show success alert, then run the appropriate navigation
-      showAlert('Success', successMsg, () => {
-        if (shouldHost) {
-          navigation.navigate('HostGameMenu', { gameId: savedGame.id });
-        } else {
-          onSuccess();
-        }
-      });
-    } catch (error) {
-      console.error('Error saving game:', error);
-      showAlert('Save Failed', 'Failed to save game.');
+      if (host) {
+        navigation.navigate('HostGameMenu', { gameId: savedId });
+      } else {
+        navigation.goBack();
+      }
+    } catch (err) {
+      console.error('Save failed', err);
     }
   };
 
-  // Convenience wrappers
-  const saveAndExit = () => saveGame(false, () => navigation.goBack());
-  const saveAndHost = () => saveGame(true);
-
-  /* ----------------------------------------------------------------
-   * 7. CANCEL WITH CONFIRMATION DIALOG
-   * ---------------------------------------------------------------- */
-  const handleCancel = () => {
-    setConfirmModal({
-      isOpen: true,
-      title: 'Cancel Editing?',
-      message: 'Do you want to save your changes before leaving?',
-      showSaveOption: true,
-      onConfirm: () => {
-        setConfirmModal({ ...confirmModal, isOpen: false });
-        navigation.goBack(); // Discard
-      },
-      onCancel: () => setConfirmModal({ ...confirmModal, isOpen: false }), // Resume
-      onSave: saveAndExit, // Save then exit
-    });
-  };
-
-  /* ----------------------------------------------------------------
-   * 8. UNIVERSAL ALERT (OK button only)
-   * ---------------------------------------------------------------- */
-  const showAlert = (title, message, onOk = () => {}) => {
-    setConfirmModal({
-      isOpen: true,
-      title,
-      message,
-      showSaveOption: false,
-      onConfirm: () => {
-        setConfirmModal({ ...confirmModal, isOpen: false });
-        onOk();
-      },
-      onCancel: () => setConfirmModal({ ...confirmModal, isOpen: false }),
-    });
-  };
-
-  /* ----------------------------------------------------------------
-   * 9. DYNAMIC BUTTON STYLES (hover + disabled)
-   * ---------------------------------------------------------------- */
-  const isSaveValid = gameTitle.trim().length > 0 && questions.length > 0;
-
-  const getCancelBtnStyle = () => [
-    styles.cancelBtnBottom,
-    {
-      backgroundColor: hoveredButton === 'cancel' ? '#ff4d4d' : '#e74c3c',
-    },
-  ];
-
-  const getSaveExitBtnStyle = () => [
-    styles.saveExitBtn,
-    {
-      backgroundColor: isSaveValid
-        ? hoveredButton === 'saveExit'
-          ? '#00e092'
-          : '#00c781'
-        : '#666',
-      opacity: isSaveValid ? 1 : 0.6,
-    },
-  ];
-
-  const getSaveHostBtnStyle = () => [
-    styles.saveHostBtn,
-    { backgroundColor: hoveredButton === 'saveHost' ? '#00e092' : '#00c781' },
-  ];
-
-  /* ----------------------------------------------------------------
-   * 10. ICON COMPONENT (correct / incorrect toggle)
-   * ---------------------------------------------------------------- */
-  const CorrectIcon = ({ isCorrect }) => (
-    <Image
-      source={
-        isCorrect
-          ? require('../assets/correct.png')
-          : require('../assets/incorrect.png')
-      }
-      style={[
-        styles.correctToggleIcon,
-        { tintColor: isCorrect ? '#ffff' : '#e74c3c' },
-      ]}
-      resizeMode="contain"
-    />
-  );
-
-  /* ----------------------------------------------------------------
-   * 11. RENDER EACH QUESTION PREVIEW (FlatList item)
-   * ---------------------------------------------------------------- */
-  const renderQuestionPreview = ({ item, index }) => {
-    const isMultiSelect = isMultiSelectQuestion(item);
-    const displayType =
-      item.type === 'trueFalse'
-        ? 'True/False'
-        : isMultiSelect
-        ? 'Multi-Select'
-        : 'Multiple Choice';
-
-    return (
-      <View style={styles.questionBlock}>
-        {/* Header: question text + type + actions */}
-        <View style={styles.questionHeader}>
-          <View>
-            <Text style={styles.questionText}>
-              {item.question || 'Untitled Question'}
-            </Text>
-            <Text style={styles.questionTypeLabel}>{displayType}</Text>
-          </View>
-          <View style={styles.questionActions}>
-            <TouchableOpacity
-              style={styles.editBtn}
-              onPress={() => editQuestion(index)}
-            >
-              <Text style={styles.editBtnText}>Edit</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.deleteBtn}
-              onPress={() => deleteQuestion(index)}
-            >
-              <Text style={styles.deleteBtnText}>Delete</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {/* Optional image preview */}
-        {item.imageUrl && (
-          <View style={styles.previewImageContainer}>
-            <Image
-              source={{ uri: item.imageUrl }}
-              style={styles.previewImage}
-              resizeMode="cover"
-            />
-          </View>
-        )}
-
-        {/* Answers list */}
-        <View style={styles.answersContainer}>
-          {item.type === 'trueFalse'
-            ? // True/False always shows two rows
-              item.answers.slice(0, 2).map((a, i) => (
-                <View
-                  key={i}
-                  style={[
-                    styles.answerOption,
-                    item.correctAnswers[i] && styles.correctAnswer,
-                  ]}
-                >
-                  <Text style={styles.answerText}>{a}</Text>
-                </View>
-              ))
-            : // Multiple-Choice shows up to four rows
-              item.answers.slice(0, 4).map((a, i) => (
-                <View
-                  key={i}
-                  style={[
-                    styles.answerOption,
-                    item.correctAnswers[i] && styles.correctAnswer,
-                  ]}
-                >
-                  <Text style={styles.answerText}>
-                    {a || `Answer ${i + 1}`}
-                  </Text>
-                </View>
-              ))}
-        </View>
-      </View>
-    );
-  };
-
-  /* ----------------------------------------------------------------
-   * 12. LOADING SCREEN
-   * ---------------------------------------------------------------- */
   if (isLoading) {
     return (
-      <View style={styles.loadingContainer}>
+      <View style={styles.loading}>
         <ActivityIndicator size="large" color="#00c781" />
       </View>
     );
   }
 
-  /* ----------------------------------------------------------------
-   * 13. MAIN RENDER
-   * ---------------------------------------------------------------- */
   return (
     <View style={styles.container}>
-      {/* ====================== HEADER ====================== */}
+      {/* Header */}
       <View style={styles.header}>
-        <View style={styles.headerSpacer} />
-        <Text style={styles.title}>
-          {isEditing ? 'Edit Game' : 'Create a new game'}
-        </Text>
-        <View style={styles.headerSpacer} />
+        <TouchableOpacity onPress={() => navigation.goBack()}>
+          <Text style={styles.backBtn}>← Back</Text>
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>{isEditing ? 'Edit Game' : 'Create Game'}</Text>
+        <View style={{ width: 60 }} />
       </View>
 
-      {/* ====================== SCROLLABLE CONTENT ====================== */}
-      <ScrollView style={styles.mainContent}>
-        {/* ---- SIDEBAR (fixed on the left) ---- */}
-        <View style={styles.sidebar}>
-          {/* Game Title (click pencil to edit) */}
-          <View style={styles.formGroup}>
-            <Text style={styles.label}>Game Title</Text>
-            <View style={styles.titleRow}>
-              <Text style={styles.titleLabel}>
-                {gameTitle || 'Untitled Game'}
-              </Text>
-              <TouchableOpacity
-                onPress={() => {
-                  setTitleEditModal({ isOpen: true, currentTitle: gameTitle });
-                }}
-                style={styles.editTitleBtn}
-                onMouseEnter={() => setHoveredEditTitle(true)}
-                onMouseLeave={() => setHoveredEditTitle(false)}
-              >
-                <Image
-                  source={require('../assets/edit.png')}
-                  style={[
-                    styles.editIcon,
-                    hoveredEditTitle && { tintColor: '#00c781' },
-                  ]}
-                  resizeMode="contain"
-                />
-              </TouchableOpacity>
-            </View>
-          </View>
-
-          {/* Tags input */}
-          <View style={styles.formGroup}>
-            <Text style={styles.label}>Tags (comma separated)</Text>
-            <TextInput
-              style={styles.input}
-              value={tags}
-              onChangeText={handleTagsChange}
-              placeholder="math, algebra, grade8"
-              placeholderTextColor="#666"
-            />
-          </View>
-
-          {/* Quick preview */}
-          <View style={styles.formGroup}>
-            <Text style={styles.label}>Preview</Text>
-            <Text style={styles.previewText}>
-              {gameTitle || 'Untitled Game'} • {questions.length} Questions
-            </Text>
-          </View>
-
-          {/* Add question button */}
-          <TouchableOpacity style={styles.createQuestionBtn} onPress={addQuestion}>
-            <Text style={styles.createQuestionBtnText}>Create Question</Text>
-          </TouchableOpacity>
-
-          {/* Placeholder for future import feature */}
-          <TouchableOpacity style={styles.importBtn}>
-            <Text style={styles.importBtnText}>Import Questions</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* ---- CENTER: LIST OF QUESTION PREVIEWS ---- */}
-        <View style={styles.centerContent}>
-          <FlatList
-            data={questions}
-            renderItem={renderQuestionPreview}
-            keyExtractor={(_, i) => `q-${i}`}
-            style={styles.questionsList}
-            showsVerticalScrollIndicator={false}
+      {/* Cover & Title */}
+      <View style={styles.coverSection}>
+        <TouchableOpacity style={styles.coverUpload}>
+          {coverImage ? (
+            <Image source={{ uri: coverImage }} style={styles.coverImage} />
+          ) : (
+            <Text style={styles.coverPlaceholder}>+ Add Cover Image</Text>
+          )}
+          <input type="file" accept="image/*" onChange={(e) => uploadImage(e, true)} style={{ display: 'none' }} id="coverUpload" />
+          <label htmlFor="coverUpload" style={styles.coverOverlay}>
+            <Text style={styles.coverOverlayText}>Upload</Text>
+          </label>
+        </TouchableOpacity>
+        <View style={styles.titleSection}>
+          <TextInput
+            style={styles.gameTitleInput}
+            value={gameTitle}
+            onChangeText={setGameTitle}
+            placeholder="Enter game title..."
+            placeholderTextColor="#666"
+          />
+          <TextInput
+            style={styles.tagsInput}
+            value={tags}
+            onChangeText={setTags}
+            placeholder="Tags (comma separated)"
+            placeholderTextColor="#666"
           />
         </View>
-      </ScrollView>
-
-      {/* ====================== BOTTOM ACTION BAR ====================== */}
-      <View style={styles.bottomActions}>
-        <TouchableOpacity
-          style={getCancelBtnStyle()}
-          onPress={handleCancel}
-          onMouseEnter={() => setHoveredButton('cancel')}
-          onMouseLeave={() => setHoveredButton(null)}
-        >
-          <Text style={styles.cancelBtnText}>Cancel</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={getSaveExitBtnStyle()}
-          onPress={saveAndExit}
-          disabled={!isSaveValid}
-          onMouseEnter={() => setHoveredButton('saveExit')}
-          onMouseLeave={() => setHoveredButton(null)}
-        >
-          <Text style={styles.saveExitBtnText}>
-            {isEditing ? 'Update & Exit' : 'Save & Exit'}
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={getSaveHostBtnStyle()}
-          onPress={saveAndHost}
-          onMouseEnter={() => setHoveredButton('saveHost')}
-          onMouseLeave={() => setHoveredButton(null)}
-        >
-          <Text style={styles.saveHostBtnText}>
-            {isEditing ? 'Update & Host' : 'Save & Host'}
-          </Text>
-        </TouchableOpacity>
       </View>
 
-      {/* ====================== TITLE EDIT MODAL ====================== */}
-      <Modal
-        visible={titleEditModal.isOpen}
-        transparent
-        animationType="fade"
-        onRequestClose={() =>
-          setTitleEditModal((s) => ({ ...s, isOpen: false }))
-        }
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.titleModal}>
-            <Text style={styles.titleModalHeader}>Edit Title</Text>
-            <TextInput
-              style={styles.titleInput}
-              placeholder="Enter a title..."
-              placeholderTextColor="#999"
-              value={titleEditModal.currentTitle}
-              onChangeText={(t) =>
-                setTitleEditModal((s) => ({ ...s, currentTitle: t }))
-              }
-              autoFocus
-            />
-            <View style={styles.titleModalButtons}>
-              <TouchableOpacity
-                style={styles.titleModalCancel}
-                onPress={() =>
-                  setTitleEditModal((s) => ({ ...s, isOpen: false }))
-                }
-              >
-                <Text style={styles.titleModalCancelText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[
-                  styles.titleModalSave,
-                  !titleEditModal.currentTitle.trim() && styles.disabledBtn,
-                ]}
-                onPress={() => {
-                  const newTitle = titleEditModal.currentTitle.trim();
-                  if (newTitle) {
-                    setGameTitle(newTitle);
-                    setTitleEditModal((s) => ({ ...s, isOpen: false }));
-                  }
-                }}
-                disabled={!titleEditModal.currentTitle.trim()}
-              >
-                <Text style={styles.titleModalSaveText}>Save</Text>
-              </TouchableOpacity>
-            </View>
+      {/* Three Column Layout */}
+      <DragDropContext onDragEnd={onDragEnd}>
+        <View style={styles.mainLayout}>
+          {/* Left: Question Navigator */}
+          <View style={styles.leftSidebar}>
+            <TouchableOpacity style={styles.addQuestionBtn} onPress={addQuestion}>
+              <Text style={styles.addQuestionText}>+ Add Question</Text>
+            </TouchableOpacity>
+            <Droppable droppableId="questions">
+              {(provided) => (
+                <View {...provided.droppableProps} ref={provided.innerRef} style={styles.questionList}>
+                  {questions.map((q, i) => (
+                    <Draggable key={i} draggableId={`q-${i}`} index={i}>
+                      {(provided, snapshot) => (
+                        <View
+                          ref={provided.innerRef}
+                          {...provided.draggableProps}
+                          {...provided.dragHandleProps}
+                          style={[
+                            styles.questionThumb,
+                            snapshot.isDragging && styles.questionThumbDragging,
+                            selectedQuestionIndex === i && styles.questionThumbSelected,
+                          ]}
+                          onPress={() => setSelectedQuestionIndex(i)}
+                        >
+                          <Text style={styles.thumbNumber}>{i + 1}</Text>
+                          <Text style={styles.thumbText} numberOfLines={2}>
+                            {q.question || 'New Question'}
+                          </Text>
+                        </View>
+                      )}
+                    </Draggable>
+                  ))}
+                  {provided.placeholder}
+                </View>
+              )}
+            </Droppable>
           </View>
-        </View>
-      </Modal>
 
-      {/* ====================== QUESTION EDITOR MODAL ====================== */}
-      <Modal
-        visible={isCreateQuestionModalVisible}
-        transparent
-        animationType="slide"
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.questionModal}>
-            <Text style={styles.modalTitle}>
-              {editingQuestionIndex !== null ? 'Edit Question' : 'Create Question'}
-            </Text>
+          {/* Center: Question Editor */}
+          <ScrollView style={styles.centerEditor}>
+            <Text style={styles.editorLabel}>Question {selectedQuestionIndex + 1}</Text>
+            <TextInput
+              style={styles.questionInput}
+              value={currentQuestion.question}
+              onChangeText={(t) => updateCurrentQuestion({ question: t })}
+              placeholder="Enter your question..."
+              multiline
+            />
 
-            {/* ---- Question Type Selector ---- */}
-            <View style={styles.formGroup}>
-              <Text style={styles.label}>Question Type</Text>
-              <View style={styles.radioGroup}>
-                {['multipleChoice', 'trueFalse'].map((type) => (
+            {/* Image */}
+            {currentQuestion.imageUrl ? (
+              <Image source={{ uri: currentQuestion.imageUrl }} style={styles.questionImage} />
+            ) : (
+              <TouchableOpacity style={styles.imageUpload}>
+                <Text style={styles.imageUploadText}>+ Add Image</Text>
+                <input type="file" accept="image/*" onChange={uploadImage} style={{ display: 'none' }} id="questionImage" />
+                <label htmlFor="questionImage" style={styles.imageOverlay} />
+              </TouchableOpacity>
+            )}
+
+            {/* Answer Choices */}
+            {currentQuestion.type === 'multipleChoice' ? (
+              currentQuestion.answers.map((ans, i) => (
+                <View key={i} style={styles.answerRow}>
+                  <TextInput
+                    style={styles.answerInput}
+                    value={ans}
+                    onChangeText={(t) => {
+                      const newAnswers = [...currentQuestion.answers];
+                      newAnswers[i] = t;
+                      updateCurrentQuestion({ answers: newAnswers });
+                    }}
+                    placeholder={`Answer ${i + 1}`}
+                  />
                   <TouchableOpacity
-                    key={type}
                     style={[
-                      styles.radioBtn,
-                      currentQuestion.type === type && styles.radioBtnSelected,
+                      styles.correctToggle,
+                      currentQuestion.correctAnswers[i] && styles.correctToggleActive,
                     ]}
                     onPress={() => {
-                      setCurrentQuestion((prev) => ({
-                        ...prev,
-                        type,
-                        ...(type === 'trueFalse'
-                          ? {
-                              answers: ['True', 'False'],
-                              correctAnswers: [false, false],
-                            }
-                          : {
-                              answers: ['', '', '', ''],
-                              correctAnswers: [false, false, false, false],
-                            }),
-                      }));
+                      const newCorrect = [...currentQuestion.correctAnswers];
+                      newCorrect[i] = !newCorrect[i];
+                      updateCurrentQuestion({ correctAnswers: newCorrect });
                     }}
                   >
-                    <Text style={styles.radioBtnText}>
-                      {type === 'multipleChoice' ? 'Multiple Choice' : 'True/False'}
-                    </Text>
+                    <Text style={styles.toggleIcon}>✓</Text>
                   </TouchableOpacity>
+                </View>
+              ))
+            ) : (
+              <View style={styles.trueFalseRow}>
+                {['True', 'False'].map((label, i) => (
+                  <TouchableOpacity
+                    key={i}
+                    style={[
+                      styles.tfBtn,
+                      currentQuestion.correctAnswers[i] && styles.tfBtnCorrect,
+                    ]}
+                    onPress={() => updateCurrentQuestion({ correctAnswers: i === 0 ? [true, false] : [false, true] })}
+                  >
+                    <Text style={styles.tfText}>{label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+
+            {/* Time & Points */}
+            <View style={styles.settingsRow}>
+              <View style={styles.timeSetting}>
+                <Text style={styles.settingLabel}>Time Limit</Text>
+                <TextInput
+                  style={styles.timeInput}
+                  value={currentQuestion.timeLimit.toString()}
+                  onChangeText={(t) => updateCurrentQuestion({ timeLimit: parseInt(t) || 20 })}
+                  keyboardType="numeric"
+                />
+                <Text style={styles.seconds}>seconds</Text>
+              </View>
+              <View style={styles.pointsSetting}>
+                <Text style={styles.settingLabel}>Points</Text>
+                <TouchableOpacity style={styles.pointsBtn}>
+                  <Text style={styles.pointsText}>{currentQuestion.points}</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </ScrollView>
+
+          {/* Right: Game Settings & Preview */}
+          <View style={styles.rightSidebar}>
+            <Text style={styles.previewTitle}>Live Preview</Text>
+            <View style={styles.previewCard}>
+              <Text style={styles.previewQuestion}>{currentQuestion.question || 'Your question appears here'}</Text>
+              {currentQuestion.imageUrl && <View style={styles.previewImagePlaceholder} />}
+              <View style={styles.previewAnswers}>
+                {(currentQuestion.type === 'trueFalse' ? ['True', 'False'] : currentQuestion.answers).map((a, i) => (
+                  <View key={i} style={styles.previewAnswer}>
+                    <Text style={styles.previewAnswerText}>{a || `Answer ${i + 1}`}</Text>
+                  </View>
                 ))}
               </View>
             </View>
 
-            {/* ---- Question Text ---- */}
-            <View style={styles.formGroup}>
-              <Text style={styles.label}>Question</Text>
-              <TextInput
-                style={styles.textarea}
-                value={currentQuestion.question}
-                onChangeText={(t) =>
-                  setCurrentQuestion((p) => ({ ...p, question: t }))
-                }
-                placeholder="Enter your question here..."
-                placeholderTextColor="#666"
-                multiline
-              />
+            <View style={styles.summary}>
+              <Text style={styles.summaryTitle}>Game Summary</Text>
+              <Text style={styles.summaryText}>{questions.length} questions</Text>
+              <Text style={styles.summaryText}>Est. time: ~{questions.reduce((acc, q) => acc + q.timeLimit, 0) / 60} min</Text>
             </View>
 
-            {/* ---- Answers (MC or TF) ---- */}
-            <View style={styles.answerContentContainer}>
-              {/* Multiple-Choice answers */}
-              {currentQuestion.type !== 'trueFalse' && (
-                <View style={styles.formGroup}>
-                  <Text style={styles.label}>Answer Choices</Text>
-                  {currentQuestion.answers.slice(0, 4).map((_, idx) => (
-                    <View key={idx} style={styles.answerRow}>
-                      <TextInput
-                        style={styles.answerInput}
-                        value={currentQuestion.answers[idx]}
-                        onChangeText={(txt) =>
-                          setCurrentQuestion((p) => ({
-                            ...p,
-                            answers: p.answers.map((a, i) =>
-                              i === idx ? txt : a
-                            ),
-                          }))
-                        }
-                        placeholder={`Answer ${idx + 1}`}
-                        placeholderTextColor="#666"
-                      />
-                      <TouchableOpacity
-                        style={[
-                          styles.correctToggle,
-                          currentQuestion.correctAnswers[idx] &&
-                            styles.correctToggleActive,
-                        ]}
-                        onPress={() =>
-                          setCurrentQuestion((p) => ({
-                            ...p,
-                            correctAnswers: p.correctAnswers.map((c, i) =>
-                              i === idx ? !c : c
-                            ),
-                          }))
-                        }
-                      >
-                        <CorrectIcon
-                          isCorrect={currentQuestion.correctAnswers[idx]}
-                        />
-                      </TouchableOpacity>
-                    </View>
-                  ))}
-                </View>
-              )}
-
-              {/* True/False answers (non-editable) */}
-              {currentQuestion.type === 'trueFalse' && (
-                <View style={styles.formGroup}>
-                  <Text style={styles.label}>Answer</Text>
-                  {currentQuestion.answers.map((a, i) => (
-                    <View key={i} style={styles.answerRow}>
-                      <View style={styles.trueFalseAnswerBox}>
-                        <Text style={styles.trueFalseAnswerText}>{a}</Text>
-                      </View>
-                      <TouchableOpacity
-                        style={[
-                          styles.correctToggle,
-                          currentQuestion.correctAnswers[i] &&
-                            styles.correctToggleActive,
-                        ]}
-                        onPress={() =>
-                          setCurrentQuestion((p) => ({
-                            ...p,
-                            correctAnswers: p.correctAnswers.map((c, j) =>
-                              j === i ? !c : false
-                            ),
-                          }))
-                        }
-                      >
-                        <CorrectIcon
-                          isCorrect={currentQuestion.correctAnswers[i]}
-                        />
-                      </TouchableOpacity>
-                    </View>
-                  ))}
-                </View>
-              )}
-            </View>
-
-            {/* ---- Image Upload (web only) ---- */}
-            <div style={styles.uploadContainer}>
-              <input
-                type="file"
-                accept="image/*"
-                onChange={uploadImage}
-                style={styles.hiddenFileInput}
-                id="imageUpload"
-              />
-              <label htmlFor="imageUpload" style={styles.uploadBtn}>
-                <Text style={styles.uploadBtnText}>Upload Image</Text>
-              </label>
-            </div>
-
-            {/* Spacer to keep modal height stable */}
-            <View style={styles.modalSpacer} />
-
-            {/* ---- Modal Buttons ---- */}
-            <View style={styles.modalButtons}>
-              <TouchableOpacity
-                style={styles.cancelBtn}
-                onPress={() => setIsCreateQuestionModalVisible(false)}
-              >
-                <Text style={styles.cancelBtnText}>Cancel</Text>
+            <View style={styles.actionButtons}>
+              <TouchableOpacity style={styles.saveExitBtn} onPress={() => saveGame(false)}>
+                <Text style={styles.actionBtnText}>Save & Exit</Text>
               </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.saveQuestionBtn}
-                onPress={saveQuestion}
-              >
-                <Text style={styles.saveQuestionBtnText}>Save Question</Text>
+              <TouchableOpacity style={styles.saveHostBtn} onPress={() => saveGame(true)}>
+                <Text style={styles.actionBtnText}>Save & Host</Text>
               </TouchableOpacity>
             </View>
           </View>
         </View>
-      </Modal>
-
-      {/* ====================== UNIVERSAL CONFIRM / ALERT MODAL ====================== */}
-      <Modal
-        visible={confirmModal.isOpen}
-        transparent
-        animationType="fade"
-        onRequestClose={() =>
-          setConfirmModal({ ...confirmModal, isOpen: false })
-        }
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.confirmModal}>
-            <Text style={styles.confirmModalTitle}>{confirmModal.title}</Text>
-            <Text style={styles.confirmModalText}>{confirmModal.message}</Text>
-
-            <View style={styles.confirmModalButtons}>
-              {confirmModal.showSaveOption ? (
-                <>
-                  {/* Discard changes */}
-                  <TouchableOpacity
-                    style={styles.confirmModalDiscard}
-                    onPress={confirmModal.onConfirm}
-                  >
-                    <Text style={styles.confirmModalDiscardText}>
-                      Discard Changes
-                    </Text>
-                  </TouchableOpacity>
-
-                  {/* Save then exit */}
-                  <TouchableOpacity
-                    style={styles.confirmModalSave}
-                    onPress={confirmModal.onSave}
-                  >
-                    <Text style={styles.confirmModalSaveText}>Save & Exit</Text>
-                  </TouchableOpacity>
-
-                  {/* Stay on screen */}
-                  <TouchableOpacity
-                    style={styles.confirmModalResume}
-                    onPress={confirmModal.onCancel}
-                  >
-                    <Text style={styles.confirmModalResumeText}>
-                      Resume Editing
-                    </Text>
-                  </TouchableOpacity>
-                </>
-              ) : (
-                /* Simple OK button */
-                <TouchableOpacity
-                  style={styles.confirmModalConfirm}
-                  onPress={confirmModal.onConfirm}
-                >
-                  <Text style={styles.confirmModalConfirmText}>OK</Text>
-                </TouchableOpacity>
-              )}
-            </View>
-          </View>
-        </View>
-      </Modal>
+      </DragDropContext>
     </View>
   );
 }
 
-/* ================================================================
- * STYLESHEET – every property is explained
- * ================================================================ */
 const styles = StyleSheet.create({
-  /* ----------------------------------------------------------------
-   * LAYOUT & CONTAINERS
-   * ---------------------------------------------------------------- */
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#111', // Dark background while loading
-  },
-  container: {
-    flex: 1,
-    backgroundColor: '#111', // Overall page background
-  },
-
-  /* ----------------------------------------------------------------
-   * HEADER (top bar)
-   * ---------------------------------------------------------------- */
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 20,
-    backgroundColor: '#222',
-    borderBottomWidth: 1,
-    borderBottomColor: '#333',
-  },
-  headerSpacer: {
-    width: 100, // Empty space on left/right of title
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#fff',
-  },
-
-  /* ----------------------------------------------------------------
-   * MAIN CONTENT AREA (scrollable)
-   * ---------------------------------------------------------------- */
-  mainContent: {
-    flex: 1,
-  },
-
-  /* ----------------------------------------------------------------
-   * SIDEBAR (fixed on the left side)
-   * ---------------------------------------------------------------- */
-  sidebar: {
-    position: 'absolute',
-    left: 20,
-    top: 80,
-    width: 300,
-    zIndex: 10, // Stays above scrolling content
-  },
-  centerContent: {
-    marginLeft: 340, // Leaves room for the sidebar
-    padding: 20,
-  },
-  questionsList: {
-    flexGrow: 1,
-  },
-
-  /* ----------------------------------------------------------------
-   * FORM INPUTS & LABELS
-   * ---------------------------------------------------------------- */
-  formGroup: {
-    marginBottom: 20,
-    width: '100%',
-  },
-  label: {
-    fontSize: 14,
-    color: '#fff',
-    marginBottom: 8,
-    fontWeight: 'bold',
-  },
-
-  /* Title row (shows current title + edit icon) */
-  titleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#333',
-    padding: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#444',
-  },
-  titleLabel: {
-    flex: 1,
-    color: '#fff',
-    fontSize: 16,
-  },
-  editTitleBtn: {
-    padding: 4,
-  },
-  editIcon: {
-    width: 20,
-    height: 20,
-    tintColor: '#888',
-  },
-
-  /* General text input */
-  input: {
-    backgroundColor: '#333',
-    color: '#fff',
-    padding: 12,
-    borderRadius: 8,
-    fontSize: 16,
-    borderWidth: 1,
-    borderColor: '#444',
-  },
-
-  /* Quick preview box under the title/tags */
-  previewText: {
-    backgroundColor: '#333',
-    color: '#ccc',
-    padding: 12,
-    borderRadius: 8,
-    fontSize: 14,
-  },
-
-  /* ----------------------------------------------------------------
-   * BUTTONS (sidebar)
-   * ---------------------------------------------------------------- */
-  createQuestionBtn: {
-    backgroundColor: '#00c781',
-    padding: 15,
-    borderRadius: 8,
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  createQuestionBtnText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  importBtn: {
-    backgroundColor: '#666',
-    padding: 15,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  importBtnText: {
-    color: '#fff',
-    fontSize: 16,
-  },
-
-  /* ----------------------------------------------------------------
-   * QUESTION PREVIEW BLOCK (center column)
-   * ---------------------------------------------------------------- */
-  questionBlock: {
-    backgroundColor: '#222',
-    borderRadius: 12,
-    padding: 20,
-    marginBottom: 20,
-    borderWidth: 1,
-    borderColor: '#333',
-  },
-  questionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 10,
-  },
-  questionText: {
-    flex: 1,
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#fff',
-    marginRight: 10,
-  },
-  questionTypeLabel: {
-    fontSize: 12,
-    color: '#00c781',
-    marginTop: 4,
-  },
-  questionActions: {
-    flexDirection: 'row',
-  },
-  editBtn: {
-    backgroundColor: '#00c781',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 6,
-    marginRight: 8,
-  },
-  editBtnText: {
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: 'bold',
-  },
-  deleteBtn: {
-    backgroundColor: '#e74c3c',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 6,
-  },
-  deleteBtnText: {
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: 'bold',
-  },
-
-  previewImageContainer: {
-    marginBottom: 15,
-  },
-  previewImage: {
-    width: '100%',
-    height: 200,
-    borderRadius: 8,
-  },
-
-  answersContainer: {
-    marginTop: 10,
-  },
-  answerOption: {
-    backgroundColor: '#333',
-    padding: 12,
-    borderRadius: 8,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: '#444',
-  },
-  correctAnswer: {
-    backgroundColor: '#00c781',
-    borderColor: '#00a670',
-  },
-  answerText: {
-    color: '#fff',
-    fontSize: 14,
-  },
-
-  /* ----------------------------------------------------------------
-   * BOTTOM ACTION BAR (fixed at the bottom)
-   * ---------------------------------------------------------------- */
-  bottomActions: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    padding: 20,
-    backgroundColor: '#222',
-    borderTopWidth: 1,
-    borderTopColor: '#333',
-    gap: 10,
-  },
-  cancelBtnBottom: {
-    flex: 1,
-    backgroundColor: '#e74c3c',
-    padding: 15,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  cancelBtnText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  saveExitBtn: {
-    flex: 1,
-    padding: 15,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  saveExitBtnText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  saveHostBtn: {
-    flex: 1,
-    backgroundColor: '#00c781',
-    padding: 15,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  saveHostBtnText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-
-  /* ----------------------------------------------------------------
-   * MODAL OVERLAY (darkens background)
-   * ---------------------------------------------------------------- */
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.8)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-
-  /* ----------------------------------------------------------------
-   * QUESTION EDITOR MODAL
-   * ---------------------------------------------------------------- */
-  questionModal: {
-    backgroundColor: '#222',
-    borderRadius: 12,
-    padding: 25,
-    width: '28%',
-    minHeight: 620,
-    maxHeight: '85%',
-    justifyContent: 'flex-start',
-    overflow: 'hidden',
-  },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#fff',
-    marginBottom: 20,
-    textAlign: 'center',
-  },
-
-  /* Radio-style type selector */
-  radioGroup: {
-    flexDirection: 'row',
-    justifyContent: 'flex-start',
-    alignItems: 'center',
-    gap: 24,
-    marginBottom: 15,
-    paddingLeft: 2,
-  },
-  radioBtn: {
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#444',
-    minWidth: 130,
-  },
-  radioBtnSelected: {
-    backgroundColor: '#00c781',
-    borderColor: '#00a670',
-  },
-  radioBtnText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: 'bold',
-    textAlign: 'center',
-  },
-
-  /* Textarea for the question */
-  textarea: {
-    backgroundColor: '#333',
-    color: '#fff',
-    padding: 12,
-    borderRadius: 8,
-    fontSize: 16,
-    borderWidth: 1,
-    borderColor: '#444',
-    minHeight: 80,
-    textAlignVertical: 'top',
-  },
-
-  /* Container that keeps MC and TF the same height */
-  answerContentContainer: {
-    flexGrow: 1,
-    minHeight: 280,
-    justifyContent: 'flex-start',
-  },
-
-  /* Row that holds an answer input + correct-toggle */
-  answerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-
-  /* MC answer input */
-  answerInput: {
-    flex: 1,
-    backgroundColor: '#333',
-    color: '#fff',
-    padding: 10,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#444',
-    marginRight: 10,
-    fontSize: 16,
-  },
-
-  /* TF answer (non-editable) */
-  trueFalseAnswerBox: {
-    flex: 1,
-    backgroundColor: '#333',
-    padding: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#444',
-    marginRight: 10,
-    justifyContent: 'center',
-  },
-  trueFalseAnswerText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '500',
-  },
-
-  /* Correct-toggle circle */
-  correctToggle: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#444',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 2,
-    borderColor: '#555',
-  },
-  correctToggleActive: {
-    backgroundColor: '#00c781',
-    borderColor: '#00a670',
-  },
-  correctToggleIcon: {
-    width: 20,
-    height: 20,
-  },
-
-  /* Image upload area (web only) */
-  uploadContainer: {
-    marginTop: 10,
-    marginBottom: 20,
-  },
-  hiddenFileInput: {
-    display: 'none',
-  },
-  uploadBtn: {
-    display: 'inline-block',
-    backgroundColor: '#666',
-    padding: 12,
-    borderRadius: 8,
-    cursor: 'pointer',
-    border: 'none',
-  },
-  uploadBtnText: {
-    color: '#fff',
-    fontSize: 14,
-  },
-
-  /* Spacer to keep modal height consistent */
-  modalSpacer: {
-    flexGrow: 1,
-    minHeight: 20,
-  },
-
-  /* Modal button row */
-  modalButtons: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  cancelBtn: {
-    flex: 1,
-    backgroundColor: '#666',
-    padding: 12,
-    borderRadius: 8,
-    alignItems: 'center',
-    marginRight: 10,
-  },
-  cancelBtnText: {
-    color: '#fff',
-    fontSize: 16,
-  },
-  saveQuestionBtn: {
-    flex: 1,
-    backgroundColor: '#00c781',
-    padding: 12,
-    borderRadius: 8,
-    alignItems: 'center',
-    marginLeft: 10,
-  },
-  saveQuestionBtnText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-
-  /* ----------------------------------------------------------------
-   * CONFIRM / ALERT MODAL
-   * ---------------------------------------------------------------- */
-  confirmModal: {
-    backgroundColor: '#222',
-    borderRadius: 12,
-    padding: 20,
-    width: 340,
-    alignSelf: 'center',
-  },
-  confirmModalTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#fff',
-    marginBottom: 8,
-    textAlign: 'center',
-  },
-  confirmModalText: {
-    fontSize: 15,
-    color: '#ccc',
-    marginBottom: 20,
-    lineHeight: 20,
-    textAlign: 'center',
-  },
-  confirmModalButtons: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 8,
-  },
-  confirmModalDiscard: {
-    flex: 1,
-    backgroundColor: '#e74c3c',
-    paddingVertical: 10,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  confirmModalDiscardText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: 'bold',
-  },
-  confirmModalSave: {
-    flex: 1,
-    backgroundColor: '#00c781',
-    paddingVertical: 10,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  confirmModalSaveText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: 'bold',
-  },
-  confirmModalResume: {
-    flex: 1,
-    backgroundColor: '#666',
-    paddingVertical: 10,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  confirmModalResumeText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: 'bold',
-  },
-  confirmModalConfirm: {
-    flex: 1,
-    backgroundColor: '#00c781',
-    paddingVertical: 10,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  confirmModalConfirmText: {
-    color: '#fff',
-    fontSize: 15,
-    fontWeight: 'bold',
-  },
-
-  /* ----------------------------------------------------------------
-   * TITLE EDIT MODAL
-   * ---------------------------------------------------------------- */
-  titleModal: {
-    backgroundColor: '#222',
-    borderRadius: 12,
-    padding: 20,
-    width: 340,
-    alignSelf: 'center',
-  },
-  titleModalHeader: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#fff',
-    marginBottom: 12,
-    textAlign: 'center',
-  },
-  titleInput: {
-    backgroundColor: '#333',
-    color: '#fff',
-    padding: 12,
-    borderRadius: 8,
-    fontSize: 16,
-    marginBottom: 20,
-  },
-  titleModalButtons: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  titleModalCancel: {
-    flex: 1,
-    backgroundColor: '#444',
-    paddingVertical: 10,
-    marginRight: 8,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  titleModalCancelText: {
-    color: '#fff',
-    fontWeight: 'bold',
-  },
-  titleModalSave: {
-    flex: 1,
-    backgroundColor: '#00c781',
-    paddingVertical: 10,
-    marginLeft: 8,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  titleModalSaveText: {
-    color: '#fff',
-    fontWeight: 'bold',
-  },
-  disabledBtn: {
-    opacity: 0.5,
-  },
+  container: { flex: 1, backgroundColor: '#111' },
+  loading: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#111' },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 20, backgroundColor: '#0d0d0d', borderBottomWidth: 1, borderBottomColor: '#222' },
+  backBtn: { color: '#00c781', fontSize: 18, fontWeight: 'bold' },
+  headerTitle: { fontSize: 24, fontWeight: 'bold', color: '#fff' },
+  coverSection: { flexDirection: 'row', padding: 30, gap: 30, backgroundColor: '#0d0d0d' },
+  coverUpload: { width: 200, height: 200, backgroundColor: '#1e1e1e', borderRadius: 16, justifyContent: 'center', alignItems: 'center', position: 'relative' },
+  coverImage: { width: '100%', height: '100%', borderRadius: 16 },
+  coverPlaceholder: { color: '#666', fontSize: 16 },
+  coverOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', borderRadius: 16 },
+  coverOverlayText: { color: '#fff', fontWeight: 'bold' },
+  titleSection: { flex: 1, justifyContent: 'center' },
+  gameTitleInput: { fontSize: 36, fontWeight: 'bold', color: '#fff', backgroundColor: 'transparent', borderBottomWidth: 2, borderBottomColor: '#00c781', paddingBottom: 10, marginBottom: 20 },
+  tagsInput: { fontSize: 16, color: '#aaa', backgroundColor: '#222', padding: 12, borderRadius: 8 },
+  mainLayout: { flex: 1, flexDirection: 'row' },
+  leftSidebar: { width: 300, backgroundColor: '#0d0d0d', padding: 20, borderRightWidth: 1, borderRightColor: '#222' },
+  addQuestionBtn: { backgroundColor: '#00c781', padding: 16, borderRadius: 12, alignItems: 'center', marginBottom: 20 },
+  addQuestionText: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
+  questionList: { flex: 1 },
+  questionThumb: { backgroundColor: '#1e1e1e', borderRadius: 12, padding: 12, marginBottom: 12, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: 'transparent' },
+  questionThumbDragging: { opacity: 0.8 },
+  questionThumbSelected: { borderColor: '#00c781', backgroundColor: '#003322' },
+  thumbNumber: { color: '#00c781', fontWeight: 'bold', marginRight: 12, fontSize: 16 },
+  thumbText: { color: '#fff', flex: 1 },
+  centerEditor: { flex: 1, padding: 40, backgroundColor: '#111' },
+  editorLabel: { fontSize: 18, color: '#aaa', marginBottom: 20 },
+  questionInput: { fontSize: 28, color: '#fff', backgroundColor: '#1e1e1e', padding: 20, borderRadius: 16, minHeight: 120, marginBottom: 20 },
+  imageUpload: { height: 200, backgroundColor: '#1e1e1e', borderRadius: 16, justifyContent: 'center', alignItems: 'center', marginBottom: 20, position: 'relative' },
+  imageUploadText: { color: '#666', fontSize: 16 },
+  imageOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
+  questionImage: { width: '100%', height: 200, borderRadius: 16, marginBottom: 20 },
+  answerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
+  answerInput: { flex: 1, backgroundColor: '#1e1e1e', color: '#fff', padding: 16, borderRadius: 12, fontSize: 18 },
+  correctToggle: { width: 50, height: 50, backgroundColor: '#333', borderRadius: 25, marginLeft: 12, justifyContent: 'center', alignItems: 'center' },
+  correctToggleActive: { backgroundColor: '#00c781' },
+  toggleIcon: { color: '#fff', fontSize: 24, fontWeight: 'bold' },
+  trueFalseRow: { flexDirection: 'row', gap: 20, marginBottom: 20 },
+  tfBtn: { flex: 1, backgroundColor: '#1e1e1e', padding: 20, borderRadius: 16, alignItems: 'center' },
+  tfBtnCorrect: { backgroundColor: '#00c781' },
+  tfText: { color: '#fff', fontSize: 20, fontWeight: 'bold' },
+  settingsRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 30 },
+  timeSetting: { flexDirection: 'row', alignItems: 'center' },
+  settingLabel: { color: '#aaa', marginRight: 12 },
+  timeInput: { backgroundColor: '#1e1e1e', color: '#fff', width: 60, padding: 10, borderRadius: 8, textAlign: 'center' },
+  seconds: { color: '#aaa', marginLeft: 8 },
+  pointsSetting: { flexDirection: 'row', alignItems: 'center' },
+  pointsBtn: { backgroundColor: '#1e1e1e', paddingHorizontal: 20, paddingVertical: 10, borderRadius: 8 },
+  pointsText: { color: '#fff' },
+  rightSidebar: { width: 400, backgroundColor: '#0d0d0d', padding: 30, borderLeftWidth: 1, borderLeftColor: '#222' },
+  previewTitle: { fontSize: 20, fontWeight: 'bold', color: '#fff', marginBottom: 20 },
+  previewCard: { backgroundColor: '#1e1e1e', borderRadius: 16, padding: 20, marginBottom: 30 },
+  previewQuestion: { fontSize: 24, color: '#fff', marginBottom: 20 },
+  previewImagePlaceholder: { height: 150, backgroundColor: '#333', borderRadius: 12, marginBottom: 20 },
+  previewAnswers: { gap: 12 },
+  previewAnswer: { backgroundColor: '#333', padding: 20, borderRadius: 12 },
+  previewAnswerText: { color: '#fff', fontSize: 18 },
+  summary: { marginBottom: 40 },
+  summaryTitle: { fontSize: 18, color: '#aaa', marginBottom: 12 },
+  summaryText: { color: '#ccc', fontSize: 16, marginBottom: 8 },
+  actionButtons: { gap: 12 },
+  saveExitBtn: { backgroundColor: '#333', padding: 16, borderRadius: 12, alignItems: 'center' },
+  saveHostBtn: { backgroundColor: '#00c781', padding: 16, borderRadius: 12, alignItems: 'center' },
+  actionBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
 });
