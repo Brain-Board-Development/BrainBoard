@@ -1,7 +1,6 @@
 /**
- * TeacherDashboard.js - FINAL BUG-FREE VERSION
- * Clean dark theme, modern sidebar with icons
- * No jiggle, no errors, all modals working
+ * TeacherDashboard.js - FINAL CORRECTED VERSION WITH SETTINGS TAB
+ * No syntax errors, no jiggle, reusable modal
  */
 
 import React, { useState, useEffect } from 'react';
@@ -33,6 +32,30 @@ import { signOut } from 'firebase/auth';
 import { ref as storageRef, deleteObject } from 'firebase/storage';
 import { storage } from '../firebaseConfig';
 
+// Reusable Confirmation Modal
+const ConfirmationModal = ({ isOpen, title, message, onConfirm, onCancel, confirmText = 'Confirm', cancelText = 'Cancel' }) => {
+  if (!isOpen) return null;
+
+  return (
+    <Modal visible={isOpen} transparent animationType="fade">
+      <View style={styles.modalOverlay}>
+        <View style={styles.confirmModal}>
+          <Text style={styles.confirmModalTitle}>{title}</Text>
+          <Text style={styles.confirmModalText}>{message}</Text>
+          <View style={styles.confirmModalButtons}>
+            <TouchableOpacity style={styles.confirmModalCancel} onPress={onCancel}>
+              <Text style={styles.confirmModalCancelText}>{cancelText}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.confirmModalConfirm} onPress={onConfirm}>
+              <Text style={styles.confirmModalConfirmText}>{confirmText}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+};
+
 export default function TeacherDashboard({ navigation, route }) {
   const [hoveredButton, setHoveredButton] = useState(null);
   const [myGames, setMyGames] = useState([]);
@@ -43,10 +66,16 @@ export default function TeacherDashboard({ navigation, route }) {
   const [currentTab, setCurrentTab] = useState('home');
   const [filter, setFilter] = useState('all');
 
-  const [deleteModal, setDeleteModal] = useState({ isOpen: false, gameId: null, gameTitle: '' });
-  const [publishModal, setPublishModal] = useState({ isOpen: false, gameId: null, gameTitle: '', willPublish: true });
   const [titleModal, setTitleModal] = useState({ isOpen: false, currentTitle: '', onSave: () => {} });
-  const [logoutModal, setLogoutModal] = useState(false); // Logout confirmation
+  const [confirmModal, setConfirmModal] = useState({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {},
+    onCancel: () => {},
+    confirmText: 'Confirm',
+    cancelText: 'Cancel',
+  });
 
   useEffect(() => {
     const fetchData = async () => {
@@ -98,58 +127,77 @@ export default function TeacherDashboard({ navigation, route }) {
   };
 
   const handleLogout = () => {
-    setLogoutModal(true);
+    setConfirmModal({
+      isOpen: true,
+      title: 'Log out?',
+      message: 'Are you sure you want to log out of Brain Board?',
+      onConfirm: async () => {
+        await signOut(auth);
+        await AsyncStorage.removeItem('userToken');
+        navigation.reset({ index: 0, routes: [{ name: 'Home' }] });
+      },
+      onCancel: () => setConfirmModal(prev => ({ ...prev, isOpen: false })),
+      confirmText: 'Log out',
+    });
   };
 
-  const confirmLogout = async () => {
-    setLogoutModal(false);
-    await signOut(auth);
-    await AsyncStorage.removeItem('userToken');
-    navigation.reset({ index: 0, routes: [{ name: 'Home' }] });
-  };
+  const confirmDelete = (gameId, gameTitle) => {
+    setConfirmModal({
+      isOpen: true,
+      title: 'Delete Game?',
+      message: `Are you sure you want to delete "${gameTitle}"? This cannot be undone.`,
+      onConfirm: async () => {
+        if (deletingIds.has(gameId)) return;
+        setDeletingIds(prev => new Set(prev).add(gameId));
 
-  const confirmDelete = async () => {
-    const { gameId } = deleteModal;
-    if (!gameId || deletingIds.has(gameId)) return;
-
-    setDeletingIds(prev => new Set(prev).add(gameId));
-    setDeleteModal({ isOpen: false, gameId: null, gameTitle: '' });
-
-    try {
-      const gameDocRef = doc(db, 'games', gameId);
-      const gameSnap = await getDoc(gameDocRef);
-      if (gameSnap.exists()) {
-        const data = gameSnap.data();
-        if (data.images && Array.isArray(data.images)) {
-          await Promise.all(data.images.map(async url => {
-            try {
-              const path = decodeURIComponent(url.split('/o/')[1].split('?')[0]);
-              await deleteObject(storageRef(storage, path));
-            } catch (err) { console.warn('Image delete failed:', err); }
-          }));
+        try {
+          const gameDocRef = doc(db, 'games', gameId);
+          const gameSnap = await getDoc(gameDocRef);
+          if (gameSnap.exists()) {
+            const data = gameSnap.data();
+            if (data.images && Array.isArray(data.images)) {
+              await Promise.all(data.images.map(async url => {
+                try {
+                  const path = decodeURIComponent(url.split('/o/')[1].split('?')[0]);
+                  await deleteObject(storageRef(storage, path));
+                } catch (err) { console.warn('Image delete failed:', err); }
+              }));
+            }
+          }
+          await deleteDoc(gameDocRef);
+          setMyGames(prev => prev.filter(g => g.id !== gameId));
+        } catch (error) {
+          console.error('Delete failed:', error);
+        } finally {
+          setDeletingIds(prev => { const s = new Set(prev); s.delete(gameId); return s; });
+          setConfirmModal(prev => ({ ...prev, isOpen: false }));
         }
-      }
-      await deleteDoc(gameDocRef);
-      setMyGames(prev => prev.filter(g => g.id !== gameId));
-    } catch (error) {
-      console.error('Delete failed:', error);
-    } finally {
-      setDeletingIds(prev => { const s = new Set(prev); s.delete(gameId); return s; });
-    }
+      },
+      onCancel: () => setConfirmModal(prev => ({ ...prev, isOpen: false })),
+      confirmText: 'Delete',
+    });
   };
 
-  const confirmPublishToggle = async () => {
-    const { gameId, willPublish } = publishModal;
-    if (!gameId) return;
-
-    try {
-      await updateDoc(doc(db, 'games', gameId), { isPublished: willPublish });
-      setMyGames(prev => prev.map(g => g.id === gameId ? { ...g, isPublished: willPublish } : g));
-    } catch (error) {
-      console.error('Publish toggle failed:', error);
-    } finally {
-      setPublishModal({ isOpen: false, gameId: null, gameTitle: '', willPublish: true });
-    }
+  const confirmPublishToggle = (gameId, gameTitle, currentPublished) => {
+    setConfirmModal({
+      isOpen: true,
+      title: currentPublished ? 'Unpublish Game?' : 'Publish Game?',
+      message: currentPublished
+        ? `"${gameTitle}" will no longer be public.`
+        : `"${gameTitle}" will be visible in Discover.`,
+      onConfirm: async () => {
+        try {
+          await updateDoc(doc(db, 'games', gameId), { isPublished: !currentPublished });
+          setMyGames(prev => prev.map(g => g.id === gameId ? { ...g, isPublished: !currentPublished } : g));
+        } catch (error) {
+          console.error('Publish toggle failed:', error);
+        } finally {
+          setConfirmModal(prev => ({ ...prev, isOpen: false }));
+        }
+      },
+      onCancel: () => setConfirmModal(prev => ({ ...prev, isOpen: false })),
+      confirmText: currentPublished ? 'Unpublish' : 'Publish',
+    });
   };
 
   const copyGame = async (game) => {
@@ -206,10 +254,10 @@ export default function TeacherDashboard({ navigation, route }) {
                 <Text style={styles.btnText}>Edit</Text>
               </TouchableOpacity>
               <TouchableOpacity style={[styles.publishBtn, item.isPublished && styles.unpublishBtn]}
-                onPress={() => setPublishModal({ isOpen: true, gameId: item.id, gameTitle: item.title, willPublish: !item.isPublished })}>
+                onPress={() => confirmPublishToggle(item.id, item.title, item.isPublished)}>
                 <Text style={styles.btnText}>{item.isPublished ? 'Unpublish' : 'Publish'}</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.deleteBtn} onPress={() => setDeleteModal({ isOpen: true, gameId: item.id, gameTitle: item.title })}>
+              <TouchableOpacity style={styles.deleteBtn} onPress={() => confirmDelete(item.id, item.title)}>
                 {deletingIds.has(item.id) ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.btnText}>Delete</Text>}
               </TouchableOpacity>
             </>
@@ -229,7 +277,6 @@ export default function TeacherDashboard({ navigation, route }) {
       <View style={styles.sidebar}>
         <Text style={styles.logo}>Brain Board</Text>
         
-        {/* Home */}
         <TouchableOpacity 
           style={[
             styles.tabRow,
@@ -249,7 +296,6 @@ export default function TeacherDashboard({ navigation, route }) {
           ]}>Home</Text>
         </TouchableOpacity>
         
-        {/* Your library */}
         <TouchableOpacity 
           style={[
             styles.tabRow,
@@ -269,7 +315,6 @@ export default function TeacherDashboard({ navigation, route }) {
           ]}>Your library</Text>
         </TouchableOpacity>
         
-        {/* Discover */}
         <TouchableOpacity 
           style={[
             styles.tabRow,
@@ -304,7 +349,21 @@ export default function TeacherDashboard({ navigation, route }) {
           <Image source={require('../assets/profile.png')} style={styles.tabIcon} resizeMode="contain" />
           <Text style={styles.tabLabel}>Profile</Text>
         </TouchableOpacity>
-        
+
+        {/* Settings */}
+        <TouchableOpacity 
+          style={[
+            styles.tabRow,
+            hoveredButton === 'settings' && styles.tabRowActive,
+          ]}
+          onPress={() => navigation.navigate('Settings')} // Change to your Settings screen name
+          onMouseEnter={() => setHoveredButton('settings')}
+          onMouseLeave={() => setHoveredButton(null)}
+        >
+          <Image source={require('../assets/settings.png')} style={styles.tabIcon} resizeMode="contain" />
+          <Text style={styles.tabLabel}>Settings</Text>
+        </TouchableOpacity>
+
         {/* Logout */}
         <TouchableOpacity 
           style={[
@@ -392,7 +451,7 @@ export default function TeacherDashboard({ navigation, route }) {
         )}
       </View>
 
-      {/* Title Modal */}
+      {/* Title Creation Modal */}
       <Modal visible={titleModal.isOpen} transparent animationType="fade">
         <View style={styles.modalOverlay}>
           <View style={styles.titleModal}>
@@ -421,71 +480,16 @@ export default function TeacherDashboard({ navigation, route }) {
         </View>
       </Modal>
 
-      {/* Delete Modal */}
-      <Modal visible={deleteModal.isOpen} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
-          <View style={styles.deleteModal}>
-            <Text style={styles.deleteModalTitle}>Delete Game?</Text>
-            <Text style={styles.deleteModalText}>
-              Are you sure you want to delete "{deleteModal.gameTitle}"? This cannot be undone.
-            </Text>
-            <View style={styles.deleteModalButtons}>
-              <TouchableOpacity style={styles.deleteModalCancel} onPress={() => setDeleteModal({ isOpen: false, gameId: null, gameTitle: '' })}>
-                <Text style={styles.deleteModalCancelText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.deleteModalConfirm} onPress={confirmDelete}>
-                <Text style={styles.deleteModalConfirmText}>Delete</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* Publish Modal */}
-      <Modal visible={publishModal.isOpen} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
-          <View style={styles.deleteModal}>
-            <Text style={styles.deleteModalTitle}>
-              {publishModal.willPublish ? 'Publish Game?' : 'Unpublish Game?'}
-            </Text>
-            <Text style={styles.deleteModalText}>
-              {publishModal.willPublish
-                ? `"${publishModal.gameTitle}" will be visible in Discover.`
-                : `"${publishModal.gameTitle}" will no longer be public.`}
-            </Text>
-            <View style={styles.deleteModalButtons}>
-              <TouchableOpacity style={styles.deleteModalCancel} onPress={() => setPublishModal({ isOpen: false, gameId: null, gameTitle: '', willPublish: true })}>
-                <Text style={styles.deleteModalCancelText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.deleteModalConfirm} onPress={confirmPublishToggle}>
-                <Text style={styles.deleteModalConfirmText}>
-                  {publishModal.willPublish ? 'Publish' : 'Unpublish'}
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* Logout Confirmation Modal */}
-      <Modal visible={logoutModal} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
-          <View style={styles.deleteModal}>
-            <Text style={styles.deleteModalTitle}>Log out?</Text>
-            <Text style={styles.deleteModalText}>
-              Are you sure you want to log out of Brain Board?
-            </Text>
-            <View style={styles.deleteModalButtons}>
-              <TouchableOpacity style={styles.deleteModalCancel} onPress={() => setLogoutModal(false)}>
-                <Text style={styles.deleteModalCancelText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.deleteModalConfirm} onPress={confirmLogout}>
-                <Text style={styles.deleteModalConfirmText}>Log out</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
+      {/* Reusable Confirmation Modal */}
+      <ConfirmationModal
+        isOpen={confirmModal.isOpen}
+        title={confirmModal.title}
+        message={confirmModal.message}
+        onConfirm={confirmModal.onConfirm}
+        onCancel={confirmModal.onCancel}
+        confirmText={confirmModal.confirmText}
+        cancelText={confirmModal.cancelText}
+      />
     </View>
   );
 }
@@ -515,11 +519,10 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     marginBottom: 8,
     borderWidth: 1,
-    borderColor: 'transparent', // Prevents layout shift
+    borderColor: 'transparent',
   },
   tabRowActive: {
     backgroundColor: '#003322',
-    //borderColor: '#00c781', I prefer it without border
   },
   tabIcon: {
     width: 24,
@@ -583,6 +586,14 @@ const styles = StyleSheet.create({
   btnText: { color: '#fff', fontSize: 13, fontWeight: 'bold' },
   emptyText: { color: '#666', fontSize: 18, textAlign: 'center', marginTop: 100 },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.8)', justifyContent: 'center', alignItems: 'center' },
+  confirmModal: { backgroundColor: '#1e1e1e', borderRadius: 16, padding: 24, width: 360, borderWidth: 1, borderColor: '#333' },
+  confirmModalTitle: { fontSize: 20, fontWeight: 'bold', color: '#fff', marginBottom: 12, textAlign: 'center' },
+  confirmModalText: { fontSize: 15, color: '#ccc', marginBottom: 24, textAlign: 'center', lineHeight: 22 },
+  confirmModalButtons: { flexDirection: 'row', justifyContent: 'space-between', gap: 12 },
+  confirmModalCancel: { flex: 1, backgroundColor: '#444', paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
+  confirmModalCancelText: { color: '#fff', fontWeight: 'bold' },
+  confirmModalConfirm: { flex: 1, backgroundColor: '#c0392b', paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
+  confirmModalConfirmText: { color: '#fff', fontWeight: 'bold' },
   titleModal: { backgroundColor: '#1e1e1e', borderRadius: 16, padding: 24, width: 380, borderWidth: 1, borderColor: '#333' },
   titleModalHeader: { fontSize: 22, fontWeight: 'bold', color: '#fff', marginBottom: 16, textAlign: 'center' },
   titleInput: { backgroundColor: '#2a2a2a', color: '#fff', padding: 14, borderRadius: 12, fontSize: 16, marginBottom: 20, borderWidth: 1, borderColor: '#444' },
@@ -592,12 +603,4 @@ const styles = StyleSheet.create({
   titleModalSave: { flex: 1, backgroundColor: '#00c781', paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
   titleModalSaveText: { color: '#fff', fontWeight: 'bold' },
   disabledBtn: { opacity: 0.5 },
-  deleteModal: { backgroundColor: '#1e1e1e', borderRadius: 16, padding: 24, width: 360, borderWidth: 1, borderColor: '#333' },
-  deleteModalTitle: { fontSize: 20, fontWeight: 'bold', color: '#fff', marginBottom: 12, textAlign: 'center' },
-  deleteModalText: { fontSize: 15, color: '#ccc', marginBottom: 24, textAlign: 'center', lineHeight: 22 },
-  deleteModalButtons: { flexDirection: 'row', justifyContent: 'space-between', gap: 12 },
-  deleteModalCancel: { flex: 1, backgroundColor: '#444', paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
-  deleteModalCancelText: { color: '#fff', fontWeight: 'bold' },
-  deleteModalConfirm: { flex: 1, backgroundColor: '#c0392b', paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
-  deleteModalConfirmText: { color: '#fff', fontWeight: 'bold' },
 });
