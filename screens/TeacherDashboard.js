@@ -1,6 +1,8 @@
 /**
  * TeacherDashboard.js - FINAL CORRECTED VERSION WITH SETTINGS TAB
  * No syntax errors, no jiggle, reusable modal
+ *
+ * Updated: show publisher username on each game card in the Discover page.
  */
 
 import React, { useState, useEffect } from 'react';
@@ -85,9 +87,11 @@ export default function TeacherDashboard({ navigation, route }) {
         return;
       }
 
+      // Load current user doc
       const userDoc = await getDoc(doc(db, 'users', userToken));
       if (userDoc.exists()) setUserData(userDoc.data());
 
+      // Load my games
       const myQ = query(collection(db, 'games'), where('creatorId', '==', userToken));
       const mySnapshot = await getDocs(myQ);
       const fetchedMy = mySnapshot.docs.map(d => ({
@@ -97,9 +101,36 @@ export default function TeacherDashboard({ navigation, route }) {
       }));
       setMyGames(fetchedMy);
 
+      // Load public games and annotate with creator username
       const publicQ = query(collection(db, 'games'), where('isPublished', '==', true));
       const publicSnapshot = await getDocs(publicQ);
-      setPublicGames(publicSnapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+      const publicRaw = publicSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+
+      // collect unique creatorIds to fetch usernames
+      const creatorIds = Array.from(new Set(publicRaw.map(g => g.creatorId).filter(Boolean)));
+      const usersMap = {};
+
+      if (creatorIds.length > 0) {
+        try {
+          const userSnaps = await Promise.all(creatorIds.map(id => getDoc(doc(db, 'users', id))));
+          userSnaps.forEach(s => {
+            if (s.exists()) {
+              const u = s.data();
+              // prefer username field, fallback to displayName or email
+              usersMap[s.id] = u.username || u.displayName || u.email || 'Unknown';
+            }
+          });
+        } catch (err) {
+          console.warn('Failed to fetch creators:', err);
+        }
+      }
+
+      const annotatedPublic = publicRaw.map(g => ({
+        ...g,
+        creatorName: usersMap[g.creatorId] || 'Unknown',
+      }));
+
+      setPublicGames(annotatedPublic);
     };
 
     fetchData();
@@ -110,7 +141,7 @@ export default function TeacherDashboard({ navigation, route }) {
       setMyGames(prev => [...prev, route.params.newGame]);
       navigation.setParams({ newGame: undefined });
     }
-  }, [route.params]);
+  }, [route.params, navigation]);
 
   const totalQuestions = myGames.reduce((acc, g) => acc + (g.numQuestions || 0), 0);
   const recentGames = myGames.slice(0, 8);
@@ -243,6 +274,8 @@ export default function TeacherDashboard({ navigation, route }) {
         </View>
         {item.isPublished && <View style={styles.publishedBadge}><Text style={styles.badgeText}>Published</Text></View>}
         <Text style={styles.gameTitle}>{item.title}</Text>
+        {/* Display creator username on Discover (or whenever available) */}
+        {(!isMine && item.creatorName) && <Text style={styles.creatorText}>{item.creatorName}</Text>}
         <Text style={styles.gameDetails}>{item.numQuestions || 0} questions</Text>
         <View style={styles.buttonRow}>
           <TouchableOpacity style={styles.hostBtn} onPress={() => navigation.navigate('HostGameMenu', { gameId: item.id })}>
@@ -575,6 +608,7 @@ const styles = StyleSheet.create({
   publishedBadge: { position: 'absolute', top: 12, right: 12, backgroundColor: '#00c781', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20 },
   badgeText: { color: '#fff', fontSize: 11, fontWeight: 'bold' },
   gameTitle: { fontSize: 18, fontWeight: 'bold', color: '#fff', marginBottom: 6 },
+  creatorText: { fontSize: 14, color: '#aaa', marginBottom: 6 },
   gameDetails: { fontSize: 14, color: '#aaa', marginBottom: 16 },
   buttonRow: { flexDirection: 'row', gap: 8 },
   hostBtn: { backgroundColor: '#00c781', padding: 10, borderRadius: 10, flex: 1, alignItems: 'center' },
