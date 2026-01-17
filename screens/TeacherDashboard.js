@@ -1,8 +1,10 @@
 /**
- * TeacherDashboard.js - FINAL CORRECTED VERSION WITH SETTINGS TAB
- * No syntax errors, no jiggle, reusable modal
- *
- * Updated: show publisher username on each game card in the Discover page.
+ * TeacherDashboard.js - UPDATED WITH NATIVE SWITCH FROM HOSTGAMEMENU
+ * Host button → HostGameMenu
+ * Play Solo button in preview
+ * Native Switch for "Reveal Answers" (exact style from HostGameMenu)
+ * Square cards on Home + Discover
+ * All styles included
  */
 
 import React, { useState, useEffect } from 'react';
@@ -16,6 +18,9 @@ import {
   Modal,
   ActivityIndicator,
   Image,
+  ScrollView,
+  Dimensions,
+  Switch,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { db, auth } from '../firebaseConfig';
@@ -79,6 +84,9 @@ export default function TeacherDashboard({ navigation, route }) {
     cancelText: 'Cancel',
   });
 
+  const [previewModal, setPreviewModal] = useState({ isOpen: false, game: null });
+  const [showAnswersInPreview, setShowAnswersInPreview] = useState(false); // Default: hidden
+
   useEffect(() => {
     const fetchData = async () => {
       const userToken = await AsyncStorage.getItem('userToken');
@@ -87,11 +95,9 @@ export default function TeacherDashboard({ navigation, route }) {
         return;
       }
 
-      // Load current user doc
       const userDoc = await getDoc(doc(db, 'users', userToken));
       if (userDoc.exists()) setUserData(userDoc.data());
 
-      // Load my games
       const myQ = query(collection(db, 'games'), where('creatorId', '==', userToken));
       const mySnapshot = await getDocs(myQ);
       const fetchedMy = mySnapshot.docs.map(d => ({
@@ -101,12 +107,10 @@ export default function TeacherDashboard({ navigation, route }) {
       }));
       setMyGames(fetchedMy);
 
-      // Load public games and annotate with creator username
       const publicQ = query(collection(db, 'games'), where('isPublished', '==', true));
       const publicSnapshot = await getDocs(publicQ);
       const publicRaw = publicSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
 
-      // collect unique creatorIds to fetch usernames
       const creatorIds = Array.from(new Set(publicRaw.map(g => g.creatorId).filter(Boolean)));
       const usersMap = {};
 
@@ -116,7 +120,6 @@ export default function TeacherDashboard({ navigation, route }) {
           userSnaps.forEach(s => {
             if (s.exists()) {
               const u = s.data();
-              // prefer username field, fallback to displayName or email
               usersMap[s.id] = u.username || u.displayName || u.email || 'Unknown';
             }
           });
@@ -231,21 +234,9 @@ export default function TeacherDashboard({ navigation, route }) {
     });
   };
 
-  const copyGame = async (game) => {
-    try {
-      const userToken = await AsyncStorage.getItem('userToken');
-      const newGameData = {
-        ...game,
-        creatorId: userToken,
-        isPublished: false,
-        title: `${game.title} (Copy)`,
-      };
-      delete newGameData.id;
-      const docRef = await addDoc(collection(db, 'games'), newGameData);
-      setMyGames(prev => [...prev, { id: docRef.id, ...newGameData }]);
-    } catch (error) {
-      console.error('Copy failed:', error);
-    }
+  const openPreview = (game) => {
+    setPreviewModal({ isOpen: true, game });
+    setShowAnswersInPreview(false); // Reset to hidden
   };
 
   const getDisplayedGames = () => {
@@ -254,7 +245,8 @@ export default function TeacherDashboard({ navigation, route }) {
       const q = searchQuery.toLowerCase();
       list = list.filter(g => 
         g.title.toLowerCase().includes(q) || 
-        (g.tags && g.tags.some(t => t.toLowerCase().includes(q)))
+        (g.tags && g.tags.some(t => t.toLowerCase().includes(q))) ||
+        (g.creatorName && g.creatorName.toLowerCase().includes(q))
       );
     }
     if (currentTab === 'library' && filter !== 'all') {
@@ -265,42 +257,59 @@ export default function TeacherDashboard({ navigation, route }) {
 
   const renderGameCard = ({ item }) => {
     const isMine = currentTab === 'library';
+    const isDiscover = currentTab === 'discover';
+    const isHome = currentTab === 'home';
+
     return (
-      <View style={[styles.gameCard, hoveredButton === item.id && styles.gameCardHover]}
-            onMouseEnter={() => setHoveredButton(item.id)}
-            onMouseLeave={() => setHoveredButton(null)}>
-        <View style={styles.gameCoverPlaceholder}>
+      <TouchableOpacity 
+        style={[
+          styles.gameCard,
+          hoveredButton === item.id && styles.gameCardHover,
+          (isDiscover || isHome) && styles.squareCard,
+        ]}
+        onPress={() => !isMine && openPreview(item)}
+        onMouseEnter={() => setHoveredButton(item.id)}
+        onMouseLeave={() => setHoveredButton(null)}
+        disabled={isMine}
+      >
+        <View style={[
+          styles.gameCoverPlaceholder,
+          (isDiscover || isHome) && styles.squareCover
+        ]}>
           <Text style={{ fontSize: 40 }}>🎯</Text>
         </View>
-        {item.isPublished && <View style={styles.publishedBadge}><Text style={styles.badgeText}>Published</Text></View>}
+        
+        {item.isPublished && !isDiscover && !isHome && (
+          <View style={styles.publishedBadge}>
+            <Text style={styles.badgeText}>Published</Text>
+          </View>
+        )}
+
         <Text style={styles.gameTitle}>{item.title}</Text>
-        {/* Display creator username on Discover (or whenever available) */}
-        {(!isMine && item.creatorName) && <Text style={styles.creatorText}>{item.creatorName}</Text>}
+        <Text style={styles.creatorText}>by {item.creatorName || 'Unknown'}</Text>
         <Text style={styles.gameDetails}>{item.numQuestions || 0} questions</Text>
-        <View style={styles.buttonRow}>
-          <TouchableOpacity style={styles.hostBtn} onPress={() => navigation.navigate('HostGameMenu', { gameId: item.id })}>
-            <Text style={styles.btnText}>Host</Text>
-          </TouchableOpacity>
-          {isMine ? (
-            <>
-              <TouchableOpacity style={styles.editBtn} onPress={() => navigation.navigate('CreateGameMenu', { gameId: item.id, gameData: item })}>
-                <Text style={styles.btnText}>Edit</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.publishBtn, item.isPublished && styles.unpublishBtn]}
-                onPress={() => confirmPublishToggle(item.id, item.title, item.isPublished)}>
-                <Text style={styles.btnText}>{item.isPublished ? 'Unpublish' : 'Publish'}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.deleteBtn} onPress={() => confirmDelete(item.id, item.title)}>
-                {deletingIds.has(item.id) ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.btnText}>Delete</Text>}
-              </TouchableOpacity>
-            </>
-          ) : (
-            <TouchableOpacity style={styles.copyBtn} onPress={() => copyGame(item)}>
-              <Text style={styles.btnText}>Copy to Library</Text>
+
+        {isMine && (
+          <View style={styles.buttonRow}>
+            <TouchableOpacity 
+              style={styles.hostBtn} 
+              onPress={() => navigation.navigate('HostGameMenu', { gameId: item.id })}
+            >
+              <Text style={styles.btnText}>Host</Text>
             </TouchableOpacity>
-          )}
-        </View>
-      </View>
+            <TouchableOpacity style={styles.editBtn} onPress={() => navigation.navigate('CreateGameMenu', { gameId: item.id, gameData: item })}>
+              <Text style={styles.btnText}>Edit</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.publishBtn, item.isPublished && styles.unpublishBtn]}
+              onPress={() => confirmPublishToggle(item.id, item.title, item.isPublished)}>
+              <Text style={styles.btnText}>{item.isPublished ? 'Unpublish' : 'Publish'}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.deleteBtn} onPress={() => confirmDelete(item.id, item.title)}>
+              {deletingIds.has(item.id) ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.btnText}>Delete</Text>}
+            </TouchableOpacity>
+          </View>
+        )}
+      </TouchableOpacity>
     );
   };
 
@@ -338,10 +347,14 @@ export default function TeacherDashboard({ navigation, route }) {
           onMouseEnter={() => setHoveredButton('library')}
           onMouseLeave={() => setHoveredButton(null)}
         >
-          <Image source={require('../assets/library.png')} style={[
-            styles.tabIcon,
-            currentTab === 'library' && styles.tabIconActive
-          ]} resizeMode="contain" />
+          <Image 
+            source={require('../assets/library.png')} 
+            style={[
+              styles.tabIcon,
+              currentTab === 'library' && styles.tabIconActive
+            ]} 
+            resizeMode="contain" 
+          />
           <Text style={[
             styles.tabLabel,
             currentTab === 'library' && styles.tabLabelActive
@@ -357,7 +370,7 @@ export default function TeacherDashboard({ navigation, route }) {
           onMouseEnter={() => setHoveredButton('discover')}
           onMouseLeave={() => setHoveredButton(null)}
         >
-          <Image source={require('../assets/discover.png')} style={[
+          <Image source={require('../assets/discover.png')} style=[
             styles.tabIcon,
             currentTab === 'discover' && styles.tabIconActive
           ]} resizeMode="contain" />
@@ -369,7 +382,6 @@ export default function TeacherDashboard({ navigation, route }) {
 
         <View style={{ flex: 1 }} />
 
-        {/* Profile */}
         <TouchableOpacity 
           style={[
             styles.tabRow,
@@ -383,13 +395,12 @@ export default function TeacherDashboard({ navigation, route }) {
           <Text style={styles.tabLabel}>Profile</Text>
         </TouchableOpacity>
 
-        {/* Settings */}
         <TouchableOpacity 
           style={[
             styles.tabRow,
             hoveredButton === 'settings' && styles.tabRowActive,
           ]}
-          onPress={() => navigation.navigate('Settings')} // Change to your Settings screen name
+          onPress={() => navigation.navigate('Settings')}
           onMouseEnter={() => setHoveredButton('settings')}
           onMouseLeave={() => setHoveredButton(null)}
         >
@@ -397,7 +408,6 @@ export default function TeacherDashboard({ navigation, route }) {
           <Text style={styles.tabLabel}>Settings</Text>
         </TouchableOpacity>
 
-        {/* Logout */}
         <TouchableOpacity 
           style={[
             styles.tabRow,
@@ -513,7 +523,7 @@ export default function TeacherDashboard({ navigation, route }) {
         </View>
       </Modal>
 
-      {/* Reusable Confirmation Modal */}
+      {/* Confirmation Modal */}
       <ConfirmationModal
         isOpen={confirmModal.isOpen}
         title={confirmModal.title}
@@ -523,9 +533,111 @@ export default function TeacherDashboard({ navigation, route }) {
         confirmText={confirmModal.confirmText}
         cancelText={confirmModal.cancelText}
       />
+
+      {/* Game Preview Modal (Discover) */}
+      <Modal visible={previewModal.isOpen} transparent animationType="slide">
+        <View style={styles.previewModalOverlay}>
+          <View style={styles.previewModal}>
+            {previewModal.game && (
+              <>
+                <View style={styles.previewHeader}>
+                  <Text style={styles.previewTitle}>{previewModal.game.title}</Text>
+                  <TouchableOpacity onPress={() => setPreviewModal({ isOpen: false, game: null })}>
+                    <Text style={styles.closePreview}>×</Text>
+                  </TouchableOpacity>
+                </View>
+                <Text style={styles.previewCreator}>by {previewModal.game.creatorName || 'Unknown'}</Text>
+                <Text style={styles.previewQuestions}>{previewModal.game.numQuestions || 0} questions</Text>
+
+                {/* Reveal Answers Switch - Copied from HostGameMenu */}
+                <View style={styles.previewToggleRow}>
+                  <Text style={styles.previewToggleLabel}>Reveal Answers</Text>
+                  <Switch
+                    value={showAnswersInPreview}
+                    onValueChange={setShowAnswersInPreview}
+                    trackColor={{ false: '#333', true: '#00c781' }}
+                    thumbColor={showAnswersInPreview ? '#fff' : '#ccc'}
+                  />
+                </View>
+
+                <ScrollView style={styles.previewQuestionsList}>
+                  {previewModal.game.questions.map((q, idx) => (
+                    <View key={idx} style={styles.previewQuestionBlock}>
+                      <Text style={styles.previewQText}>{q.question}</Text>
+                      {q.imageUrl && (
+                        <Image source={{ uri: q.imageUrl }} style={styles.previewQImage} />
+                      )}
+                      <View style={styles.previewAnswersList}>
+                        {q.type === 'multipleChoice' ? (
+                          q.answers.map((ans, i) => (
+                            <View 
+                              key={i} 
+                              style={[
+                                styles.previewAnswerItem,
+                                showAnswersInPreview && q.correctAnswers[i] && styles.previewCorrectAnswer
+                              ]}
+                            >
+                              <Text style={styles.previewAnswerText}>
+                                {ans || `Answer ${i + 1}`}
+                              </Text>
+                              {showAnswersInPreview && q.correctAnswers[i] && (
+                                <Text style={styles.correctMark}>✓ Correct</Text>
+                              )}
+                            </View>
+                          ))
+                        ) : (
+                          ['True', 'False'].map((label, i) => (
+                            <View 
+                              key={i} 
+                              style={[
+                                styles.previewAnswerItem,
+                                showAnswersInPreview && q.correctAnswers[i] && styles.previewCorrectAnswer
+                              ]}
+                            >
+                              <Text style={styles.previewAnswerText}>{label}</Text>
+                              {showAnswersInPreview && q.correctAnswers[i] && (
+                                <Text style={styles.correctMark}>✓ Correct</Text>
+                              )}
+                            </View>
+                          ))
+                        )}
+                      </View>
+                    </View>
+                  ))}
+                </ScrollView>
+
+                <View style={styles.previewActionButtons}>
+                  <TouchableOpacity 
+                    style={styles.soloBtn}
+                    onPress={() => {
+                      setPreviewModal({ isOpen: false, game: null });
+                      navigation.navigate('SoloGameScreen', { gameId: previewModal.game.id });
+                    }}
+                  >
+                    <Text style={styles.soloBtnText}>Play Solo</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity 
+                    style={styles.hostGameBtn}
+                    onPress={() => {
+                      setPreviewModal({ isOpen: false, game: null });
+                      navigation.navigate('HostGameMenu', { gameId: previewModal.game.id });
+                    }}
+                  >
+                    <Text style={styles.hostGameBtnText}>Host This Game</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
+
+const { width } = Dimensions.get('window');
+const cardSize = Math.min((width - 120) / 4, 280);
 
 const styles = StyleSheet.create({
   container: { flex: 1, flexDirection: 'row', backgroundColor: '#111' },
@@ -595,17 +707,40 @@ const styles = StyleSheet.create({
     borderRadius: 16, 
     padding: 18, 
     margin: 12, 
-    flex: 1, 
-    maxWidth: '23%', 
     borderWidth: 1, 
-    borderColor: '#333' 
+    borderColor: '#333',
+    cursor: 'pointer',
+  },
+  squareCard: {
+    width: cardSize,
+    height: cardSize,
+    padding: 12,
   },
   gameCardHover: { 
     borderColor: '#00c781', 
     shadowOpacity: 0.5,
   },
-  gameCoverPlaceholder: { height: 120, backgroundColor: '#2a2a2a', borderRadius: 12, marginBottom: 12, justifyContent: 'center', alignItems: 'center' },
-  publishedBadge: { position: 'absolute', top: 12, right: 12, backgroundColor: '#00c781', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20 },
+  gameCoverPlaceholder: { 
+    height: 120, 
+    backgroundColor: '#2a2a2a', 
+    borderRadius: 12, 
+    marginBottom: 12, 
+    justifyContent: 'center', 
+    alignItems: 'center' 
+  },
+  squareCover: {
+    height: cardSize * 0.6,
+    marginBottom: 8,
+  },
+  publishedBadge: { 
+    position: 'absolute', 
+    top: 12, 
+    right: 12, 
+    backgroundColor: '#00c781', 
+    paddingHorizontal: 10, 
+    paddingVertical: 4, 
+    borderRadius: 20 
+  },
   badgeText: { color: '#fff', fontSize: 11, fontWeight: 'bold' },
   gameTitle: { fontSize: 18, fontWeight: 'bold', color: '#fff', marginBottom: 6 },
   creatorText: { fontSize: 14, color: '#aaa', marginBottom: 6 },
@@ -616,7 +751,6 @@ const styles = StyleSheet.create({
   publishBtn: { backgroundColor: '#00c781', padding: 10, borderRadius: 10, flex: 1, alignItems: 'center' },
   unpublishBtn: { backgroundColor: '#e67e22' },
   deleteBtn: { backgroundColor: '#c0392b', padding: 10, borderRadius: 10, flex: 1, alignItems: 'center' },
-  copyBtn: { backgroundColor: '#3498db', padding: 10, borderRadius: 10, flex: 1, alignItems: 'center' },
   btnText: { color: '#fff', fontSize: 13, fontWeight: 'bold' },
   emptyText: { color: '#666', fontSize: 18, textAlign: 'center', marginTop: 100 },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.8)', justifyContent: 'center', alignItems: 'center' },
@@ -637,4 +771,87 @@ const styles = StyleSheet.create({
   titleModalSave: { flex: 1, backgroundColor: '#00c781', paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
   titleModalSaveText: { color: '#fff', fontWeight: 'bold' },
   disabledBtn: { opacity: 0.5 },
+
+  // Preview Modal Styles
+  previewModalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'center', alignItems: 'center' },
+  previewModal: { 
+    backgroundColor: '#1e1e1e', 
+    borderRadius: 20, 
+    width: '75%', 
+    maxHeight: '85%', 
+    padding: 30, 
+    borderWidth: 1, 
+    borderColor: '#333',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.5,
+    shadowRadius: 20,
+  },
+  previewHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+  previewTitle: { fontSize: 28, fontWeight: 'bold', color: '#fff' },
+  closePreview: { fontSize: 40, color: '#fff', fontWeight: 'bold', cursor: 'pointer' },
+  previewCreator: { fontSize: 18, color: '#aaa', marginBottom: 8 },
+  previewQuestions: { fontSize: 16, color: '#ccc', marginBottom: 20 },
+
+  previewToggleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  previewToggleLabel: {
+    fontSize: 16,
+    color: '#ddd',
+    flex: 1,
+  },
+
+  previewQuestionsList: { flex: 1, marginBottom: 24 },
+  previewQuestionBlock: { 
+    backgroundColor: '#222', 
+    borderRadius: 12, 
+    padding: 16, 
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#333'
+  },
+  previewQText: { fontSize: 20, fontWeight: 'bold', color: '#fff', marginBottom: 12 },
+  previewQImage: { width: '100%', height: 180, borderRadius: 12, marginBottom: 12 },
+  previewAnswersList: { gap: 8 },
+  previewAnswerItem: { 
+    backgroundColor: '#333', 
+    padding: 12, 
+    borderRadius: 10, 
+    flexDirection: 'row', 
+    justifyContent: 'space-between', 
+    alignItems: 'center' 
+  },
+  previewCorrectAnswer: { backgroundColor: '#004d26' },
+  previewAnswerText: { color: '#fff', fontSize: 16 },
+  correctMark: { color: '#00c781', fontSize: 20, fontWeight: 'bold' },
+  previewActionButtons: { 
+    flexDirection: 'row', 
+    justifyContent: 'space-between', 
+    gap: 16,
+    marginTop: 16
+  },
+  soloBtn: { 
+    flex: 1, 
+    backgroundColor: '#3498db', 
+    padding: 18, 
+    borderRadius: 12, 
+    alignItems: 'center' 
+  },
+  soloBtnText: { 
+    color: '#fff', 
+    fontSize: 18, 
+    fontWeight: 'bold' 
+  },
+  hostGameBtn: { 
+    flex: 1, 
+    backgroundColor: '#00c781', 
+    padding: 18, 
+    borderRadius: 12, 
+    alignItems: 'center' 
+  },
+  hostGameBtnText: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
 });
