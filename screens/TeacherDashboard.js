@@ -1,10 +1,9 @@
 /**
- * TeacherDashboard.js - UPDATED WITH NATIVE SWITCH FROM HOSTGAMEMENU
- * Host button → HostGameMenu
- * Play Solo button in preview
- * Native Switch for "Reveal Answers" (exact style from HostGameMenu)
- * Square cards on Home + Discover
- * All styles included
+ * TeacherDashboard.js - UPDATED WITH REQUESTED CHANGES
+ * - "Reveal Answers" text right next to toggle on the right
+ * - Correct answers only green background (no ✓ or "Correct" text)
+ * - Buttons swapped: Host This Game (left) | Play Solo (right)
+ * - All previous fixes included
  */
 
 import React, { useState, useEffect } from 'react';
@@ -39,7 +38,7 @@ import { signOut } from 'firebase/auth';
 import { ref as storageRef, deleteObject } from 'firebase/storage';
 import { storage } from '../firebaseConfig';
 
-// Reusable Confirmation Modal
+// Reusable Confirmation Modal (unchanged)
 const ConfirmationModal = ({ isOpen, title, message, onConfirm, onCancel, confirmText = 'Confirm', cancelText = 'Cancel' }) => {
   if (!isOpen) return null;
 
@@ -85,7 +84,7 @@ export default function TeacherDashboard({ navigation, route }) {
   });
 
   const [previewModal, setPreviewModal] = useState({ isOpen: false, game: null });
-  const [showAnswersInPreview, setShowAnswersInPreview] = useState(false); // Default: hidden
+  const [showAnswersInPreview, setShowAnswersInPreview] = useState(false);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -236,7 +235,7 @@ export default function TeacherDashboard({ navigation, route }) {
 
   const openPreview = (game) => {
     setPreviewModal({ isOpen: true, game });
-    setShowAnswersInPreview(false); // Reset to hidden
+    setShowAnswersInPreview(false);
   };
 
   const getDisplayedGames = () => {
@@ -328,10 +327,14 @@ export default function TeacherDashboard({ navigation, route }) {
           onMouseEnter={() => setHoveredButton('home')}
           onMouseLeave={() => setHoveredButton(null)}
         >
-          <Image source={require('../assets/home.png')} style={[
-            styles.tabIcon,
-            currentTab === 'home' && styles.tabIconActive
-          ]} resizeMode="contain" />
+          <Image 
+            source={require('../assets/home.png')} 
+            style={[
+              styles.tabIcon,
+              currentTab === 'home' && styles.tabIconActive
+            ]} 
+            resizeMode="contain" 
+          />
           <Text style={[
             styles.tabLabel,
             currentTab === 'home' && styles.tabLabelActive
@@ -370,10 +373,14 @@ export default function TeacherDashboard({ navigation, route }) {
           onMouseEnter={() => setHoveredButton('discover')}
           onMouseLeave={() => setHoveredButton(null)}
         >
-          <Image source={require('../assets/discover.png')} style=[
-            styles.tabIcon,
-            currentTab === 'discover' && styles.tabIconActive
-          ]} resizeMode="contain" />
+          <Image 
+            source={require('../assets/discover.png')} 
+            style={[
+              styles.tabIcon,
+              currentTab === 'discover' && styles.tabIconActive
+            ]} 
+            resizeMode="contain" 
+          />
           <Text style={[
             styles.tabLabel,
             currentTab === 'discover' && styles.tabLabelActive
@@ -549,15 +556,15 @@ export default function TeacherDashboard({ navigation, route }) {
                 <Text style={styles.previewCreator}>by {previewModal.game.creatorName || 'Unknown'}</Text>
                 <Text style={styles.previewQuestions}>{previewModal.game.numQuestions || 0} questions</Text>
 
-                {/* Reveal Answers Switch - Copied from HostGameMenu */}
+                {/* Reveal Answers Switch - Text right next to toggle */}
                 <View style={styles.previewToggleRow}>
-                  <Text style={styles.previewToggleLabel}>Reveal Answers</Text>
                   <Switch
                     value={showAnswersInPreview}
                     onValueChange={setShowAnswersInPreview}
                     trackColor={{ false: '#333', true: '#00c781' }}
                     thumbColor={showAnswersInPreview ? '#fff' : '#ccc'}
                   />
+                  <Text style={styles.previewToggleLabel}>Reveal Answers</Text>
                 </View>
 
                 <ScrollView style={styles.previewQuestionsList}>
@@ -580,9 +587,6 @@ export default function TeacherDashboard({ navigation, route }) {
                               <Text style={styles.previewAnswerText}>
                                 {ans || `Answer ${i + 1}`}
                               </Text>
-                              {showAnswersInPreview && q.correctAnswers[i] && (
-                                <Text style={styles.correctMark}>✓ Correct</Text>
-                              )}
                             </View>
                           ))
                         ) : (
@@ -595,9 +599,6 @@ export default function TeacherDashboard({ navigation, route }) {
                               ]}
                             >
                               <Text style={styles.previewAnswerText}>{label}</Text>
-                              {showAnswersInPreview && q.correctAnswers[i] && (
-                                <Text style={styles.correctMark}>✓ Correct</Text>
-                              )}
                             </View>
                           ))
                         )}
@@ -607,16 +608,7 @@ export default function TeacherDashboard({ navigation, route }) {
                 </ScrollView>
 
                 <View style={styles.previewActionButtons}>
-                  <TouchableOpacity 
-                    style={styles.soloBtn}
-                    onPress={() => {
-                      setPreviewModal({ isOpen: false, game: null });
-                      navigation.navigate('SoloGameScreen', { gameId: previewModal.game.id });
-                    }}
-                  >
-                    <Text style={styles.soloBtnText}>Play Solo</Text>
-                  </TouchableOpacity>
-
+                  {/* Host This Game on the left */}
                   <TouchableOpacity 
                     style={styles.hostGameBtn}
                     onPress={() => {
@@ -625,6 +617,17 @@ export default function TeacherDashboard({ navigation, route }) {
                     }}
                   >
                     <Text style={styles.hostGameBtnText}>Host This Game</Text>
+                  </TouchableOpacity>
+
+                  {/* Play Solo on the right */}
+                  <TouchableOpacity 
+                    style={styles.soloBtn}
+                    onPress={() => {
+                      setPreviewModal({ isOpen: false, game: null });
+                      navigation.navigate('SoloGameScreen', { gameId: previewModal.game.id });
+                    }}
+                  >
+                    <Text style={styles.soloBtnText}>Play Solo</Text>
                   </TouchableOpacity>
                 </View>
               </>
@@ -793,16 +796,18 @@ const styles = StyleSheet.create({
   previewCreator: { fontSize: 18, color: '#aaa', marginBottom: 8 },
   previewQuestions: { fontSize: 16, color: '#ccc', marginBottom: 20 },
 
+  // Updated toggle row: switch first, then text on the right
   previewToggleRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+    justifyContent: 'flex-end',
     marginBottom: 20,
+    gap: 12, // space between switch and text
   },
   previewToggleLabel: {
     fontSize: 16,
     color: '#ddd',
-    flex: 1,
+    fontWeight: '500',
   },
 
   previewQuestionsList: { flex: 1, marginBottom: 24 },
@@ -825,9 +830,9 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between', 
     alignItems: 'center' 
   },
-  previewCorrectAnswer: { backgroundColor: '#004d26' },
+  previewCorrectAnswer: { backgroundColor: '#004d26' }, // only green highlight
   previewAnswerText: { color: '#fff', fontSize: 16 },
-  correctMark: { color: '#00c781', fontSize: 20, fontWeight: 'bold' },
+
   previewActionButtons: { 
     flexDirection: 'row', 
     justifyContent: 'space-between', 

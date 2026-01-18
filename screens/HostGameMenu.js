@@ -12,6 +12,7 @@ import {
   ActivityIndicator,
   ScrollView,
   Switch,
+  TextInput,
 } from 'react-native';
 import { db, auth } from '../firebaseConfig';
 import { doc, getDoc, addDoc, collection, serverTimestamp } from 'firebase/firestore';
@@ -21,16 +22,30 @@ export default function HostGameMenu({ navigation, route }) {
 
   const [game, setGame] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [timeMultiplier, setTimeMultiplier] = useState(1); // 0.5x, 1x, 1.5x, 2x
-  const [showAnswersAfter, setShowAnswersAfter] = useState(true);
   const [error, setError] = useState(null);
+
+  // New settings with defaults
+  const [gameDuration, setGameDuration] = useState('10');           // in minutes
+  const [maxPlayers, setMaxPlayers] = useState('30');
+  const [timePerQuestion, setTimePerQuestion] = useState('60');     // in seconds
+  const [showAnswersAfter, setShowAnswersAfter] = useState(true);
+  const [nicknameGenerator, setNicknameGenerator] = useState(false);
+  const [hostPlays, setHostPlays] = useState(false);
+  const [randomizeQuestions, setRandomizeQuestions] = useState(false);
+  const [randomizeAnswers, setRandomizeAnswers] = useState(false);
 
   useEffect(() => {
     const fetchGame = async () => {
       try {
         const gameDoc = await getDoc(doc(db, 'games', gameId));
         if (gameDoc.exists()) {
-          setGame(gameDoc.data());
+          const gameData = gameDoc.data();
+          setGame(gameData);
+
+          // If creator set time per question, use it as default (in seconds)
+          if (gameData.timePerQuestion && gameData.timePerQuestion > 0) {
+            setTimePerQuestion(gameData.timePerQuestion.toString());
+          }
         } else {
           setError('Game not found');
         }
@@ -49,10 +64,8 @@ export default function HostGameMenu({ navigation, route }) {
     if (!game) return;
 
     try {
-      // Generate a simple 6-digit PIN (you can make it more unique later)
       const pin = Math.floor(100000 + Math.random() * 900000).toString();
 
-      // Create a new game session
       const sessionRef = await addDoc(collection(db, 'gameSessions'), {
         gameId,
         hostId: auth.currentUser.uid,
@@ -61,13 +74,18 @@ export default function HostGameMenu({ navigation, route }) {
         players: [],
         currentQuestionIndex: 0,
         settings: {
-          timeMultiplier,
+          gameDuration: parseInt(gameDuration, 10) || 10,           // minutes
+          maxPlayers: parseInt(maxPlayers, 10) || 30,
+          timePerQuestion: parseInt(timePerQuestion, 10) || 60,     // seconds
           showAnswersAfter,
+          nicknameGenerator,
+          hostPlays,
+          randomizeQuestions,
+          randomizeAnswers,
         },
         createdAt: serverTimestamp(),
       });
 
-      // Navigate to the actual lobby screen
       navigation.navigate('HostGameLobby', {
         sessionId: sessionRef.id,
         gameId,
@@ -122,28 +140,50 @@ export default function HostGameMenu({ navigation, route }) {
           </Text>
         </View>
 
-        {/* Quick Settings */}
+        {/* Settings */}
         <View style={styles.settingsCard}>
-          <Text style={styles.sectionTitle}>Quick Settings</Text>
+          <Text style={styles.sectionTitle}>Game Settings</Text>
 
+          {/* 1. Game duration */}
           <View style={styles.settingRow}>
-            <Text style={styles.settingLabel}>Time per question</Text>
-            <View style={styles.multiplierButtons}>
-              {['0.5x', '1x', '1.5x', '2x'].map((val) => (
-                <TouchableOpacity
-                  key={val}
-                  style={[
-                    styles.multiplierBtn,
-                    timeMultiplier === parseFloat(val) && styles.multiplierBtnActive,
-                  ]}
-                  onPress={() => setTimeMultiplier(parseFloat(val))}
-                >
-                  <Text style={styles.multiplierText}>{val}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
+            <Text style={styles.settingLabel}>Game duration (minutes)</Text>
+            <TextInput
+              style={styles.numberInput}
+              value={gameDuration}
+              onChangeText={setGameDuration}
+              keyboardType="numeric"
+              placeholder="10"
+              maxLength={3}
+            />
           </View>
 
+          {/* 2. Players allowed */}
+          <View style={styles.settingRow}>
+            <Text style={styles.settingLabel}>Players allowed</Text>
+            <TextInput
+              style={styles.numberInput}
+              value={maxPlayers}
+              onChangeText={setMaxPlayers}
+              keyboardType="numeric"
+              placeholder="30"
+              maxLength={4}
+            />
+          </View>
+
+          {/* 3. Time per question */}
+          <View style={styles.settingRow}>
+            <Text style={styles.settingLabel}>Time per question (seconds)</Text>
+            <TextInput
+              style={styles.numberInput}
+              value={timePerQuestion}
+              onChangeText={setTimePerQuestion}
+              keyboardType="numeric"
+              placeholder="60"
+              maxLength={3}
+            />
+          </View>
+
+          {/* 4. Show correct answers after each question */}
           <View style={styles.settingRow}>
             <Text style={styles.settingLabel}>Show correct answers after each question</Text>
             <Switch
@@ -151,6 +191,50 @@ export default function HostGameMenu({ navigation, route }) {
               onValueChange={setShowAnswersAfter}
               trackColor={{ false: '#333', true: '#00c781' }}
               thumbColor={showAnswersAfter ? '#fff' : '#ccc'}
+            />
+          </View>
+
+          {/* 5. Nickname generator */}
+          <View style={styles.settingRow}>
+            <Text style={styles.settingLabel}>Nickname generator</Text>
+            <Switch
+              value={nicknameGenerator}
+              onValueChange={setNicknameGenerator}
+              trackColor={{ false: '#333', true: '#00c781' }}
+              thumbColor={nicknameGenerator ? '#fff' : '#ccc'}
+            />
+          </View>
+
+          {/* 6. Host plays */}
+          <View style={styles.settingRow}>
+            <Text style={styles.settingLabel}>Host can play</Text>
+            <Switch
+              value={hostPlays}
+              onValueChange={setHostPlays}
+              trackColor={{ false: '#333', true: '#00c781' }}
+              thumbColor={hostPlays ? '#fff' : '#ccc'}
+            />
+          </View>
+
+          {/* 7. Randomize order of questions */}
+          <View style={styles.settingRow}>
+            <Text style={styles.settingLabel}>Randomize order of questions</Text>
+            <Switch
+              value={randomizeQuestions}
+              onValueChange={setRandomizeQuestions}
+              trackColor={{ false: '#333', true: '#00c781' }}
+              thumbColor={randomizeQuestions ? '#fff' : '#ccc'}
+            />
+          </View>
+
+          {/* 8. Randomize order of answers */}
+          <View style={styles.settingRow}>
+            <Text style={styles.settingLabel}>Randomize order of answers</Text>
+            <Switch
+              value={randomizeAnswers}
+              onValueChange={setRandomizeAnswers}
+              trackColor={{ false: '#333', true: '#00c781' }}
+              thumbColor={randomizeAnswers ? '#fff' : '#ccc'}
             />
           </View>
         </View>
@@ -283,22 +367,17 @@ const styles = StyleSheet.create({
     color: '#ddd',
     flex: 1,
   },
-  multiplierButtons: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  multiplierBtn: {
+  numberInput: {
+    width: 90,
+    height: 44,
     backgroundColor: '#333',
-    paddingVertical: 10,
-    paddingHorizontal: 16,
     borderRadius: 12,
-  },
-  multiplierBtnActive: {
-    backgroundColor: '#00c781',
-  },
-  multiplierText: {
+    paddingHorizontal: 12,
     color: '#fff',
-    fontWeight: 'bold',
+    fontSize: 16,
+    textAlign: 'center',
+    borderWidth: 1,
+    borderColor: '#444',
   },
   launchButton: {
     backgroundColor: '#00c781',
