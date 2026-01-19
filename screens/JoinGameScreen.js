@@ -1,43 +1,6 @@
 /**
- * JoinGameScreen.js
- * 
- * This screen allows users to join an active Brain Board game by entering
- * a 6-digit numeric game code provided by the host. It is **web-only**
- * (mobile users are redirected to the Home screen via App.js routing).
- * 
- * What it does:
- * 1. Renders a clean, centered form with:
- *    • App title/logo ("Brain Board")
- *    • Large input field that accepts only digits (0–9)
- *    • "Join Game" button with hover color change (web)
- *    • "Go to Home" link at the bottom
- * 
- * 2. Input handling:
- *    • Real-time filtering: strips any non-numeric characters
- *    • Enforces 6-character limit via `maxLength`
- *    • Uses `keyboardType="numeric"` for mobile number pad
- * 
- * 3. Button behavior:
- *    • Logs entered code to console (for demo/debugging)
- *    • Navigation to Game screen is **commented out**:
- *      ```js
- *      // navigation.navigate("Game", { code: gameCode });
- *      ```
- * 
- * 4. Web-specific UX:
- *    • Hover effects on button and "Home" link
- *    • Color transition: #00c781 → #00e092 (darker → brighter green)
- *    • `onMouseEnter`/`onMouseLeave` handlers for interactive feedback
- * 
- * 5. Navigation:
- *    • "Join Game" → (future) Game screen with `code` param
- *    • "Home" → navigates to guest landing page
- * 
- * Important: This is a **demo implementation**. For production use:
- *    • Uncomment navigation line
- *    • Add Firebase validation (check if code exists & is active)
- *    • Implement loading, success, and error states
- *    • Add input validation feedback (e.g., "Invalid code")
+ * JoinGameScreen.js - Updated to allow real lobby joining
+ * Players enter 6-digit PIN → validate → join session → go to game
  */
 
 import React, { useState } from "react";
@@ -48,72 +11,113 @@ import {
   TouchableOpacity,
   StyleSheet,
   SafeAreaView,
+  ActivityIndicator,
+  Alert,
 } from "react-native";
+import { db, auth } from "../firebaseConfig";
+import {
+  collection,
+  query,
+  where,
+  getDocs,
+  doc,          // Added
+  updateDoc,    // Added
+} from "firebase/firestore";
 
-/**
- * JoinGameScreen – main component for joining games via 6-digit code
- * @param {object} navigation – React Navigation prop for screen transitions
- */
 export default function JoinGameScreen({ navigation }) {
-  // State: holds the current 6-digit game code entered by user
   const [gameCode, setGameCode] = useState("");
-  
-  // State: tracks which interactive element is hovered (used for web hover styles)
+  const [isJoining, setIsJoining] = useState(false);
   const [hoveredButton, setHoveredButton] = useState(null);
 
-  /**
-   * Handles "Join Game" button press
-   * 
-   * Current behavior (demo mode):
-   *   - Logs the entered game code to console
-   * 
-   * Future behavior (production):
-   *   - Uncomment navigation to go to Game screen with code as parameter
-   */
-  const handleJoinGame = () => {
-    console.log("Joining game with code:", gameCode);
-    // navigation.navigate("Game", { code: gameCode });
-  };
-
-  /**
-   * Filters input to allow only numeric characters (0–9)
-   * 
-   * @param {string} text - Raw input from TextInput
-   * 
-   * Process:
-   * 1. Uses regex `/[^0-9]/g` to match all non-digit characters
-   * 2. Replaces them with empty string → only digits remain
-   * 3. Updates state with cleaned numeric string
-   */
   const handleInputChange = (text) => {
     const numericText = text.replace(/[^0-9]/g, "");
     setGameCode(numericText);
   };
 
-  /**
-   * Returns dynamic style array for "Join Game" button
-   * 
-   * Applies hover effect on web:
-   *   • Default: #00c781 (darker green)
-   *   • Hover:   #00e092 (brighter green)
-   * 
-   * @returns {Array} Combined style objects
-   */
+  const handleJoinGame = async () => {
+    if (gameCode.length !== 6) {
+      Alert.alert("Invalid Code", "Please enter a 6-digit game code.");
+      return;
+    }
+
+    setIsJoining(true);
+
+    try {
+      // 1. Find the session by PIN
+      const q = query(collection(db, "gameSessions"), where("pin", "==", gameCode));
+      const querySnapshot = await getDocs(q);
+
+      if (querySnapshot.empty) {
+        Alert.alert("Not Found", "No game found with that code.");
+        return;
+      }
+
+      // Get the first (and only) matching session
+      const sessionDoc = querySnapshot.docs[0];
+      const sessionData = sessionDoc.data();
+      const sessionId = sessionDoc.id;
+
+      // 2. Check if game already started
+      if (sessionData.status !== "lobby") {
+        Alert.alert("Game Started", "This game has already started. You can't join now.");
+        return;
+      }
+
+      // 3. Get current user info (support logged-in + guest)
+      const user = auth.currentUser;
+      const playerUid = user?.uid || `guest_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const playerName = user?.displayName || user?.email?.split("@")[0] || `Player${Math.floor(Math.random() * 1000)}`;
+
+      // 4. Prevent duplicate join (check by uid)
+      if (sessionData.players?.some(p => p.uid === playerUid)) {
+        Alert.alert("Already Joined", "You're already in this lobby!");
+        navigation.navigate("GameScreen", {
+          sessionId,
+          gameId: sessionData.gameId,
+          isHost: false,
+        });
+        return;
+      }
+
+      // 5. Add player to the session
+      const updatedPlayers = [
+        ...(sessionData.players || []),
+        {
+          uid: playerUid,
+          name: playerName,
+          joinedAt: new Date().toISOString(),
+          score: 0,
+        },
+      ];
+
+      // Update Firestore
+      await updateDoc(doc(db, "gameSessions", sessionId), {
+        players: updatedPlayers,
+      });
+
+      // 6. Navigate to the game screen
+      navigation.navigate("GameScreen", {
+        sessionId,
+        gameId: sessionData.gameId,
+        isHost: false,
+      });
+    } catch (error) {
+      console.error("Join failed:", error);
+      let message = "Failed to join the game. Please try again.";
+      if (error.code === "permission-denied") {
+        message = "Permission denied. The game may be full or no longer active.";
+      }
+      Alert.alert("Error", message);
+    } finally {
+      setIsJoining(false);
+    }
+  };
+
   const getJoinButtonStyle = () => [
     styles.button,
     { backgroundColor: hoveredButton === "joinGame" ? "#00e092" : "#00c781" },
   ];
 
-  /**
-   * Returns dynamic style array for navigation links (e.g., "Home")
-   * 
-   * Applies hover color change:
-   *   • Default: #00c781
-   *   • Hover:   #00e092
-   * 
-   * @param {string} buttonName - Identifier ("home") to match hover state
-   * @returns {Array} Combined style objects
-   */
   const getLinkStyle = (buttonName) => [
     styles.linkText,
     { color: hoveredButton === buttonName ? "#00e092" : "#00c781" },
@@ -121,40 +125,42 @@ export default function JoinGameScreen({ navigation }) {
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* App Title / Logo */}
       <Text style={styles.title}>Brain Board</Text>
 
-      {/* Game Code Input Field */}
       <TextInput
         style={styles.input}
         placeholder="Enter Game Code"
         placeholderTextColor="#666"
         value={gameCode}
         onChangeText={handleInputChange}
-        keyboardType="numeric"           // Shows numeric keypad on mobile
-        textAlign="center"               // Centers text horizontally
-        maxLength={6}                    // Enforces 6-character limit
-        autoCapitalize="none"            // Prevents auto-capitalization
+        keyboardType="numeric"
+        textAlign="center"
+        maxLength={6}
+        autoCapitalize="none"
+        editable={!isJoining}
       />
 
-      {/* Join Game Button */}
       <TouchableOpacity
         style={getJoinButtonStyle()}
-        activeOpacity={0.7}              // Visual press feedback
+        activeOpacity={0.7}
         onPress={handleJoinGame}
-        onMouseEnter={() => setHoveredButton("joinGame")}   // Web: start hover
-        onMouseLeave={() => setHoveredButton(null)}         // Web: end hover
+        onMouseEnter={() => setHoveredButton("joinGame")}
+        onMouseLeave={() => setHoveredButton(null)}
+        disabled={isJoining}
       >
-        <Text style={styles.buttonText}>Join Game</Text>
+        {isJoining ? (
+          <ActivityIndicator color="#fff" />
+        ) : (
+          <Text style={styles.buttonText}>Join Game</Text>
+        )}
       </TouchableOpacity>
 
-      {/* Bottom Navigation Link: "Go to Home" */}
       <View style={styles.homeLinkContainer}>
         <Text style={styles.promptText}>Go to </Text>
         <TouchableOpacity
           onPress={() => navigation.navigate("Home")}
-          onMouseEnter={() => setHoveredButton("home")}     // Web: start hover
-          onMouseLeave={() => setHoveredButton(null)}       // Web: end hover
+          onMouseEnter={() => setHoveredButton("home")}
+          onMouseLeave={() => setHoveredButton(null)}
         >
           <Text style={getLinkStyle("home")}>Home</Text>
         </TouchableOpacity>
@@ -163,11 +169,7 @@ export default function JoinGameScreen({ navigation }) {
   );
 }
 
-/**
- * STYLES – Responsive, dark-themed, centered layout
- */
 const styles = StyleSheet.create({
-  // Full-screen container with dark background
   container: {
     flex: 1,
     backgroundColor: "#111",
@@ -175,64 +177,51 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: 20,
   },
-  
-  // App title at the top
   title: {
     fontSize: 28,
     fontWeight: "bold",
     color: "#fff",
-    marginBottom: 10,
-    textAlign: "center",
+    marginBottom: 40,
   },
-  
-  // Game code input field
   input: {
     width: 400,
-    height: 40,
+    height: 50,
     backgroundColor: "#222",
-    borderRadius: 8,
-    paddingHorizontal: 15,
+    borderRadius: 12,
+    paddingHorizontal: 20,
     color: "#fff",
-    fontSize: 16,
+    fontSize: 24,
     textAlign: "center",
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: "#333",
   },
-  
-  // Join Game button
   button: {
     width: 400,
-    height: 40,
+    height: 50,
     backgroundColor: "#00c781",
-    borderRadius: 8,
+    borderRadius: 12,
     alignItems: "center",
     justifyContent: "center",
     marginVertical: 10,
   },
-  
-  // Button text
   buttonText: {
     color: "#fff",
     fontSize: 18,
     fontWeight: "bold",
   },
-  
-  // Container for "Go to Home" link
   homeLinkContainer: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    width: 350,
+    marginTop: 30,
   },
-  
-  // Static text before the link
   promptText: {
-    fontSize: 14,
+    fontSize: 16,
     color: "#ccc",
   },
-  
-  // Clickable "Home" link text
   linkText: {
-    fontSize: 14,
+    fontSize: 16,
     fontWeight: "bold",
-    textAlign: "center",
   },
 });

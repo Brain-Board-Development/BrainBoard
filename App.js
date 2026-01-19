@@ -14,6 +14,8 @@ import TeacherDashboard from './screens/TeacherDashboard.js'; // Added for Teach
 import StudentDashboard from './screens/StudentDashboard.js';
 import CreateGameMenu from './screens/CreateGameMenu.js';
 import HostGameMenu from './screens/HostGameMenu.js';
+import Lobby from './screens/Lobby.js';
+import GameScreen from './screens/GameScreen.js';
 
 const Stack = createStackNavigator();
 
@@ -68,6 +70,9 @@ export default function App() {
         <Stack.Screen name="StudentDashboard" component={StudentDashboard} />
         <Stack.Screen name="CreateGameMenu" component={CreateGameMenu} />
         <Stack.Screen name="HostGameMenu" component={HostGameMenu} />
+        <Stack.Screen name="Lobby" component={Lobby} />
+        <Stack.Screen name="GameScreen" component={GameScreen} />
+
       </Stack.Navigator>
     </NavigationContainer>
   );

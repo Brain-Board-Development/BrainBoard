@@ -1,6 +1,6 @@
 /**
  * HostGameMenu.js - Intermediary screen before launching the lobby
- * Review game → optional settings → Launch Lobby
+ * Review game → optional settings → Launch Lobby → Lobby.js
  */
 
 import React, { useState, useEffect } from 'react';
@@ -13,6 +13,7 @@ import {
   ScrollView,
   Switch,
   TextInput,
+  Modal,
 } from 'react-native';
 import { db, auth } from '../firebaseConfig';
 import { doc, getDoc, addDoc, collection, serverTimestamp } from 'firebase/firestore';
@@ -23,11 +24,13 @@ export default function HostGameMenu({ navigation, route }) {
   const [game, setGame] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [showErrorModal, setShowErrorModal] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
 
-  // New settings with defaults
-  const [gameDuration, setGameDuration] = useState('10');           // in minutes
+  // Settings with defaults
+  const [gameDuration, setGameDuration] = useState('10'); // minutes
   const [maxPlayers, setMaxPlayers] = useState('30');
-  const [timePerQuestion, setTimePerQuestion] = useState('60');     // in seconds
+  const [timePerQuestion, setTimePerQuestion] = useState('60'); // seconds
   const [showAnswersAfter, setShowAnswersAfter] = useState(true);
   const [nicknameGenerator, setNicknameGenerator] = useState(false);
   const [hostPlays, setHostPlays] = useState(false);
@@ -42,16 +45,20 @@ export default function HostGameMenu({ navigation, route }) {
           const gameData = gameDoc.data();
           setGame(gameData);
 
-          // If creator set time per question, use it as default (in seconds)
+          // Use creator's time per question if set
           if (gameData.timePerQuestion && gameData.timePerQuestion > 0) {
             setTimePerQuestion(gameData.timePerQuestion.toString());
           }
         } else {
           setError('Game not found');
+          setErrorMessage('The selected game could not be found.');
+          setShowErrorModal(true);
         }
       } catch (err) {
         console.error('Error fetching game:', err);
         setError('Failed to load game');
+        setErrorMessage('There was a problem loading the game. Please try again.');
+        setShowErrorModal(true);
       } finally {
         setIsLoading(false);
       }
@@ -60,8 +67,31 @@ export default function HostGameMenu({ navigation, route }) {
     fetchGame();
   }, [gameId]);
 
+  const validateSettings = () => {
+    const duration = parseInt(gameDuration, 10);
+    const players = parseInt(maxPlayers, 10);
+    const time = parseInt(timePerQuestion, 10);
+
+    if (isNaN(duration) || duration < 1 || duration > 180) {
+      setErrorMessage('Game duration must be between 1 and 180 minutes.');
+      return false;
+    }
+    if (isNaN(players) || players < 1 || players > 500) {
+      setErrorMessage('Maximum players must be between 1 and 500.');
+      return false;
+    }
+    if (isNaN(time) || time < 10 || time > 300) {
+      setErrorMessage('Time per question must be between 10 and 300 seconds.');
+      return false;
+    }
+    return true;
+  };
+
   const launchLobby = async () => {
-    if (!game) return;
+    if (!game || !validateSettings()) {
+      setShowErrorModal(true);
+      return;
+    }
 
     try {
       const pin = Math.floor(100000 + Math.random() * 900000).toString();
@@ -74,9 +104,9 @@ export default function HostGameMenu({ navigation, route }) {
         players: [],
         currentQuestionIndex: 0,
         settings: {
-          gameDuration: parseInt(gameDuration, 10) || 10,           // minutes
-          maxPlayers: parseInt(maxPlayers, 10) || 30,
-          timePerQuestion: parseInt(timePerQuestion, 10) || 60,     // seconds
+          gameDuration: parseInt(gameDuration, 10),
+          maxPlayers: parseInt(maxPlayers, 10),
+          timePerQuestion: parseInt(timePerQuestion, 10),
           showAnswersAfter,
           nicknameGenerator,
           hostPlays,
@@ -86,14 +116,17 @@ export default function HostGameMenu({ navigation, route }) {
         createdAt: serverTimestamp(),
       });
 
-      navigation.navigate('HostGameLobby', {
+      // Navigate to Lobby.js
+      navigation.navigate('Lobby', {
         sessionId: sessionRef.id,
-        gameId,
         pin,
+        gameId,
+        isHost: true,
       });
     } catch (err) {
       console.error('Failed to launch lobby:', err);
-      alert('Failed to start hosting. Please try again.');
+      setErrorMessage('Failed to create the game session. Please try again.');
+      setShowErrorModal(true);
     }
   };
 
@@ -102,17 +135,6 @@ export default function HostGameMenu({ navigation, route }) {
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color="#00c781" />
         <Text style={styles.loadingText}>Loading game...</Text>
-      </View>
-    );
-  }
-
-  if (error || !game) {
-    return (
-      <View style={styles.errorContainer}>
-        <Text style={styles.errorText}>{error || 'Game not found'}</Text>
-        <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
-          <Text style={styles.backBtnText}>Go Back</Text>
-        </TouchableOpacity>
       </View>
     );
   }
@@ -134,9 +156,9 @@ export default function HostGameMenu({ navigation, route }) {
           <View style={styles.gameCover}>
             <Text style={{ fontSize: 60 }}>🎯</Text>
           </View>
-          <Text style={styles.gameTitle}>{game.title}</Text>
+          <Text style={styles.gameTitle}>{game?.title || 'Game Title'}</Text>
           <Text style={styles.gameInfo}>
-            {game.numQuestions || 0} questions • by {game.creatorName || 'You'}
+            {game?.numQuestions || 0} questions • by {game?.creatorName || 'You'}
           </Text>
         </View>
 
@@ -183,7 +205,7 @@ export default function HostGameMenu({ navigation, route }) {
             />
           </View>
 
-          {/* 4. Show correct answers after each question */}
+          {/* Toggles */}
           <View style={styles.settingRow}>
             <Text style={styles.settingLabel}>Show correct answers after each question</Text>
             <Switch
@@ -194,7 +216,6 @@ export default function HostGameMenu({ navigation, route }) {
             />
           </View>
 
-          {/* 5. Nickname generator */}
           <View style={styles.settingRow}>
             <Text style={styles.settingLabel}>Nickname generator</Text>
             <Switch
@@ -205,7 +226,6 @@ export default function HostGameMenu({ navigation, route }) {
             />
           </View>
 
-          {/* 6. Host plays */}
           <View style={styles.settingRow}>
             <Text style={styles.settingLabel}>Host can play</Text>
             <Switch
@@ -216,7 +236,6 @@ export default function HostGameMenu({ navigation, route }) {
             />
           </View>
 
-          {/* 7. Randomize order of questions */}
           <View style={styles.settingRow}>
             <Text style={styles.settingLabel}>Randomize order of questions</Text>
             <Switch
@@ -227,7 +246,6 @@ export default function HostGameMenu({ navigation, route }) {
             />
           </View>
 
-          {/* 8. Randomize order of answers */}
           <View style={styles.settingRow}>
             <Text style={styles.settingLabel}>Randomize order of answers</Text>
             <Switch
@@ -245,6 +263,30 @@ export default function HostGameMenu({ navigation, route }) {
           <Text style={styles.launchSubtext}>Students will join with a PIN</Text>
         </TouchableOpacity>
       </ScrollView>
+
+      {/* Error Modal */}
+      <Modal
+        visible={showErrorModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowErrorModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Oops!</Text>
+            <Text style={styles.modalMessage}>{errorMessage}</Text>
+            <TouchableOpacity
+              style={styles.modalButton}
+              onPress={() => {
+                setShowErrorModal(false);
+                if (error) navigation.goBack(); // Go back if game failed to load
+              }}
+            >
+              <Text style={styles.modalButtonText}>OK</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -264,27 +306,6 @@ const styles = StyleSheet.create({
     color: '#fff',
     marginTop: 20,
     fontSize: 18,
-  },
-  errorContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#111',
-  },
-  errorText: {
-    color: '#ff6b6b',
-    fontSize: 20,
-    marginBottom: 20,
-  },
-  backBtn: {
-    backgroundColor: '#333',
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    borderRadius: 12,
-  },
-  backBtnText: {
-    color: '#fff',
-    fontSize: 16,
   },
   header: {
     flexDirection: 'row',
@@ -402,5 +423,49 @@ const styles = StyleSheet.create({
     fontSize: 14,
     opacity: 0.8,
     marginTop: 4,
+  },
+
+  // Error Modal Styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContent: {
+    backgroundColor: '#1e1e1e',
+    borderRadius: 16,
+    padding: 24,
+    width: '80%',
+    maxWidth: 400,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  modalTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#ff6b6b',
+    marginBottom: 16,
+  },
+  modalMessage: {
+    fontSize: 16,
+    color: '#ddd',
+    textAlign: 'center',
+    marginBottom: 24,
+    lineHeight: 22,
+  },
+  modalButton: {
+    backgroundColor: '#00c781',
+    paddingVertical: 14,
+    paddingHorizontal: 40,
+    borderRadius: 12,
+    width: '100%',
+    alignItems: 'center',
+  },
+  modalButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
   },
 });

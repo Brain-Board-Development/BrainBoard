@@ -1,8 +1,9 @@
 /**
- * TeacherDashboard.js - UPDATED WITH REQUESTED CHANGES
+ * TeacherDashboard.js - UPDATED WITH JOIN GAME BUTTON
  * - "Reveal Answers" text right next to toggle on the right
  * - Correct answers only green background (no ✓ or "Correct" text)
  * - Buttons swapped: Host This Game (left) | Play Solo (right)
+ * - NEW: "Join Game" button in Home tab
  * - All previous fixes included
  */
 
@@ -435,10 +436,33 @@ export default function TeacherDashboard({ navigation, route }) {
           <View style={{ flex: 1, padding: 40 }}>
             <Text style={styles.welcome}>Welcome back, {userData?.username || 'Teacher'}!</Text>
             <Text style={styles.subtitle}>You have {myGames.length} games • {totalQuestions} questions created</Text>
-            
-            <TouchableOpacity style={styles.bigCreateBtn} onPress={handleCreateGame}>
-              <Text style={styles.bigCreateText}>+ Create New Game</Text>
-            </TouchableOpacity>
+
+            {/* NEW: Action Buttons Row - Create + Join */}
+            <View style={styles.actionButtonsRow}>
+              <TouchableOpacity 
+                style={[
+                  styles.bigCreateBtn,
+                  hoveredButton === 'create' && styles.bigCreateBtnHover
+                ]}
+                onPress={handleCreateGame}
+                onMouseEnter={() => setHoveredButton('create')}
+                onMouseLeave={() => setHoveredButton(null)}
+              >
+                <Text style={styles.bigCreateText}>+ Create New Game</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity 
+                style={[
+                  styles.joinGameBtn,
+                  hoveredButton === 'join' && styles.joinGameBtnHover
+                ]}
+                onPress={() => navigation.navigate('JoinGameScreen')}
+                onMouseEnter={() => setHoveredButton('join')}
+                onMouseLeave={() => setHoveredButton(null)}
+              >
+                <Text style={styles.joinGameText}>Join Game</Text>
+              </TouchableOpacity>
+            </View>
 
             {recentGames.length > 0 && (
               <>
@@ -556,7 +580,7 @@ export default function TeacherDashboard({ navigation, route }) {
                 <Text style={styles.previewCreator}>by {previewModal.game.creatorName || 'Unknown'}</Text>
                 <Text style={styles.previewQuestions}>{previewModal.game.numQuestions || 0} questions</Text>
 
-                {/* Reveal Answers Switch - Text right next to toggle */}
+                {/* Reveal Answers Switch */}
                 <View style={styles.previewToggleRow}>
                   <Switch
                     value={showAnswersInPreview}
@@ -608,7 +632,6 @@ export default function TeacherDashboard({ navigation, route }) {
                 </ScrollView>
 
                 <View style={styles.previewActionButtons}>
-                  {/* Host This Game on the left */}
                   <TouchableOpacity 
                     style={styles.hostGameBtn}
                     onPress={() => {
@@ -619,7 +642,6 @@ export default function TeacherDashboard({ navigation, route }) {
                     <Text style={styles.hostGameBtnText}>Host This Game</Text>
                   </TouchableOpacity>
 
-                  {/* Play Solo on the right */}
                   <TouchableOpacity 
                     style={styles.soloBtn}
                     onPress={() => {
@@ -693,8 +715,52 @@ const styles = StyleSheet.create({
   main: { flex: 1, padding: 30, backgroundColor: '#111' },
   welcome: { fontSize: 36, fontWeight: 'bold', color: '#fff', marginBottom: 10 },
   subtitle: { fontSize: 18, color: '#aaa', marginBottom: 40 },
-  bigCreateBtn: { backgroundColor: '#00c781', padding: 24, borderRadius: 16, alignItems: 'center', marginBottom: 50 },
-  bigCreateText: { color: '#fff', fontSize: 20, fontWeight: 'bold' },
+
+  // NEW: Row for Create + Join buttons
+  actionButtonsRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 20,
+    marginBottom: 50,
+    flexWrap: 'wrap',
+  },
+  bigCreateBtn: {
+    backgroundColor: '#00c781',
+    padding: 24,
+    borderRadius: 16,
+    alignItems: 'center',
+    flex: 1,
+    minWidth: 300,
+    maxWidth: 400,
+  },
+  bigCreateBtnHover: {
+    backgroundColor: '#00e092',
+    transform: [{ scale: 1.02 }],
+  },
+  bigCreateText: {
+    color: '#fff',
+    fontSize: 20,
+    fontWeight: 'bold',
+  },
+  joinGameBtn: {
+    backgroundColor: '#3498db',
+    padding: 24,
+    borderRadius: 16,
+    alignItems: 'center',
+    flex: 1,
+    minWidth: 300,
+    maxWidth: 400,
+  },
+  joinGameBtnHover: {
+    backgroundColor: '#2980b9',
+    transform: [{ scale: 1.02 }],
+  },
+  joinGameText: {
+    color: '#fff',
+    fontSize: 20,
+    fontWeight: 'bold',
+  },
+
   section: { fontSize: 24, fontWeight: 'bold', color: '#fff', marginBottom: 20 },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
   searchBox: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#222', borderRadius: 12, paddingHorizontal: 16, flex: 1, height: 52, borderWidth: 1, borderColor: '#333' },
@@ -796,13 +862,12 @@ const styles = StyleSheet.create({
   previewCreator: { fontSize: 18, color: '#aaa', marginBottom: 8 },
   previewQuestions: { fontSize: 16, color: '#ccc', marginBottom: 20 },
 
-  // Updated toggle row: switch first, then text on the right
   previewToggleRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'flex-end',
     marginBottom: 20,
-    gap: 12, // space between switch and text
+    gap: 12,
   },
   previewToggleLabel: {
     fontSize: 16,
@@ -830,7 +895,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between', 
     alignItems: 'center' 
   },
-  previewCorrectAnswer: { backgroundColor: '#004d26' }, // only green highlight
+  previewCorrectAnswer: { backgroundColor: '#004d26' },
   previewAnswerText: { color: '#fff', fontSize: 16 },
 
   previewActionButtons: { 
