@@ -731,7 +731,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flex: 1,
     minWidth: 300,
-    maxWidth: 400,
+    maxWidth: "100%",
   },
   bigCreateBtnHover: {
     backgroundColor: '#00e092',
@@ -749,10 +749,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flex: 1,
     minWidth: 300,
-    maxWidth: 400,
+    maxWidth: "100%",
   },
   joinGameBtnHover: {
-    backgroundColor: '#2980b9',
+    backgroundColor: '#3baffc',
     transform: [{ scale: 1.02 }],
   },
   joinGameText: {
