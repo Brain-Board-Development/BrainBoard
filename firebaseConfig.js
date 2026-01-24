@@ -1,11 +1,10 @@
 // firebaseConfig.js
 import { initializeApp } from "firebase/app";
-import { getAuth } from "firebase/auth";
+import { getAuth, inMemoryPersistence, setPersistence } from "firebase/auth"; // ← ADD these
 import { getFirestore } from "firebase/firestore";
-import { getStorage } from 'firebase/storage';  // <-- Make sure this is imported
-// ❌ REMOVE getAnalytics import
+import { getStorage } from "firebase/storage";
 
-// Replace with your Firebase project config
+// Your Firebase config (unchanged)
 const firebaseConfig = {
   apiKey: "AIzaSyDl7SDiJspL7O9BVYMWEqegfqm5Ux5vrIM",
   authDomain: "cs4-project-test.firebaseapp.com",
@@ -16,10 +15,21 @@ const firebaseConfig = {
   measurementId: "G-4VJECTZJ2F",
 };
 
-// ✅ Initialize Firebase safely
+// Initialize Firebase
 const app = initializeApp(firebaseConfig);
 
-// ✅ Export Firebase modules
-export const auth = getAuth(app);
+// TEMP FIX: Use in-memory persistence (no cross-tab sync, no localStorage)
+const auth = getAuth(app);
+
+// Force in-memory persistence (temporary dev mode)
+setPersistence(auth, inMemoryPersistence)
+  .then(() => {
+    console.log("[DEV] Firebase Auth set to in-memory persistence (guest testing mode)");
+  })
+  .catch((err) => {
+    console.error("Failed to set in-memory persistence:", err);
+  });
+
 export const db = getFirestore(app);
-export const storage = getStorage(app);  // <-- Export the storage instance
+export const storage = getStorage(app);
+export { auth }; // Export the modified auth instance

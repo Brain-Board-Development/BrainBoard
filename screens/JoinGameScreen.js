@@ -1,6 +1,8 @@
 /**
- * JoinGameScreen.js - Updated to allow real lobby joining
- * Players enter 6-digit PIN → validate → join session → go to game
+ * JoinGameScreen.js - PIN validation + navigation only
+ * - No player creation or name assignment here
+ * - Works for logged-in and guests
+ * - GameScreen handles username and joining the lobby
  */
 
 import React, { useState } from "react";
@@ -14,14 +16,12 @@ import {
   ActivityIndicator,
   Alert,
 } from "react-native";
-import { db, auth } from "../firebaseConfig";
+import { db } from "../firebaseConfig";
 import {
   collection,
   query,
   where,
   getDocs,
-  doc,          // Added
-  updateDoc,    // Added
 } from "firebase/firestore";
 
 export default function JoinGameScreen({ navigation }) {
@@ -43,7 +43,7 @@ export default function JoinGameScreen({ navigation }) {
     setIsJoining(true);
 
     try {
-      // 1. Find the session by PIN
+      // 1. Only validate that the game exists and is in lobby
       const q = query(collection(db, "gameSessions"), where("pin", "==", gameCode));
       const querySnapshot = await getDocs(q);
 
@@ -52,62 +52,24 @@ export default function JoinGameScreen({ navigation }) {
         return;
       }
 
-      // Get the first (and only) matching session
       const sessionDoc = querySnapshot.docs[0];
       const sessionData = sessionDoc.data();
       const sessionId = sessionDoc.id;
 
-      // 2. Check if game already started
       if (sessionData.status !== "lobby") {
         Alert.alert("Game Started", "This game has already started. You can't join now.");
         return;
       }
 
-      // 3. Get current user info (support logged-in + guest)
-      const user = auth.currentUser;
-      const playerUid = user?.uid || `guest_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      const playerName = user?.displayName || user?.email?.split("@")[0] || `Player${Math.floor(Math.random() * 1000)}`;
-
-      // 4. Prevent duplicate join (check by uid)
-      if (sessionData.players?.some(p => p.uid === playerUid)) {
-        Alert.alert("Already Joined", "You're already in this lobby!");
-        navigation.navigate("GameScreen", {
-          sessionId,
-          gameId: sessionData.gameId,
-          isHost: false,
-        });
-        return;
-      }
-
-      // 5. Add player to the session
-      const updatedPlayers = [
-        ...(sessionData.players || []),
-        {
-          uid: playerUid,
-          name: playerName,
-          joinedAt: new Date().toISOString(),
-          score: 0,
-        },
-      ];
-
-      // Update Firestore
-      await updateDoc(doc(db, "gameSessions", sessionId), {
-        players: updatedPlayers,
-      });
-
-      // 6. Navigate to the game screen
+      // 2. Navigate to GameScreen - let it handle username + join
       navigation.navigate("GameScreen", {
         sessionId,
         gameId: sessionData.gameId,
         isHost: false,
       });
     } catch (error) {
-      console.error("Join failed:", error);
-      let message = "Failed to join the game. Please try again.";
-      if (error.code === "permission-denied") {
-        message = "Permission denied. The game may be full or no longer active.";
-      }
-      Alert.alert("Error", message);
+      console.error("Join validation failed:", error);
+      Alert.alert("Error", "Failed to check the game. Please try again.");
     } finally {
       setIsJoining(false);
     }
