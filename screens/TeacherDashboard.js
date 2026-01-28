@@ -362,7 +362,7 @@ export default function TeacherDashboard({ navigation, route }) {
           <Text style={[
             styles.tabLabel,
             currentTab === 'library' && styles.tabLabelActive
-          ]}>Your library</Text>
+          ]}>Your Library</Text>
         </TouchableOpacity>
         
         <TouchableOpacity 

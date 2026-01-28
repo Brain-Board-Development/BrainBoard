@@ -1,13 +1,13 @@
 /**
- * GameScreen.js - Lobby Waiting Screen (username managed here)
- * - Username input is REQUIRED (button disabled if blank)
- * - Username is stored and used locally in this screen
+ * GameScreen.js - Lobby Waiting Screen (TeacherDashboard style)
+ * - Username input is REQUIRED when nicknameGenerator is off
+ * - Auto-generates ONE unique adjective + noun nickname when nicknameGenerator is on
+ * - Checks uniqueness before joining → shows modal if name is taken
  * - Shows real-time player list in dashboard-style cards
  * - Big green "Customize" button (placeholder)
- * - Matches TeacherDashboard style
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -18,9 +18,59 @@ import {
   SafeAreaView,
   FlatList,
   Alert,
+  Modal,
 } from 'react-native';
 import { db } from '../firebaseConfig';
 import { doc, onSnapshot, updateDoc } from 'firebase/firestore';
+
+// Arrays for random nickname generation (one adjective + one noun, no numbers)
+const adjectives = [
+  "Adventurous", "Agile", "Alert", "Ambitious", "Ancient", "Artistic", "Astonishing", "Authentic",
+  "Blazing", "Bold", "Brave", "Bright", "Brilliant", "Calm", "Cautious", "Charming", "Cheerful",
+  "Clever", "Colorful", "Confident", "Cool", "Cosmic", "Creative", "Cunning", "Curious", "Daring",
+  "Dazzling", "Defiant", "Delightful", "Dynamic", "Eager", "Elegant", "Energetic", "Enigmatic",
+  "Epic", "Fabulous", "Famous", "Fearless", "Fierce", "Fiery", "Flamboyant", "Flashy", "Friendly",
+  "Gallant", "Gleaming", "Glorious", "Graceful", "Grand", "Happy", "Harmonious", "Heroic",
+  "Imaginative", "Immense", "Incredible", "Inquisitive", "Intrepid", "Jolly", "Joyful", "Keen",
+  "Lively", "Luminous", "Majestic", "Mighty", "Mystic", "Noble", "Optimistic", "Playful",
+  "Powerful", "Proud", "Quick", "Radiant", "Resilient", "Robust", "Sassy", "Serene", "Sharp",
+  "Shimmering", "Silent", "Sleek", "Smart", "Sparkling", "Spirited", "Splendid", "Steadfast",
+  "Stellar", "Striking", "Strong", "Stunning", "Swift", "Tenacious", "Thrilling", "Valiant",
+  "Vibrant", "Vigorous", "Vivid", "Witty", "Wonderful", "Zealous", "Zesty"
+];
+
+const nouns = [
+  "Arrow", "Aurora", "Badger", "Beacon", "Bear", "Blaze", "Bolt", "Breeze", "Cactus", "Castle",
+  "Cat", "Cheetah", "Circuit", "Cloud", "Comet", "Crest", "Crow", "Crystal", "Dawn", "Deer",
+  "Dragon", "Drift", "Eagle", "Echo", "Ember", "Falcon", "Fawn", "Flame", "Fox", "Galaxy",
+  "Gem", "Ghost", "Glider", "Goblin", "Gorilla", "Grove", "Hawk", "Horizon", "Horse", "Hound",
+  "Island", "Jaguar", "Jewel", "Knight", "Lake", "Lantern", "Leaf", "Leopard", "Lion", "Lunar",
+  "Mage", "Meadow", "Meteor", "Mist", "Moon", "Mountain", "Nebula", "Ninja", "Oak", "Ocean",
+  "Owl", "Panther", "Peak", "Pegasus", "Phantom", "Phoenix", "Pine", "Pixel", "Puma", "Quest",
+  "Raven", "Ridge", "River", "Robot", "Rocket", "Rose", "Saber", "Shadow", "Shark", "Sky",
+  "Slime", "Sparrow", "Spear", "Star", "Storm", "Sword", "Tiger", "Titan", "Tree", "Viper",
+  "Voyage", "Wave", "Weasel", "Whale", "Wind", "Wizard", "Wolf", "Wraith", "Zephyr", "Zone"
+];
+
+// Generate one unique nickname (adjective + noun, no numbers)
+const generateUniqueNickname = (existingNames = []) => {
+  let attempts = 0;
+  const maxAttempts = 20;
+
+  while (attempts < maxAttempts) {
+    const adj = adjectives[Math.floor(Math.random() * adjectives.length)];
+    const noun = nouns[Math.floor(Math.random() * nouns.length)];
+    const candidate = `${adj}${noun}`;
+
+    if (!existingNames.includes(candidate)) {
+      return candidate;
+    }
+    attempts++;
+  }
+
+  // Fallback if no unique name found after max attempts
+  return "Player" + Math.floor(Math.random() * 10000);
+};
 
 export default function GameScreen({ route, navigation }) {
   const { sessionId, isHost } = route.params;
@@ -28,9 +78,14 @@ export default function GameScreen({ route, navigation }) {
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [username, setUsername] = useState('');           // Managed here only
+  const [username, setUsername] = useState('');
   const [hasSetUsername, setHasSetUsername] = useState(false);
   const [hoveredButton, setHoveredButton] = useState(null);
+  const [showNameTakenModal, setShowNameTakenModal] = useState(false);
+  const [nameTakenMessage, setNameTakenMessage] = useState('');
+
+  // Ref to prevent re-generating on every snapshot
+  const hasGeneratedRef = useRef(false);
 
   // Listen to real-time session updates
   useEffect(() => {
@@ -38,7 +93,26 @@ export default function GameScreen({ route, navigation }) {
 
     const unsubscribe = onSnapshot(doc(db, 'gameSessions', sessionId), (docSnap) => {
       if (docSnap.exists()) {
-        setSession(docSnap.data());
+        const data = docSnap.data();
+        setSession(data);
+
+        // Auto-generate unique nickname ONLY ONCE when setting is enabled
+        if (
+          data.settings?.nicknameGenerator &&
+          !hasSetUsername &&
+          !username &&
+          !hasGeneratedRef.current
+        ) {
+          hasGeneratedRef.current = true;
+
+          const existingNames = (data.players || []).map(p => p.name);
+          const generated = generateUniqueNickname(existingNames);
+          setUsername(generated);
+
+          // Attempt to join with generated name
+          joinWithUsername(generated);
+        }
+
         setLoading(false);
       } else {
         setError("Game session not found");
@@ -53,29 +127,34 @@ export default function GameScreen({ route, navigation }) {
     return () => unsubscribe();
   }, [sessionId]);
 
-  // Join/update username in lobby
-  const joinWithUsername = async () => {
-    const finalName = username.trim();
+  // Join/update username in lobby (with uniqueness check)
+  const joinWithUsername = async (nameToUse = username) => {
+    const finalName = (nameToUse || username).trim();
     if (!finalName) {
-      Alert.alert("Username Required", "Please enter a display name to join the lobby.");
+      Alert.alert("Username Required", "Please enter or generate a display name.");
+      return;
+    }
+
+    // Check if name is already taken
+    const existingNames = (session?.players || []).map(p => p.name);
+    if (existingNames.includes(finalName)) {
+      setNameTakenMessage(`The username "${finalName}" is already in use. Please choose another.`);
+      setShowNameTakenModal(true);
       return;
     }
 
     try {
-      const playerUid = `guest_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`; // Always guest-style UID
+      const playerUid = `guest_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
       let updatedPlayers = [...(session?.players || [])];
 
-      // Check if this device/session is already in
       const existingIndex = updatedPlayers.findIndex(p => p.uid === playerUid);
       if (existingIndex !== -1) {
-        // Update existing entry with new name
         updatedPlayers[existingIndex] = {
           ...updatedPlayers[existingIndex],
           name: finalName,
         };
       } else {
-        // Add new player
         updatedPlayers.push({
           uid: playerUid,
           name: finalName,
@@ -129,7 +208,7 @@ export default function GameScreen({ route, navigation }) {
     );
   }
 
-  // Username input screen - centered vertically
+  // Username input screen (shown when nicknameGenerator is OFF or auto-generation failed)
   if (!hasSetUsername) {
     return (
       <SafeAreaView style={styles.container}>
@@ -156,7 +235,7 @@ export default function GameScreen({ route, navigation }) {
               !username.trim() && styles.disabledButton,
               hoveredButton === 'join' && styles.joinButtonHover
             ]}
-            onPress={joinWithUsername}
+            onPress={() => joinWithUsername()}
             disabled={!username.trim()}
             onMouseEnter={() => setHoveredButton('join')}
             onMouseLeave={() => setHoveredButton(null)}
@@ -164,6 +243,27 @@ export default function GameScreen({ route, navigation }) {
             <Text style={styles.buttonText}>Enter Lobby</Text>
           </TouchableOpacity>
         </View>
+
+        {/* Username Taken Modal */}
+        <Modal
+          visible={showNameTakenModal}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setShowNameTakenModal(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.confirmModal}>
+              <Text style={styles.confirmModalTitle}>Username Taken</Text>
+              <Text style={styles.confirmModalText}>{nameTakenMessage}</Text>
+              <TouchableOpacity
+                style={styles.modalButton}
+                onPress={() => setShowNameTakenModal(false)}
+              >
+                <Text style={styles.modalButtonText}>OK</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
       </SafeAreaView>
     );
   }
@@ -239,7 +339,6 @@ const styles = StyleSheet.create({
     padding: 30,
   },
 
-  // Vertical centering for username input
   centeredContent: {
     flex: 1,
     justifyContent: 'center',
@@ -427,6 +526,49 @@ const styles = StyleSheet.create({
   },
   backText: {
     color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+
+  // Modal for username taken
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  confirmModal: {
+    backgroundColor: '#1e1e1e',
+    borderRadius: 16,
+    padding: 24,
+    width: 340,
+    borderWidth: 1,
+    borderColor: '#333',
+    alignItems: 'center',
+  },
+  confirmModalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#fff',
+    marginBottom: 16,
+  },
+  confirmModalText: {
+    fontSize: 16,
+    color: '#ccc',
+    textAlign: 'center',
+    marginBottom: 24,
+    lineHeight: 22,
+  },
+  modalButton: {
+    backgroundColor: '#00c781',
+    paddingVertical: 14,
+    paddingHorizontal: 32,
+    borderRadius: 12,
+    width: '80%',
+    alignItems: 'center',
+  },
+  modalButtonText: {
+    color: '#000',
     fontSize: 16,
     fontWeight: 'bold',
   },
