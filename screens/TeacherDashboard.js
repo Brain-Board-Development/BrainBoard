@@ -286,7 +286,7 @@ export default function TeacherDashboard({ navigation, route }) {
         )}
 
         <Text style={styles.gameTitle}>{item.title}</Text>
-        <Text style={styles.creatorText}>by {item.creatorName || 'Unknown'}</Text>
+        <Text style={styles.creatorText}>{item.creatorName || 'Unknown'}</Text>
         <Text style={styles.gameDetails}>{item.numQuestions || 0} questions</Text>
 
         {isMine && (
@@ -577,7 +577,7 @@ export default function TeacherDashboard({ navigation, route }) {
                     <Text style={styles.closePreview}>×</Text>
                   </TouchableOpacity>
                 </View>
-                <Text style={styles.previewCreator}>by {previewModal.game.creatorName || 'Unknown'}</Text>
+                <Text style={styles.previewCreator}>{previewModal.game.creatorName || 'Unknown'}</Text>
                 <Text style={styles.previewQuestions}>{previewModal.game.numQuestions || 0} questions</Text>
 
                 {/* Reveal Answers Switch */}
