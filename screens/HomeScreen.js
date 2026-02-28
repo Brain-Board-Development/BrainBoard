@@ -19,7 +19,7 @@ export default function HomeScreen({ navigation }) {
   const [isLoading, setIsLoading] = useState(true);
   const aboutUsSectionRef = useRef(null);
 
-  // ——— AUTH CHECK (FIXED) ———
+  // Auth check & auto-redirect to Dashboard if logged in
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       try {
@@ -38,44 +38,48 @@ export default function HomeScreen({ navigation }) {
   }, [navigation]);
 
   const handleAuthenticatedUser = async (uid) => {
-    const userDoc = await getDoc(doc(db, "users", uid));
-    if (userDoc.exists()) {
-      const userData = userDoc.data();
-      await AsyncStorage.setItem("userToken", uid);
-      setIsLoading(false);
-      navigation.replace(
-        userData.accountType === "Teacher"
-          ? "TeacherDashboard"
-          : "StudentDashboard"
-      );
-    } else {
-      await AsyncStorage.removeItem("userToken");
+    try {
+      const userDoc = await getDoc(doc(db, "users", uid));
+      if (userDoc.exists()) {
+        const userData = userDoc.data();
+        await AsyncStorage.setItem("userToken", uid);
+        console.log("User authenticated - redirecting to Dashboard. UID:", uid, "Type:", userData.accountType || "Unknown");
+        setIsLoading(false);
+        navigation.replace("Dashboard"); // ← All users go here now
+      } else {
+        await AsyncStorage.removeItem("userToken");
+        setIsLoading(false);
+      }
+    } catch (err) {
+      console.error("Failed to fetch user doc:", err);
       setIsLoading(false);
     }
   };
 
   const checkStoredToken = async () => {
-    const token = await AsyncStorage.getItem("userToken");
-    if (token) {
-      const userDoc = await getDoc(doc(db, "users", token));
-      if (userDoc.exists()) {
-        const userData = userDoc.data();
-        setIsLoading(false);
-        navigation.replace(
-          userData.accountType === "Teacher"
-            ? "TeacherDashboard"
-            : "StudentDashboard"
-        );
+    try {
+      const token = await AsyncStorage.getItem("userToken");
+      if (token) {
+        const userDoc = await getDoc(doc(db, "users", token));
+        if (userDoc.exists()) {
+          const userData = userDoc.data();
+          console.log("Valid stored token found - redirecting to Dashboard. UID:", token);
+          setIsLoading(false);
+          navigation.replace("Dashboard"); // ← All users go here now
+        } else {
+          await AsyncStorage.removeItem("userToken");
+          setIsLoading(false);
+        }
       } else {
-        await AsyncStorage.removeItem("userToken");
         setIsLoading(false);
       }
-    } else {
+    } catch (err) {
+      console.error("Stored token check failed:", err);
       setIsLoading(false);
     }
   };
 
-  // ——— WEB SCROLLBAR & SMOOTH SCROLL ———
+  // Web-specific scrollbar & smooth scroll
   useEffect(() => {
     if (Platform.OS === "web") {
       document.body.style.overflowY = "scroll";
@@ -250,7 +254,6 @@ export default function HomeScreen({ navigation }) {
   );
 }
 
-// ——— STYLES (UNCHANGED) ———
 const styles = StyleSheet.create({
   container: {
     flex: 1,

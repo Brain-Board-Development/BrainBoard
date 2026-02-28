@@ -10,8 +10,7 @@ import JoinGameScreenMobile from './screens/JoinGameScreenMobile';
 import LoginScreen from './screens/LoginScreen';
 import SignUpScreen from './screens/SignUpScreen';
 import ResetPassword from './screens/ResetPassword';
-import TeacherDashboard from './screens/TeacherDashboard.js'; // Added for Teacher navigation
-import StudentDashboard from './screens/StudentDashboard.js';
+import Dashboard from './screens/Dashboard'; // Added for Teacher navigation
 import CreateGameMenu from './screens/CreateGameMenu.js';
 import HostGameMenu from './screens/HostGameMenu.js';
 import Lobby from './screens/Lobby.js';
@@ -66,8 +65,7 @@ export default function App() {
           initialParams={{ startScreen: 'AccountTypeScreen' }}
         />
         <Stack.Screen name="ResetPassword" component={ResetPassword} />
-        <Stack.Screen name="TeacherDashboard" component={TeacherDashboard} />
-        <Stack.Screen name="StudentDashboard" component={StudentDashboard} />
+        <Stack.Screen name="Dashboard" component={Dashboard} />
         <Stack.Screen name="CreateGameMenu" component={CreateGameMenu} />
         <Stack.Screen name="HostGameMenu" component={HostGameMenu} />
         <Stack.Screen name="Lobby" component={Lobby} />

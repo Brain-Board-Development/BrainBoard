@@ -98,19 +98,16 @@ export default function LoginScreen({ navigation }) {
 
       const userData = userDoc.data();
       await AsyncStorage.setItem("userToken", user.uid);
-      console.log("Login successful, user UID:", user.uid);
+      console.log("Login successful - UID:", user.uid, "Account type:", userData.accountType || "Unknown");
 
-      navigation.replace(
-        userData.accountType === "Teacher"
-          ? "TeacherDashboard"
-          : "StudentDashboard"
-      );
+      // ALL users go to Dashboard now
+      navigation.replace("Dashboard");
     } catch (error) {
       console.error("Login error:", error);
       let message = "An error occurred during login";
       if (error.code === "auth/invalid-credential" || error.code === "auth/wrong-password") {
         message = "Incorrect username/email or password.";
-      } else if (error.code === "auth/user-not-found" || error.message === "auth/user-not-found") {
+      } else if (error.code === "auth/user-not-found" || error.message.includes("user-not-found")) {
         message = "No user found with that username or email.";
       } else {
         message = error.message;
@@ -126,41 +123,33 @@ export default function LoginScreen({ navigation }) {
     setServerError("");
 
     try {
+      let user;
       if (Platform.OS === "web") {
         const provider = new GoogleAuthProvider();
         const userCredential = await signInWithPopup(auth, provider);
-        const user = userCredential.user;
-        const userDoc = await getDoc(doc(db, "users", user.uid));
-        if (!userDoc.exists()) {
-          setServerError("User data not found. Please complete sign-up.");
-          setIsLoading(false);
-          navigation.navigate("SignUp", { startScreen: "AccountTypeScreen", email: user.email });
-          return;
-        }
-        const userData = userDoc.data();
-        await AsyncStorage.setItem("userToken", user.uid);
-        navigation.replace(
-          userData.accountType === "Teacher" ? "TeacherDashboard" : "StudentDashboard"
-        );
+        user = userCredential.user;
       } else {
         await GoogleSignin.hasPlayServices();
         const userInfo = await GoogleSignin.signIn();
         const googleCredential = GoogleAuthProvider.credential(userInfo.idToken);
         const userCredential = await signInWithCredential(auth, googleCredential);
-        const user = userCredential.user;
-        const userDoc = await getDoc(doc(db, "users", user.uid));
-        if (!userDoc.exists()) {
-          setServerError("User data not found. Please complete sign-up.");
-          setIsLoading(false);
-          navigation.navigate("SignUp", { startScreen: "AccountTypeScreen", email: user.email });
-          return;
-        }
-        const userData = userDoc.data();
-        await AsyncStorage.setItem("userToken", user.uid);
-        navigation.replace(
-          userData.accountType === "Teacher" ? "TeacherDashboard" : "StudentDashboard"
-        );
+        user = userCredential.user;
       }
+
+      const userDoc = await getDoc(doc(db, "users", user.uid));
+      if (!userDoc.exists()) {
+        setServerError("User data not found. Please complete sign-up.");
+        setIsLoading(false);
+        navigation.navigate("SignUp", { startScreen: "AccountTypeScreen", email: user.email });
+        return;
+      }
+
+      const userData = userDoc.data();
+      await AsyncStorage.setItem("userToken", user.uid);
+      console.log("Google login successful - UID:", user.uid, "Account type:", userData.accountType || "Unknown");
+
+      // ALL users go to Dashboard now
+      navigation.replace("Dashboard");
     } catch (error) {
       console.error("Google Sign-In error:", error);
       let message = "Failed to sign in with Google";
@@ -173,6 +162,8 @@ export default function LoginScreen({ navigation }) {
       } else if (error.code === "auth/user-not-found") {
         message = "No user found. Please sign up first.";
         navigation.navigate("SignUp", { startScreen: "AccountTypeScreen" });
+      } else {
+        message = error.message;
       }
       setServerError(message);
     } finally {
@@ -210,6 +201,7 @@ export default function LoginScreen({ navigation }) {
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.container}>
         <Text style={styles.title}>Login</Text>
+
         <View style={styles.inputContainer}>
           <View style={styles.inputWrapper}>
             <TextInput
@@ -271,7 +263,7 @@ export default function LoginScreen({ navigation }) {
 
           <View style={styles.alignContainer}>
             <View style={styles.loginPrompt}>
-              <Text style={styles.promptText}>Forget Password? </Text>
+              <Text style={styles.promptText}>Forgot Password? </Text>
               <TouchableOpacity
                 onPress={() => navigation.navigate("ResetPassword", { identifier })}
                 {...(Platform.OS === "web" && {
@@ -289,7 +281,7 @@ export default function LoginScreen({ navigation }) {
           style={getLoginBtnStyle()}
           activeOpacity={0.7}
           onPress={handleLogin}
-          disabled={isLoading || !identifier || !password || identifierError || passwordError}
+          disabled={isLoading || !identifier.trim() || !password.trim() || identifierError || passwordError}
           {...(Platform.OS === "web" && {
             onMouseEnter: () => setHoveredButton("login"),
             onMouseLeave: () => setHoveredButton(null),
@@ -378,7 +370,7 @@ const styles = StyleSheet.create({
   errorText: { color: "#ff4d4d", fontSize: 12, marginTop: 5 },
   signUpBtn: {
     paddingVertical: 12,
-    paddingHorizontal: 25,  
+    paddingHorizontal: 25,
     borderRadius: 8,
     marginVertical: 10,
     width: "80%",
