@@ -1,6 +1,9 @@
 /**
- * CreateGameMenu.js - WEB-ONLY VERSION WITHOUT PANGEA
- * Manual up/down reordering, perfect image upload/display
+ * CreateGameMenu.js - UPDATED
+ * - Auto-creates first question
+ * - Only question list scrolls
+ * - Removed estimated time & points
+ * - Enhanced checkmark styling
  */
 
 import React, { useState, useEffect, useRef } from 'react';
@@ -44,15 +47,21 @@ export default function CreateGameMenu({ navigation, route }) {
   const coverInputRef = useRef(null);
   const questionInputRef = useRef(null);
 
-  const currentQuestion = questions[selectedQuestionIndex] || {
-    type: 'multipleChoice',
-    question: '',
-    answers: ['', '', '', ''],
-    correctAnswers: [false, false, false, false],
-    imageUrl: null,
-    timeLimit: 20,
-    points: 'standard',
-  };
+  // Auto-create first question if none exist
+  useEffect(() => {
+    if (questions.length === 0 && !isLoading) {
+      const initialQuestion = {
+        type: 'multipleChoice',
+        question: '',
+        answers: ['', '', '', ''],
+        correctAnswers: [false, false, false, false],
+        imageUrl: null,
+        timeLimit: 20,
+      };
+      setQuestions([initialQuestion]);
+      setSelectedQuestionIndex(0);
+    }
+  }, [questions.length, isLoading]);
 
   useEffect(() => {
     if (gameId) {
@@ -73,6 +82,15 @@ export default function CreateGameMenu({ navigation, route }) {
     }
   }, [gameId]);
 
+  const currentQuestion = questions[selectedQuestionIndex] || {
+    type: 'multipleChoice',
+    question: '',
+    answers: ['', '', '', ''],
+    correctAnswers: [false, false, false, false],
+    imageUrl: null,
+    timeLimit: 20,
+  };
+
   const updateCurrentQuestion = (updates) => {
     setQuestions(prev => {
       const updated = [...prev];
@@ -89,7 +107,6 @@ export default function CreateGameMenu({ navigation, route }) {
       correctAnswers: [false, false, false, false],
       imageUrl: null,
       timeLimit: 20,
-      points: 'standard',
     };
     setQuestions(prev => [...prev, newQ]);
     setSelectedQuestionIndex(questions.length);
@@ -137,10 +154,8 @@ export default function CreateGameMenu({ navigation, route }) {
       const fileName = `${isCover ? 'cover' : 'question'}-${Date.now()}.${ext}`;
       const storagePath = `games/${user.uid}/${fileName}`;
 
-      // Explicitly get storage instance
       const storageInstance = getStorage();
       const storageRefPath = storageRef(storageInstance, storagePath);
-      // Upload
       const snapshot = await uploadBytes(storageRefPath, file);
       const url = await getDownloadURL(snapshot.ref);
 
@@ -150,7 +165,6 @@ export default function CreateGameMenu({ navigation, route }) {
         updateCurrentQuestion({ imageUrl: url });
       }
 
-      // Reset input
       e.target.value = '';
     } catch (err) {
       console.error('Upload failed:', err);
@@ -209,7 +223,7 @@ export default function CreateGameMenu({ navigation, route }) {
 
   return (
     <View style={styles.container}>
-      {/* Hidden file inputs for web */}
+      {/* Hidden file inputs */}
       <input
         type="file"
         accept="image/*"
@@ -266,7 +280,7 @@ export default function CreateGameMenu({ navigation, route }) {
 
       {/* Three Column Layout */}
       <View style={styles.mainLayout}>
-        {/* Left: Question Navigator */}
+        {/* Left: Question Navigator (only scrollable part) */}
         <View style={styles.leftSidebar}>
           <TouchableOpacity style={styles.addQuestionBtn} onPress={addQuestion}>
             <Text style={styles.addQuestionText}>+ Add Question</Text>
@@ -304,8 +318,8 @@ export default function CreateGameMenu({ navigation, route }) {
           </ScrollView>
         </View>
 
-        {/* Center: Question Editor */}
-        <ScrollView style={styles.centerEditor}>
+        {/* Center: Question Editor – NO ScrollView */}
+        <View style={styles.centerEditor}>
           <Text style={styles.editorLabel}>Question {selectedQuestionIndex + 1}</Text>
           <TextInput
             style={styles.questionInput}
@@ -375,36 +389,27 @@ export default function CreateGameMenu({ navigation, route }) {
             </View>
           )}
 
-          {/* Time & Points */}
-          <View style={styles.settingsRow}>
-            <View style={styles.timeSetting}>
-              <Text style={styles.settingLabel}>Time Limit</Text>
-              <TextInput
-                style={styles.timeInput}
-                value={currentQuestion.timeLimit.toString()}
-                onChangeText={(t) => updateCurrentQuestion({ timeLimit: parseInt(t) || 20 })}
-                keyboardType="numeric"
-              />
-              <Text style={styles.seconds}>seconds</Text>
-            </View>
-            <View style={styles.pointsSetting}>
-              <Text style={styles.settingLabel}>Points</Text>
-              <TouchableOpacity style={styles.pointsBtn}>
-                <Text style={styles.pointsText}>{currentQuestion.points}</Text>
-              </TouchableOpacity>
-            </View>
+          {/* Only Time Limit (no Points) */}
+          <View style={styles.timeSetting}>
+            <Text style={styles.settingLabel}>Time Limit</Text>
+            <TextInput
+              style={styles.timeInput}
+              value={currentQuestion.timeLimit.toString()}
+              onChangeText={(t) => updateCurrentQuestion({ timeLimit: parseInt(t) || 20 })}
+              keyboardType="numeric"
+            />
+            <Text style={styles.seconds}>seconds</Text>
           </View>
-        </ScrollView>
+        </View>
 
         {/* Right: Summary & Actions */}
         <View style={styles.rightSidebar}>
           <View style={styles.summary}>
             <Text style={styles.summaryTitle}>Game Summary</Text>
-            <Text style={styles.summaryText}>{questions.length} questions</Text>
+            <Text style={styles.summaryText}>{questions.length} Question(s)</Text>
             <Text style={styles.summaryText}>
-              Est. time: ~{Math.round(questions.reduce((acc, q) => acc + q.timeLimit, 0) / 60)} min
+              Tags: {tags || 'None'}
             </Text>
-            <Text style={styles.summaryText}>Tags: {tags || 'None'}</Text>
           </View>
 
           <View style={styles.actionButtons}>
@@ -437,18 +442,34 @@ const styles = StyleSheet.create({
   gameTitleInput: { fontSize: 36, fontWeight: 'bold', color: '#fff', backgroundColor: 'transparent', borderBottomWidth: 2, borderBottomColor: '#00c781', paddingBottom: 10, marginBottom: 20 },
   tagsInput: { fontSize: 16, color: '#aaa', backgroundColor: '#222', padding: 12, borderRadius: 8 },
   mainLayout: { flex: 1, flexDirection: 'row' },
-  leftSidebar: { width: 300, backgroundColor: '#0d0d0d', padding: 20, borderRightWidth: 1, borderRightColor: '#222' },
+  leftSidebar: { 
+    width: 300, 
+    backgroundColor: '#0d0d0d', 
+    padding: 20, 
+    borderRightWidth: 1, 
+    borderRightColor: '#222' 
+  },
   addQuestionBtn: { backgroundColor: '#00c781', padding: 16, borderRadius: 12, alignItems: 'center', marginBottom: 20 },
   addQuestionText: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
-  questionList: { flex: 1 },
+  questionList: { 
+    flex: 1,
+    maxHeight: '100%',  // ensures internal scrolling
+  },
   questionThumb: { backgroundColor: '#1e1e1e', borderRadius: 12, padding: 12, marginBottom: 12, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: 'transparent', position: 'relative' },
-  questionThumbDragging: { opacity: 0.8 },
   questionThumbSelected: { borderColor: '#00c781', backgroundColor: '#003322' },
   thumbNumber: { color: '#00c781', fontWeight: 'bold', marginRight: 12, fontSize: 16 },
   thumbText: { color: '#fff', flex: 1 },
   deleteThumbBtn: { position: 'absolute', right: 8, top: 8, width: 24, height: 24, backgroundColor: '#c0392b', borderRadius: 12, justifyContent: 'center', alignItems: 'center' },
   deleteThumbText: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
-  centerEditor: { flex: 1, padding: 40, backgroundColor: '#111' },
+  reorderButtons: { flexDirection: 'column', marginLeft: 8 },
+  reorderText: { color: '#00c781', fontSize: 18, fontWeight: 'bold' },
+  disabledReorder: { opacity: 0.3 },
+  centerEditor: { 
+    flex: 1, 
+    padding: 40, 
+    backgroundColor: '#111',
+    // No ScrollView – content fits or overflows naturally
+  },
   editorLabel: { fontSize: 18, color: '#aaa', marginBottom: 20 },
   questionInput: { fontSize: 28, color: '#fff', backgroundColor: '#1e1e1e', padding: 20, borderRadius: 16, minHeight: 120, marginBottom: 20 },
   imageUpload: { height: 200, backgroundColor: '#1e1e1e', borderRadius: 16, justifyContent: 'center', alignItems: 'center', marginBottom: 20, position: 'relative' },
@@ -458,21 +479,38 @@ const styles = StyleSheet.create({
   imageOverlayText: { color: '#fff', fontWeight: 'bold' },
   answerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
   answerInput: { flex: 1, backgroundColor: '#1e1e1e', color: '#fff', padding: 16, borderRadius: 12, fontSize: 18 },
-  correctToggle: { width: 50, height: 50, backgroundColor: '#333', borderRadius: 25, marginLeft: 12, justifyContent: 'center', alignItems: 'center' },
-  correctToggleActive: { backgroundColor: '#00c781' },
-  toggleIcon: { color: '#fff', fontSize: 24, fontWeight: 'bold' },
+  correctToggle: { 
+    width: 50, 
+    height: 50, 
+    backgroundColor: '#333', 
+    borderRadius: 25, 
+    marginLeft: 12, 
+    justifyContent: 'center', 
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  correctToggleActive: { 
+    backgroundColor: '#00c781',
+    borderColor: '#fff',    // white border for visibility
+  },
+  toggleIcon: { 
+    color: '#fff', 
+    fontSize: 28,           // bigger checkmark
+    fontWeight: 'bold',
+  },
   trueFalseRow: { flexDirection: 'row', gap: 20, marginBottom: 20 },
   tfBtn: { flex: 1, backgroundColor: '#1e1e1e', padding: 20, borderRadius: 16, alignItems: 'center' },
   tfBtnCorrect: { backgroundColor: '#00c781' },
   tfText: { color: '#fff', fontSize: 20, fontWeight: 'bold' },
-  settingsRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 30 },
-  timeSetting: { flexDirection: 'row', alignItems: 'center' },
+  timeSetting: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    marginTop: 30 
+  },
   settingLabel: { color: '#aaa', marginRight: 12 },
   timeInput: { backgroundColor: '#1e1e1e', color: '#fff', width: 60, padding: 10, borderRadius: 8, textAlign: 'center' },
   seconds: { color: '#aaa', marginLeft: 8 },
-  pointsSetting: { flexDirection: 'row', alignItems: 'center' },
-  pointsBtn: { backgroundColor: '#1e1e1e', paddingHorizontal: 20, paddingVertical: 10, borderRadius: 8 },
-  pointsText: { color: '#fff' },
   rightSidebar: { width: 400, backgroundColor: '#0d0d0d', padding: 30, borderLeftWidth: 1, borderLeftColor: '#222' },
   summary: { flex: 1 },
   summaryTitle: { fontSize: 20, fontWeight: 'bold', color: '#fff', marginBottom: 20 },
