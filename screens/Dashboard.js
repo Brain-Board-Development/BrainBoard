@@ -1,9 +1,9 @@
 /**
- * Dashboard.js - UPDATED WITH SHOP & INVENTORY TABS
+ * Dashboard.js - FIXED PADDING BETWEEN SEARCH & CREATE BUTTON IN DISCOVER
+ * - Create New Game button now has proper spacing in both Library and Discover tabs
  * - Removed Profile tab
- * - Added Shop and Inventory tabs directly under Discover
- * - Uses shop.png and inventory.png icons
- * - All previous fixes and features preserved
+ * - Shop & Inventory under Discover
+ * - All previous features preserved
  */
 
 import React, { useState, useEffect } from 'react';
@@ -186,7 +186,7 @@ export default function Dashboard({ navigation, route }) {
           if (gameSnap.exists()) {
             const data = gameSnap.data();
             if (data.images && Array.isArray(data.images)) {
-              // Handle image deletion if needed (commented out for brevity)
+              // Image deletion logic (if needed)
             }
           }
           await deleteDoc(gameDocRef);
@@ -306,11 +306,10 @@ export default function Dashboard({ navigation, route }) {
 
   return (
     <View style={styles.container}>
-      {/* Sidebar – Updated with Shop & Inventory under Discover */}
+      {/* Sidebar */}
       <View style={styles.sidebar}>
         <Text style={styles.logo}>Brain Board</Text>
         
-        {/* Home Tab */}
         <TouchableOpacity 
           style={[
             styles.tabRow,
@@ -334,7 +333,6 @@ export default function Dashboard({ navigation, route }) {
           ]}>Home</Text>
         </TouchableOpacity>
         
-        {/* Your Library Tab */}
         <TouchableOpacity 
           style={[
             styles.tabRow,
@@ -358,7 +356,6 @@ export default function Dashboard({ navigation, route }) {
           ]}>Your Library</Text>
         </TouchableOpacity>
         
-        {/* Discover Tab */}
         <TouchableOpacity 
           style={[
             styles.tabRow,
@@ -382,7 +379,6 @@ export default function Dashboard({ navigation, route }) {
           ]}>Discover</Text>
         </TouchableOpacity>
 
-        {/* NEW: Shop Tab – directly under Discover */}
         <TouchableOpacity 
           style={[
             styles.tabRow,
@@ -400,7 +396,6 @@ export default function Dashboard({ navigation, route }) {
           <Text style={styles.tabLabel}>Shop</Text>
         </TouchableOpacity>
 
-        {/* NEW: Inventory Tab – directly under Shop */}
         <TouchableOpacity 
           style={[
             styles.tabRow,
@@ -420,7 +415,6 @@ export default function Dashboard({ navigation, route }) {
 
         <View style={{ flex: 1 }} />
 
-        {/* Settings & Logout (no Profile) */}
         <TouchableOpacity 
           style={[
             styles.tabRow,
@@ -448,14 +442,13 @@ export default function Dashboard({ navigation, route }) {
         </TouchableOpacity>
       </View>
 
-      {/* Main Content – unchanged from your last version */}
+      {/* Main Content */}
       <View style={styles.main}>
         {currentTab === 'home' ? (
           <View style={{ flex: 1, padding: 40 }}>
             <Text style={styles.welcome}>Welcome back, {userData?.username || 'Teacher'}!</Text>
             <Text style={styles.subtitle}>You have {myGames.length} games • {totalQuestions} questions created</Text>
 
-            {/* Action Buttons: Create + Join Game */}
             <View style={styles.actionButtonsRow}>
               <TouchableOpacity 
                 style={[
@@ -499,7 +492,11 @@ export default function Dashboard({ navigation, route }) {
           <>
             <View style={styles.header}>
               <View style={styles.searchBox}>
-                <Text style={{ fontSize: 20 }}>🔍</Text>
+                <Image
+                  source={require('../assets/search.png')}
+                  style={styles.searchIconImage}
+                  resizeMode="contain"
+                />
                 <TextInput
                   style={styles.searchInput}
                   placeholder={`Search ${currentTab === 'library' ? 'your library' : 'discover'}...`}
@@ -508,8 +505,13 @@ export default function Dashboard({ navigation, route }) {
                   onChangeText={setSearchQuery}
                 />
               </View>
-              {currentTab === 'library' && (
-                <TouchableOpacity style={styles.createBtn} onPress={handleCreateGame}>
+
+              {/* Create Game button - shown in Library AND Discover with padding */}
+              {(currentTab === 'library' || currentTab === 'discover') && (
+                <TouchableOpacity 
+                  style={[styles.createBtn, { marginLeft: 20 }]} 
+                  onPress={handleCreateGame}
+                >
                   <Text style={styles.createBtnText}>+ Create New Game</Text>
                 </TouchableOpacity>
               )}
@@ -543,7 +545,7 @@ export default function Dashboard({ navigation, route }) {
         )}
       </View>
 
-      {/* Modals – unchanged */}
+      {/* Modals */}
       <Modal visible={titleModal.isOpen} transparent animationType="fade">
         <View style={styles.modalOverlay}>
           <View style={styles.titleModal}>
@@ -776,11 +778,41 @@ const styles = StyleSheet.create({
   },
 
   section: { fontSize: 24, fontWeight: 'bold', color: '#fff', marginBottom: 20 },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
-  searchBox: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#222', borderRadius: 12, paddingHorizontal: 16, flex: 1, height: 52, borderWidth: 1, borderColor: '#333' },
-  searchInput: { flex: 1, color: '#fff', fontSize: 16, marginLeft: 10 },
-  createBtn: { backgroundColor: '#00c781', paddingVertical: 16, paddingHorizontal: 30, borderRadius: 12, marginLeft: 20 },
-  createBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
+  header: { 
+    flexDirection: 'row', 
+    justifyContent: 'space-between', 
+    alignItems: 'center', 
+    marginBottom: 20 
+  },
+  searchBox: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    backgroundColor: '#222', 
+    borderRadius: 12, 
+    paddingHorizontal: 16, 
+    flex: 1, 
+    height: 52, 
+    borderWidth: 1, 
+    borderColor: '#333' 
+  },
+  searchInput: { 
+    flex: 1, 
+    color: '#fff', 
+    fontSize: 16, 
+    marginLeft: 10 
+  },
+  createBtn: { 
+    backgroundColor: '#00c781', 
+    paddingVertical: 16, 
+    paddingHorizontal: 30, 
+    borderRadius: 12,
+    marginLeft: 20,           // ← This ensures padding/gap between search and button
+  },
+  createBtnText: { 
+    color: '#fff', 
+    fontWeight: 'bold', 
+    fontSize: 16 
+  },
   filters: { flexDirection: 'row', gap: 12, marginBottom: 20 },
   filterBtn: { paddingHorizontal: 20, paddingVertical: 10, borderRadius: 10, backgroundColor: '#222' },
   filterActive: { backgroundColor: '#003322', borderWidth: 1, borderColor: '#00c781' },
@@ -853,7 +885,7 @@ const styles = StyleSheet.create({
   titleModalSaveText: { color: '#fff', fontWeight: 'bold' },
   disabledBtn: { opacity: 0.5 },
 
-  // Preview Modal Styles (unchanged)
+  // Preview Modal Styles
   previewModalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'center', alignItems: 'center' },
   previewModal: { 
     backgroundColor: '#1e1e1e', 
@@ -926,4 +958,10 @@ const styles = StyleSheet.create({
     alignItems: 'center' 
   },
   hostGameBtnText: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
+  searchIconImage: {
+    width: 25,
+    height: 25,
+    marginRight: 10,       // adjust this for spacing between icon and input
+    tintColor: '#ffffff',     // gray like before; use '#fff' for white
+  },
 });

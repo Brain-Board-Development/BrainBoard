@@ -8,6 +8,7 @@ import {
   TextInput,
   Platform,
   ActivityIndicator,
+  Image,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { auth, db } from "../firebaseConfig";
@@ -45,7 +46,7 @@ export default function HomeScreen({ navigation }) {
         await AsyncStorage.setItem("userToken", uid);
         console.log("User authenticated - redirecting to Dashboard. UID:", uid, "Type:", userData.accountType || "Unknown");
         setIsLoading(false);
-        navigation.replace("Dashboard"); // ← All users go here now
+        navigation.replace("Dashboard");
       } else {
         await AsyncStorage.removeItem("userToken");
         setIsLoading(false);
@@ -65,7 +66,7 @@ export default function HomeScreen({ navigation }) {
           const userData = userDoc.data();
           console.log("Valid stored token found - redirecting to Dashboard. UID:", token);
           setIsLoading(false);
-          navigation.replace("Dashboard"); // ← All users go here now
+          navigation.replace("Dashboard");
         } else {
           await AsyncStorage.removeItem("userToken");
           setIsLoading(false);
@@ -162,7 +163,11 @@ export default function HomeScreen({ navigation }) {
           </TouchableOpacity>
 
           <View style={styles.searchContainer}>
-            <Text style={styles.searchIcon}>Search</Text>
+            <Image
+              source={require("../assets/search.png")}
+              style={styles.searchIconImage}
+              resizeMode="contain"
+            />
             <TextInput
               style={styles.searchInput}
               placeholder='Ex: "Biology Unit 1"'
@@ -338,10 +343,12 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: "#222",
   },
-  searchIcon: {
-    color: "#ccc",
-    fontSize: 18,
+  searchIconImage: {
+    width: 20,
+    height: 20,
     marginRight: 6,
+    tintColor: "#ccc", // gray icon – change to "#fff" if you want white
+    resizeMode: "contain",
   },
   searchInput: {
     flex: 1,
