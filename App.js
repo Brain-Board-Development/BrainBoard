@@ -15,6 +15,7 @@ import CreateGameMenu from './screens/CreateGameMenu.js';
 import HostGameMenu from './screens/HostGameMenu.js';
 import Lobby from './screens/Lobby.js';
 import GameScreen from './screens/GameScreen.js';
+import BoardGameScreen from './screens/BoardgameScreen';
 
 const Stack = createStackNavigator();
 
@@ -70,6 +71,7 @@ export default function App() {
         <Stack.Screen name="HostGameMenu" component={HostGameMenu} />
         <Stack.Screen name="Lobby" component={Lobby} />
         <Stack.Screen name="GameScreen" component={GameScreen} />
+        <Stack.Screen name="BoardGameScreen" component={BoardGameScreen} />
 
       </Stack.Navigator>
     </NavigationContainer>
