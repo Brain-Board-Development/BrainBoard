@@ -1,189 +1,169 @@
 /**
- * JoinGameScreen.js - PIN validation + navigation only
- * - No player creation or name assignment here
- * - Works for logged-in and guests
- * - GameScreen handles username and joining the lobby
+ * JoinGameScreen.js
+ * FIX #4: Player limit — popup + go back if full
+ * FIX #5: Lock button — popup + go back if locked
  */
 
 import React, { useState } from "react";
 import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
-  SafeAreaView,
-  ActivityIndicator,
-  Alert,
+  View, Text, TextInput, TouchableOpacity,
+  StyleSheet, SafeAreaView, ActivityIndicator, Modal,
 } from "react-native";
 import { db } from "../firebaseConfig";
-import {
-  collection,
-  query,
-  where,
-  getDocs,
-} from "firebase/firestore";
+import { collection, query, where, getDocs } from "firebase/firestore";
 
 export default function JoinGameScreen({ navigation }) {
   const [gameCode, setGameCode] = useState("");
   const [isJoining, setIsJoining] = useState(false);
-  const [hoveredButton, setHoveredButton] = useState(null);
+  const [modal, setModal]         = useState({ visible: false, title: "", message: "", goBack: false });
 
-  const handleInputChange = (text) => {
-    const numericText = text.replace(/[^0-9]/g, "");
-    setGameCode(numericText);
+  const showModal = (title, message, goBack = false) =>
+    setModal({ visible: true, title, message, goBack });
+
+  const handleDismiss = () => {
+    const shouldGoBack = modal.goBack;
+    setModal({ visible: false, title: "", message: "", goBack: false });
+    if (shouldGoBack) navigation.navigate("JoinGameScreen");
   };
 
   const handleJoinGame = async () => {
-    if (gameCode.length !== 6) {
-      Alert.alert("Invalid Code", "Please enter a 6-digit game code.");
+    const trimmed = gameCode.trim();
+    if (trimmed.length !== 6) {
+      showModal("Invalid Code", "Please enter the 6-digit game PIN.");
       return;
     }
-
     setIsJoining(true);
-
     try {
-      // 1. Only validate that the game exists and is in lobby
-      const q = query(collection(db, "gameSessions"), where("pin", "==", gameCode));
-      const querySnapshot = await getDocs(q);
+      const q = query(collection(db, "gameSessions"), where("pin", "==", trimmed));
+      const snap = await getDocs(q);
 
-      if (querySnapshot.empty) {
-        Alert.alert("Not Found", "No game found with that code.");
+      if (snap.empty) {
+        showModal("Not Found", "No game found with that PIN. Check it and try again.");
         return;
       }
 
-      const sessionDoc = querySnapshot.docs[0];
-      const sessionData = sessionDoc.data();
-      const sessionId = sessionDoc.id;
+      const sessionDoc = snap.docs[0];
+      const data = sessionDoc.data();
 
-      if (sessionData.status !== "lobby") {
-        Alert.alert("Game Started", "This game has already started. You can't join now.");
+      // Game already started?
+      if (data.status !== "lobby") {
+        showModal("Already Started", "This game has already started. You can no longer join.");
         return;
       }
 
-      // 2. Navigate to GameScreen - let it handle username + join
+      // FIX #5: Lobby locked?
+      if (data.isLobbyLocked) {
+        showModal(
+          "🔒 Lobby Locked",
+          "The game you are attempting to join is locked.\n\nThe host has prevented new players from joining. Try again later or ask the host to unlock.",
+          true // goBack = true → dismiss sends back
+        );
+        return;
+      }
+
+      // FIX #4: Game full?
+      const maxPlayers = data.settings?.maxPlayers ?? 30;
+      const currentCount = (data.players || []).length;
+      if (currentCount >= maxPlayers) {
+        showModal(
+          "🚫 Game Full",
+          `This game is full (${currentCount}/${maxPlayers} players).\n\nYou cannot join. Try a different game.`,
+          true
+        );
+        return;
+      }
+
       navigation.navigate("GameScreen", {
-        sessionId,
-        gameId: sessionData.gameId,
+        sessionId: sessionDoc.id,
+        gameId: data.gameId,
         isHost: false,
       });
-    } catch (error) {
-      console.error("Join validation failed:", error);
-      Alert.alert("Error", "Failed to check the game. Please try again.");
+    } catch (err) {
+      console.error("Join error:", err);
+      showModal("Error", "Could not connect. Check your internet and try again.");
     } finally {
       setIsJoining(false);
     }
   };
 
-  const getJoinButtonStyle = () => [
-    styles.button,
-    { backgroundColor: hoveredButton === "joinGame" ? "#00e092" : "#00c781" },
-  ];
-
-  const getLinkStyle = (buttonName) => [
-    styles.linkText,
-    { color: hoveredButton === buttonName ? "#00e092" : "#00c781" },
-  ];
-
   return (
     <SafeAreaView style={styles.container}>
-      <Text style={styles.title}>Brain Board</Text>
+      <Text style={styles.title}>🎲 Brain Board</Text>
+      <Text style={styles.subtitle}>Enter your 6-digit game PIN</Text>
 
       <TextInput
         style={styles.input}
-        placeholder="Enter Game Code"
-        placeholderTextColor="#666"
+        placeholder="_ _ _ _ _ _"
+        placeholderTextColor="#333"
         value={gameCode}
-        onChangeText={handleInputChange}
+        onChangeText={t => setGameCode(t.replace(/[^0-9]/g, ""))}
         keyboardType="numeric"
-        textAlign="center"
         maxLength={6}
-        autoCapitalize="none"
+        textAlign="center"
         editable={!isJoining}
       />
 
       <TouchableOpacity
-        style={getJoinButtonStyle()}
-        activeOpacity={0.7}
+        style={[styles.btn, (isJoining || gameCode.length !== 6) && styles.btnDisabled]}
         onPress={handleJoinGame}
-        onMouseEnter={() => setHoveredButton("joinGame")}
-        onMouseLeave={() => setHoveredButton(null)}
-        disabled={isJoining}
+        disabled={isJoining || gameCode.length !== 6}
+        activeOpacity={0.85}
       >
-        {isJoining ? (
-          <ActivityIndicator color="#fff" />
-        ) : (
-          <Text style={styles.buttonText}>Join Game</Text>
-        )}
+        {isJoining
+          ? <ActivityIndicator color="#fff" />
+          : <Text style={styles.btnText}>Join Game →</Text>}
       </TouchableOpacity>
 
-      <View style={styles.homeLinkContainer}>
-        <Text style={styles.promptText}>Go to </Text>
-        <TouchableOpacity
-          onPress={() => navigation.navigate("Home")}
-          onMouseEnter={() => setHoveredButton("home")}
-          onMouseLeave={() => setHoveredButton(null)}
-        >
-          <Text style={getLinkStyle("home")}>Home</Text>
-        </TouchableOpacity>
-      </View>
+      <TouchableOpacity style={styles.backLink} onPress={() => navigation.navigate("Home")}>
+        <Text style={styles.backLinkText}>← Back to Home</Text>
+      </TouchableOpacity>
+
+      {/* Universal modal */}
+      <Modal visible={modal.visible} transparent animationType="fade">
+        <View style={styles.overlay}>
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>{modal.title}</Text>
+            <Text style={styles.cardMsg}>{modal.message}</Text>
+            <TouchableOpacity style={styles.cardBtn} onPress={handleDismiss}>
+              <Text style={styles.cardBtnText}>Dismiss</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#111",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 20,
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: "bold",
-    color: "#fff",
-    marginBottom: 40,
-  },
+  container: { flex: 1, backgroundColor: "#111", alignItems: "center", justifyContent: "center", padding: 24 },
+  title: { fontSize: 38, fontWeight: "bold", color: "#00c781", marginBottom: 8 },
+  subtitle: { fontSize: 16, color: "#888", marginBottom: 40 },
   input: {
-    width: 400,
-    height: 50,
-    backgroundColor: "#222",
-    borderRadius: 12,
-    paddingHorizontal: 20,
-    color: "#fff",
-    fontSize: 24,
-    textAlign: "center",
-    marginBottom: 20,
-    borderWidth: 1,
-    borderColor: "#333",
+    width: "100%", maxWidth: 340, height: 72,
+    backgroundColor: "#1e1e1e", borderRadius: 16, color: "#fff",
+    fontSize: 32, letterSpacing: 14, marginBottom: 20,
+    borderWidth: 2, borderColor: "#333",
   },
-  button: {
-    width: 400,
-    height: 50,
-    backgroundColor: "#00c781",
-    borderRadius: 12,
-    alignItems: "center",
-    justifyContent: "center",
-    marginVertical: 10,
+  btn: {
+    width: "100%", maxWidth: 340, height: 58, backgroundColor: "#00c781",
+    borderRadius: 16, alignItems: "center", justifyContent: "center", marginBottom: 16,
   },
-  buttonText: {
-    color: "#fff",
-    fontSize: 18,
-    fontWeight: "bold",
+  btnDisabled: { backgroundColor: "#222", opacity: 0.5 },
+  btnText: { color: "#fff", fontSize: 20, fontWeight: "bold" },
+  backLink: { marginTop: 8 },
+  backLinkText: { color: "#555", fontSize: 15 },
+
+  overlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.88)", justifyContent: "center", alignItems: "center" },
+  card: {
+    backgroundColor: "#1e1e1e", borderRadius: 22, padding: 32,
+    width: "85%", maxWidth: 380, alignItems: "center",
+    borderWidth: 1, borderColor: "#333",
   },
-  homeLinkContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    marginTop: 30,
+  cardTitle: { fontSize: 22, fontWeight: "bold", color: "#fff", marginBottom: 14, textAlign: "center" },
+  cardMsg: { fontSize: 16, color: "#ccc", textAlign: "center", lineHeight: 24, marginBottom: 28 },
+  cardBtn: {
+    backgroundColor: "#00c781", paddingVertical: 14, width: "100%",
+    borderRadius: 14, alignItems: "center",
   },
-  promptText: {
-    fontSize: 16,
-    color: "#ccc",
-  },
-  linkText: {
-    fontSize: 16,
-    fontWeight: "bold",
-  },
+  cardBtnText: { color: "#fff", fontSize: 16, fontWeight: "bold" },
 });

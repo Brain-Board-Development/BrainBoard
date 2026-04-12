@@ -1,314 +1,463 @@
 /**
- * Lobby.js - HOST-ONLY Lobby Screen
- * Updated: Snake board preview, colored player tokens, start navigates to BoardGameScreen
+ * Lobby.js — HOST-ONLY Lobby Screen
+
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from "react";
 import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  FlatList,
-  ActivityIndicator,
-  SafeAreaView,
-  Modal,
-  Alert,
-  ScrollView,
-  Animated,
-} from 'react-native';
-import { db } from '../firebaseConfig';
-import { doc, onSnapshot, updateDoc } from 'firebase/firestore';
+  View, Text, StyleSheet, TouchableOpacity, FlatList,
+  ActivityIndicator, SafeAreaView, Modal, Alert,
+  ScrollView, TextInput, Switch, Animated, Dimensions,
+} from "react-native";
+import { db } from "../firebaseConfig";
+import { doc, onSnapshot, updateDoc, arrayUnion } from "firebase/firestore";
 
 const BOARD_COLS = 10;
-const BOARD_TOTAL = 20;  // spaces 0–20
+const { width: SCREEN_W } = Dimensions.get("window");
+const TILE_SIZE = Math.min(52, Math.floor((SCREEN_W - 64) / BOARD_COLS));
 
-// Build snake-layout board rows
-// Row 0 (bottom): 0–9 left→right
-// Row 1 (top): 10–19 right→left
-// Cap: 20 (snake head)
-function buildSnakeRows(total = BOARD_TOTAL) {
+// ─── Board size formula ───────────────────────────────────────────────────────
+const calcBoardSize = (numPlayers) =>
+  Math.min(150, Math.max(25, Math.round(9.14 * Math.pow(Math.max(1, numPlayers - 1), 0.714) + 25)));
+
+// ─── Build snake rows for preview ────────────────────────────────────────────
+function buildSnakeRows(total) {
   const rows = [];
-  for (let rowIdx = 0; rowIdx * BOARD_COLS <= total; rowIdx++) {
-    const startSpace = rowIdx * BOARD_COLS;
-    const endSpace = Math.min(startSpace + BOARD_COLS - 1, total);
+  for (let rowStart = 0; rowStart <= total; rowStart += BOARD_COLS) {
     const spaces = [];
-    for (let s = startSpace; s <= endSpace; s++) spaces.push(s);
-    // Odd rows go right-to-left (snake direction)
+    for (let s = rowStart; s < rowStart + BOARD_COLS && s <= total; s++) spaces.push(s);
+    const rowIdx = Math.floor(rowStart / BOARD_COLS);
     if (rowIdx % 2 === 1) spaces.reverse();
-    rows.push({ rowIdx, spaces });
+    rows.push(spaces);
   }
-  return rows.reverse(); // top row first visually
+  return rows.reverse();
 }
 
-function SnakeBoardPreview({ players }) {
-  const rows = buildSnakeRows(BOARD_TOTAL);
+// ─── Snake board preview ─────────────────────────────────────────────────────
+function BoardPreview({ players, boardSize }) {
+  const rows = buildSnakeRows(boardSize);
+  const tileSize = Math.min(TILE_SIZE, Math.floor((SCREEN_W - 64) / BOARD_COLS));
 
-  const getPlayersOnSpace = (spaceIdx) =>
-    players.filter(p => (p.position || 0) === spaceIdx);
+  const getPlayersAt = (idx) => players.filter((p) => (p.position || 0) === idx);
 
   return (
-    <View style={boardStyles.boardWrapper}>
-      <Text style={boardStyles.boardTitle}>🐍 Game Board</Text>
-      {rows.map(({ rowIdx, spaces }) => (
-        <View key={rowIdx} style={boardStyles.row}>
-          {spaces.map((spaceIdx) => {
-            const here = getPlayersOnSpace(spaceIdx);
-            const isHead = spaceIdx === BOARD_TOTAL;
-            const isStart = spaceIdx === 0;
-            return (
-              <View
-                key={spaceIdx}
-                style={[
-                  boardStyles.space,
-                  isHead && boardStyles.spaceHead,
-                  isStart && boardStyles.spaceStart,
-                ]}
-              >
-                {isHead ? (
-                  <Text style={boardStyles.headEmoji}>🐍</Text>
-                ) : (
-                  <Text style={boardStyles.spaceNum}>{spaceIdx}</Text>
-                )}
-                <View style={boardStyles.tokens}>
-                  {here.map((p, i) => (
-                    <View
-                      key={i}
-                      style={[boardStyles.token, { backgroundColor: p.color || '#888' }]}
-                    />
-                  ))}
+    <View style={brd.wrapper}>
+      <Text style={brd.title}>🐍 Board Preview ({boardSize} tiles)</Text>
+      <ScrollView>
+        {rows.map((row, ri) => (
+          <View key={ri} style={brd.row}>
+            {row.map((idx) => {
+              const here = getPlayersAt(idx);
+              const isEnd   = idx === boardSize;
+              const isStart = idx === 0;
+              return (
+                <View
+                  key={idx}
+                  style={[
+                    brd.tile,
+                    { width: tileSize, height: tileSize },
+                    isEnd && brd.tileEnd,
+                    isStart && brd.tileStart,
+                  ]}
+                >
+                  <Text style={brd.tileNum}>
+                    {isEnd ? "🏁" : isStart ? "🟢" : idx}
+                  </Text>
+                  <View style={brd.tokens}>
+                    {here.slice(0, 4).map((p, pi) => (
+                      <View key={pi} style={[brd.token, { backgroundColor: p.color || "#888" }]} />
+                    ))}
+                  </View>
                 </View>
-              </View>
-            );
-          })}
-        </View>
-      ))}
-      {/* Snake path decoration */}
-      <View style={boardStyles.legendRow}>
-        <View style={boardStyles.legendItem}>
-          <View style={boardStyles.legendDot} />
-          <Text style={boardStyles.legendText}>Normal</Text>
-        </View>
-        <View style={boardStyles.legendItem}>
-          <Text style={boardStyles.legendIcon}>🐍</Text>
-          <Text style={boardStyles.legendText}>Finish</Text>
-        </View>
-        <View style={boardStyles.legendItem}>
-          <Text style={boardStyles.legendIcon}>🟩</Text>
-          <Text style={boardStyles.legendText}>Start</Text>
-        </View>
-      </View>
+              );
+            })}
+          </View>
+        ))}
+      </ScrollView>
     </View>
   );
 }
 
+const brd = StyleSheet.create({
+  wrapper: { backgroundColor: "#0d0d0d", borderRadius: 16, padding: 14, marginTop: 20, borderWidth: 1, borderColor: "#222" },
+  title: { color: "#00c781", fontSize: 15, fontWeight: "bold", marginBottom: 10, textAlign: "center" },
+  row: { flexDirection: "row", justifyContent: "center", marginBottom: 3 },
+  tile: {
+    borderRadius: 7, margin: 2, alignItems: "center", justifyContent: "center",
+    backgroundColor: "#1a2a1a", borderWidth: 1, borderColor: "#2a3a2a",
+  },
+  tileEnd: { backgroundColor: "#001a3d", borderColor: "#3498db", borderWidth: 2 },
+  tileStart: { backgroundColor: "#003322", borderColor: "#00c781" },
+  tileNum: { color: "#555", fontSize: 10, fontWeight: "bold" },
+  tokens: { flexDirection: "row", flexWrap: "wrap", justifyContent: "center" },
+  token: { width: 7, height: 7, borderRadius: 4, margin: 1 },
+});
+
+// ─── Settings modal ───────────────────────────────────────────────────────────
+function SettingsModal({ visible, playerCount, settings, onConfirm, onCancel }) {
+  const suggestedSize = calcBoardSize(playerCount);
+  const [boardSize, setBoardSize]       = useState(String(settings?.boardSize || suggestedSize));
+  const [hostPlays, setHostPlays]       = useState(settings?.hostPlays ?? false);
+  const [randomNames, setRandomNames]   = useState(settings?.randomNames ?? true);
+  const [timePerQ, setTimePerQ]         = useState(String(settings?.timePerQuestion || 20));
+  const [gameDuration, setGameDuration] = useState(String(settings?.gameDuration || 300));
+
+  useEffect(() => {
+    if (visible) {
+      const suggested = calcBoardSize(playerCount);
+      setBoardSize(String(settings?.boardSize || suggested));
+      setHostPlays(settings?.hostPlays ?? false);
+      setRandomNames(settings?.randomNames ?? true);
+      setTimePerQ(String(settings?.timePerQuestion || 20));
+      setGameDuration(String(settings?.gameDuration || 300));
+    }
+  }, [visible, playerCount, settings]);
+
+  const handleConfirm = () => {
+    onConfirm({
+      boardSize: Math.min(150, Math.max(10, parseInt(boardSize) || suggestedSize)),
+      hostPlays,
+      randomNames,
+      timePerQuestion: Math.min(120, Math.max(5, parseInt(timePerQ) || 20)),
+      gameDuration: Math.min(3600, Math.max(60, parseInt(gameDuration) || 300)),
+    });
+  };
+
+  return (
+    <Modal visible={visible} transparent animationType="slide">
+      <View style={sm.overlay}>
+        <View style={sm.card}>
+          <Text style={sm.title}>⚙️ Game Settings</Text>
+          <ScrollView showsVerticalScrollIndicator={false}>
+
+            <View style={sm.row}>
+              <View style={sm.rowLeft}>
+                <Text style={sm.label}>Board Tiles</Text>
+                <Text style={sm.hint}>Formula suggests {calcBoardSize(playerCount)} for {playerCount} player{playerCount !== 1 ? "s" : ""}</Text>
+              </View>
+              <TextInput
+                style={sm.input}
+                keyboardType="numeric"
+                value={boardSize}
+                onChangeText={setBoardSize}
+                maxLength={3}
+              />
+            </View>
+
+            <View style={sm.row}>
+              <View style={sm.rowLeft}>
+                <Text style={sm.label}>Time per Question</Text>
+                <Text style={sm.hint}>Seconds (5–120)</Text>
+              </View>
+              <TextInput
+                style={sm.input}
+                keyboardType="numeric"
+                value={timePerQ}
+                onChangeText={setTimePerQ}
+                maxLength={3}
+              />
+            </View>
+
+            <View style={sm.row}>
+              <View style={sm.rowLeft}>
+                <Text style={sm.label}>Game Duration</Text>
+                <Text style={sm.hint}>Seconds (e.g. 300 = 5 min)</Text>
+              </View>
+              <TextInput
+                style={sm.input}
+                keyboardType="numeric"
+                value={gameDuration}
+                onChangeText={setGameDuration}
+                maxLength={4}
+              />
+            </View>
+
+            <View style={sm.row}>
+              <View style={sm.rowLeft}>
+                <Text style={sm.label}>Random Name Generator</Text>
+                <Text style={sm.hint}>Auto-assign names to players</Text>
+              </View>
+              <Switch value={randomNames} onValueChange={setRandomNames} trackColor={{ true: "#00c781" }} />
+            </View>
+
+            <View style={sm.row}>
+              <View style={sm.rowLeft}>
+                <Text style={sm.label}>Host Also Plays</Text>
+                <Text style={sm.hint}>Host gets a player board too</Text>
+              </View>
+              <Switch value={hostPlays} onValueChange={setHostPlays} trackColor={{ true: "#00c781" }} />
+            </View>
+          </ScrollView>
+
+          <View style={sm.btns}>
+            <TouchableOpacity style={sm.cancelBtn} onPress={onCancel}>
+              <Text style={sm.cancelText}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={sm.confirmBtn} onPress={handleConfirm}>
+              <Text style={sm.confirmText}>▶ Start Game</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+const sm = StyleSheet.create({
+  overlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.9)", justifyContent: "center", alignItems: "center" },
+  card: {
+    backgroundColor: "#1a1a1a", borderRadius: 22, padding: 28,
+    width: "92%", maxWidth: 480, maxHeight: "85%",
+    borderWidth: 1, borderColor: "#333",
+  },
+  title: { color: "#00c781", fontSize: 22, fontWeight: "bold", textAlign: "center", marginBottom: 20 },
+  row: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: "#2a2a2a",
+  },
+  rowLeft: { flex: 1, marginRight: 12 },
+  label: { color: "#fff", fontSize: 16, fontWeight: "600" },
+  hint: { color: "#666", fontSize: 12, marginTop: 2 },
+  input: {
+    backgroundColor: "#2a2a2a", color: "#fff", fontSize: 18, fontWeight: "bold",
+    padding: 10, borderRadius: 10, width: 70, textAlign: "center",
+    borderWidth: 1, borderColor: "#444",
+  },
+  btns: { flexDirection: "row", gap: 12, marginTop: 20 },
+  cancelBtn: { flex: 1, backgroundColor: "#2a2a2a", paddingVertical: 16, borderRadius: 14, alignItems: "center" },
+  cancelText: { color: "#888", fontSize: 15, fontWeight: "bold" },
+  confirmBtn: { flex: 2, backgroundColor: "#00c781", paddingVertical: 16, borderRadius: 14, alignItems: "center" },
+  confirmText: { color: "#000", fontSize: 17, fontWeight: "bold" },
+});
+
+// ─── Main Lobby ───────────────────────────────────────────────────────────────
 export default function Lobby({ route, navigation }) {
   const { sessionId, pin, gameId, isHost } = route.params;
 
-  const [session, setSession] = useState(null);
-  const [players, setPlayers] = useState([]);
+  const [session, setSession]           = useState(null);
+  const [players, setPlayers]           = useState([]);
   const [isLobbyLocked, setIsLobbyLocked] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [showCancelModal, setShowCancelModal] = useState(false);
-  const [hoveredButton, setHoveredButton] = useState(null);
+  const [loading, setLoading]           = useState(true);
+  const [showSettings, setShowSettings] = useState(false);
+  const [showLeave, setShowLeave]       = useState(false);
+  const [kickTarget, setKickTarget]     = useState(null); // player object to kick
+  const [hoveredPlayer, setHoveredPlayer] = useState(null);
 
   const pinPulse = useRef(new Animated.Value(1)).current;
-
   useEffect(() => {
     Animated.loop(
       Animated.sequence([
-        Animated.timing(pinPulse, { toValue: 1.04, duration: 1000, useNativeDriver: true }),
-        Animated.timing(pinPulse, { toValue: 1, duration: 1000, useNativeDriver: true }),
+        Animated.timing(pinPulse, { toValue: 1.03, duration: 1200, useNativeDriver: true }),
+        Animated.timing(pinPulse, { toValue: 1,    duration: 1200, useNativeDriver: true }),
       ])
     ).start();
   }, []);
 
   useEffect(() => {
     if (!sessionId) return;
-    const unsub = onSnapshot(doc(db, 'gameSessions', sessionId), (snap) => {
-      if (snap.exists()) {
-        const data = snap.data();
-        setSession(data);
-        setPlayers(data.players || []);
-        setIsLobbyLocked(data.isLobbyLocked || false);
-        setLoading(false);
-
-        // Non-host auto-navigate when game starts
-        if (!isHost && data.status === 'playing') {
-          const myName = route.params.playerName;
-          const myColor = route.params.playerColor || '#00c781';
-          navigation.replace('BoardGameScreen', {
-            sessionId,
-            gameId: data.gameId || gameId,
-            playerName: myName,
-            playerColor: myColor,
-            isHost: false,
-          });
-        }
-      } else {
-        setError('Session not found');
-        setLoading(false);
-      }
-    }, (err) => {
-      setError('Failed to load lobby');
+    const unsub = onSnapshot(doc(db, "gameSessions", sessionId), (snap) => {
+      if (!snap.exists()) return;
+      const data = snap.data();
+      setSession(data);
+      setPlayers(data.players || []);
+      setIsLobbyLocked(data.isLobbyLocked || false);
       setLoading(false);
     });
     return () => unsub();
   }, [sessionId]);
 
+  // FIX #5: toggleLobbyLock — already writes to Firestore; JoinGameScreen checks it
   const toggleLobbyLock = async () => {
-    if (!isHost) return;
     try {
-      await updateDoc(doc(db, 'gameSessions', sessionId), {
-        isLobbyLocked: !isLobbyLocked,
-      });
-    } catch (err) {
-      Alert.alert('Error', 'Failed to update lobby status');
-    }
+      await updateDoc(doc(db, "gameSessions", sessionId), { isLobbyLocked: !isLobbyLocked });
+    } catch (err) { Alert.alert("Error", "Failed to update lock."); }
   };
 
-  const handleStartGame = async () => {
-    if (!isHost) return;
+  // FIX #12: Kick player
+  const confirmKick = async (player) => {
+    setKickTarget(null);
+    try {
+      // Remove from players array, add to kickedPlayers list
+      const updatedPlayers = players.filter((p) => p.uid !== player.uid);
+      await updateDoc(doc(db, "gameSessions", sessionId), {
+        players: updatedPlayers,
+        kickedPlayers: arrayUnion(player.name),
+      });
+    } catch (err) { Alert.alert("Error", "Failed to kick player."); }
+  };
+
+  // FIX #8: Start button shows settings first
+  const handleStartPressed = () => {
     if (players.length === 0) {
-      Alert.alert('No Players', 'You need at least 1 player to start.');
+      Alert.alert("No Players", "Wait for at least one player to join.");
       return;
     }
+    setShowSettings(true);
+  };
+
+  const handleSettingsConfirm = async (settings) => {
+    setShowSettings(false);
     try {
-      await updateDoc(doc(db, 'gameSessions', sessionId), {
-        status: 'playing',
+      const boardData = buildBoardData(settings.boardSize);
+      await updateDoc(doc(db, "gameSessions", sessionId), {
+        status: "playing",
+        settings: { ...session?.settings, ...settings, boardSize: settings.boardSize },
+        board: boardData,
         currentQuestionIndex: 0,
-        currentTurn: players[0]?.name || '',
-        board: buildBoardData(),
       });
-      navigation.replace('BoardGameScreen', {
+      navigation.replace("BoardGameScreen", {
         sessionId,
-        gameId,
-        playerName: route.params.hostName || 'Host',
-        playerColor: '#00c781',
+        gameId: session?.gameId || gameId,
+        playerName: route.params.hostName || "Host",
+        playerColor: "#00c781",
         isHost: true,
       });
     } catch (err) {
-      console.error('Start game error:', err);
-      Alert.alert('Error', 'Failed to start the game');
+      console.error("Start error:", err);
+      Alert.alert("Error", "Failed to start the game.");
     }
   };
 
-  const buildBoardData = () => {
-    const SPACE_TYPES = ['normal', 'normal', 'normal', 'lava', 'cannon', 'trap', 'mystery', 'normal'];
-    return Array.from({ length: BOARD_TOTAL + 1 }, (_, i) => ({
+  const buildBoardData = (total) => {
+    const types = ["normal", "normal", "normal", "normal", "lava", "cannon", "trap", "mystery"];
+    return Array.from({ length: total + 1 }, (_, i) => ({
       index: i,
-      type: i === 0 ? 'normal' : SPACE_TYPES[Math.floor(Math.random() * SPACE_TYPES.length)],
+      type: i === 0 || i === total ? "normal" : types[Math.floor(Math.random() * types.length)],
     }));
   };
 
-  const renderPlayer = ({ item, index }) => (
-    <View style={[styles.playerCard, hoveredButton === `p-${index}` && styles.playerCardHover]}>
-      <View style={[styles.playerColorBadge, { backgroundColor: item.color || '#888' }]} />
-      <Text style={styles.playerName}>{item.name || 'Anonymous'}</Text>
-    </View>
+  if (loading) return (
+    <SafeAreaView style={S.container}>
+      <ActivityIndicator size="large" color="#00c781" />
+      <Text style={S.loadingText}>Loading lobby…</Text>
+    </SafeAreaView>
   );
 
-  if (loading) {
-    return (
-      <SafeAreaView style={styles.container}>
-        <ActivityIndicator size="large" color="#00c781" />
-        <Text style={styles.loadingText}>Loading lobby...</Text>
-      </SafeAreaView>
-    );
-  }
-
-  if (error) {
-    return (
-      <SafeAreaView style={styles.container}>
-        <Text style={styles.errorText}>{error}</Text>
-      </SafeAreaView>
-    );
-  }
+  const suggestedBoardSize = calcBoardSize(players.length);
+  const maxPlayers = session?.settings?.maxPlayers || 30;
 
   return (
-    <SafeAreaView style={styles.container}>
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.scrollContent}>
+    <SafeAreaView style={S.container}>
+      <ScrollView contentContainerStyle={S.scrollContent}>
 
-        {/* PIN Display */}
-        <Animated.View style={[styles.pinCard, { transform: [{ scale: pinPulse }] }]}>
-          <Text style={styles.pinLabel}>Game PIN</Text>
-          <Text style={styles.pin}>{pin || '------'}</Text>
-          <Text style={styles.pinHint}>Share this code with players</Text>
+        {/* PIN */}
+        <Animated.View style={[S.pinCard, { transform: [{ scale: pinPulse }] }]}>
+          <Text style={S.pinLabel}>GAME PIN</Text>
+          <Text style={S.pin}>{pin || "------"}</Text>
+          <Text style={S.pinHint}>Share with players</Text>
         </Animated.View>
 
-        <Text style={styles.playerCountLabel}>{players.length} / {session?.settings?.maxPlayers || '∞'} Players</Text>
+        <Text style={S.playerCount}>{players.length} / {maxPlayers} players</Text>
 
-        {/* Player grid */}
-        {players.length > 0 ? (
-          <FlatList
-            data={players}
-            renderItem={renderPlayer}
-            keyExtractor={(_, i) => i.toString()}
-            numColumns={3}
-            columnWrapperStyle={styles.playerRow}
-            scrollEnabled={false}
-            style={styles.playerList}
-          />
+        {/* Player list with kick button */}
+        {players.length === 0 ? (
+          <View style={S.emptyArea}>
+            <Text style={S.emptyText}>👋 Waiting for players to join…</Text>
+          </View>
         ) : (
-          <View style={styles.emptyPlayerArea}>
-            <Text style={styles.emptyText}>👋 Waiting for players to join...</Text>
-            <Text style={styles.emptySubtext}>Players go to Brain Board and enter the PIN above</Text>
+          <View style={S.playerGrid}>
+            {players.map((item, index) => (
+              <View
+                key={item.uid || index}
+                style={S.playerCard}
+                // Web hover via onMouseEnter/Leave
+                onMouseEnter={() => setHoveredPlayer(item.uid)}
+                onMouseLeave={() => setHoveredPlayer(null)}
+              >
+                <View style={[S.playerDot, { backgroundColor: item.color || "#888" }]} />
+                <Text style={S.playerName} numberOfLines={1}>{item.name || "Player"}</Text>
+                {/* Kick button shown on hover (or always on mobile) */}
+                {isHost && (hoveredPlayer === item.uid || !item._hideKick) && (
+                  <TouchableOpacity
+                    style={S.kickBtn}
+                    onPress={() => setKickTarget(item)}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={S.kickBtnText}>✕</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            ))}
           </View>
         )}
 
-        {/* Snake board preview (host only) */}
-        {isHost && (
-          <SnakeBoardPreview players={players} />
-        )}
+        {/* Board preview */}
+        <BoardPreview players={players} boardSize={suggestedBoardSize} />
 
       </ScrollView>
 
       {/* Host controls */}
       {isHost && (
-        <View style={styles.hostControls}>
+        <View style={S.hostBar}>
           <TouchableOpacity
-            style={[styles.lockBtn, isLobbyLocked && styles.lockBtnActive]}
+            style={[S.lockBtn, isLobbyLocked && S.lockBtnActive]}
             onPress={toggleLobbyLock}
           >
-            <Text style={styles.lockBtnIcon}>{isLobbyLocked ? '🔒' : '🔓'}</Text>
+            <Text style={S.lockIcon}>{isLobbyLocked ? "🔒" : "🔓"}</Text>
+            <Text style={[S.lockText, isLobbyLocked && { color: "#00c781" }]}>
+              {isLobbyLocked ? "Locked" : "Open"}
+            </Text>
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.startBtn, players.length === 0 && styles.startBtnDisabled]}
-            onPress={handleStartGame}
+            style={[S.startBtn, players.length === 0 && S.startBtnDisabled]}
+            onPress={handleStartPressed}
             disabled={players.length === 0}
-            onMouseEnter={() => setHoveredButton('start')}
-            onMouseLeave={() => setHoveredButton(null)}
           >
-            <Text style={styles.startBtnText}>▶  Start Game</Text>
+            <Text style={S.startBtnText}>▶ Start Game</Text>
           </TouchableOpacity>
         </View>
       )}
 
-      {/* Cancel button */}
-      <TouchableOpacity
-        style={styles.cancelBtn}
-        onPress={() => setShowCancelModal(true)}
-      >
-        <Text style={styles.cancelBtnText}>Cancel</Text>
+      {/* Leave button */}
+      <TouchableOpacity style={S.leaveBtn} onPress={() => setShowLeave(true)}>
+        <Text style={S.leaveBtnText}>Leave</Text>
       </TouchableOpacity>
 
-      {/* Cancel modal */}
-      <Modal visible={showCancelModal} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modal}>
-            <Text style={styles.modalTitle}>Leave Lobby?</Text>
-            <Text style={styles.modalText}>Are you sure you want to leave?</Text>
-            <View style={styles.modalBtns}>
-              <TouchableOpacity style={styles.modalBtnCancel} onPress={() => setShowCancelModal(false)}>
-                <Text style={styles.modalBtnCancelText}>Stay</Text>
+      {/* FIX #8: Settings modal */}
+      <SettingsModal
+        visible={showSettings}
+        playerCount={players.length}
+        settings={session?.settings}
+        onConfirm={handleSettingsConfirm}
+        onCancel={() => setShowSettings(false)}
+      />
+
+      {/* FIX #12: Kick confirm */}
+      <Modal visible={!!kickTarget} transparent animationType="fade">
+        <View style={S.overlay}>
+          <View style={S.modal}>
+            <Text style={S.modalTitle}>Kick Player?</Text>
+            <Text style={S.modalText}>
+              Remove <Text style={{ color: kickTarget?.color, fontWeight: "bold" }}>{kickTarget?.name}</Text> from the game?
+            </Text>
+            <View style={S.modalBtns}>
+              <TouchableOpacity style={S.cancelModal} onPress={() => setKickTarget(null)}>
+                <Text style={S.cancelModalText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={S.kickConfirm} onPress={() => confirmKick(kickTarget)}>
+                <Text style={S.kickConfirmText}>Kick</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Leave confirm */}
+      <Modal visible={showLeave} transparent animationType="fade">
+        <View style={S.overlay}>
+          <View style={S.modal}>
+            <Text style={S.modalTitle}>Leave Lobby?</Text>
+            <Text style={S.modalText}>Are you sure you want to leave?</Text>
+            <View style={S.modalBtns}>
+              <TouchableOpacity style={S.cancelModal} onPress={() => setShowLeave(false)}>
+                <Text style={S.cancelModalText}>Stay</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={styles.modalBtnConfirm}
-                onPress={() => { setShowCancelModal(false); navigation.navigate('Dashboard'); }}
+                style={S.kickConfirm}
+                onPress={() => { setShowLeave(false); navigation.navigate("Dashboard"); }}
               >
-                <Text style={styles.modalBtnConfirmText}>Leave</Text>
+                <Text style={S.kickConfirmText}>Leave</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -318,146 +467,72 @@ export default function Lobby({ route, navigation }) {
   );
 }
 
-// ─── Board preview styles ─────────────────────────────────────────────────────
-const boardStyles = StyleSheet.create({
-  boardWrapper: {
-    backgroundColor: '#0d0d0d',
-    borderRadius: 16,
-    padding: 16,
-    marginTop: 24,
-    borderWidth: 1,
-    borderColor: '#222',
-  },
-  boardTitle: { color: '#00c781', fontSize: 16, fontWeight: 'bold', marginBottom: 12, textAlign: 'center' },
-  row: { flexDirection: 'row', justifyContent: 'center', marginBottom: 4 },
-  space: {
-    width: 44,
-    height: 44,
-    backgroundColor: '#1e1e1e',
-    borderRadius: 8,
-    margin: 2,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#2a2a2a',
-  },
-  spaceHead: {
-    backgroundColor: '#003322',
-    borderColor: '#00c781',
-    borderWidth: 2,
-  },
-  spaceStart: {
-    backgroundColor: '#1a2a1a',
-    borderColor: '#2ecc71',
-  },
-  headEmoji: { fontSize: 22 },
-  spaceNum: { color: '#555', fontSize: 11 },
-  tokens: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', marginTop: 1 },
-  token: { width: 8, height: 8, borderRadius: 4, margin: 1 },
-  legendRow: { flexDirection: 'row', justifyContent: 'center', gap: 16, marginTop: 10 },
-  legendItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  legendDot: { width: 12, height: 12, borderRadius: 6, backgroundColor: '#1e1e1e', borderWidth: 1, borderColor: '#333' },
-  legendIcon: { fontSize: 12 },
-  legendText: { color: '#666', fontSize: 11 },
-});
-
-// ─── Main styles ──────────────────────────────────────────────────────────────
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#111' },
-  scrollContent: { padding: 24, paddingBottom: 160 },
-  loadingText: { color: '#fff', marginTop: 16, fontSize: 18, textAlign: 'center' },
-  errorText: { color: '#ff6b6b', fontSize: 18, textAlign: 'center', padding: 30 },
+const S = StyleSheet.create({
+  container: { flex: 1, backgroundColor: "#111" },
+  scrollContent: { padding: 20, paddingBottom: 140 },
+  loadingText: { color: "#fff", marginTop: 16, fontSize: 18, textAlign: "center" },
 
   pinCard: {
-    backgroundColor: '#1e1e1e',
-    borderRadius: 20,
-    padding: 28,
-    alignItems: 'center',
-    marginBottom: 20,
-    borderWidth: 1.5,
-    borderColor: '#00c781',
+    backgroundColor: "#1e1e1e", borderRadius: 22, padding: 28, alignItems: "center",
+    marginBottom: 16, borderWidth: 2, borderColor: "#00c781",
   },
-  pinLabel: { fontSize: 14, color: '#aaa', letterSpacing: 3, marginBottom: 8 },
-  pin: { fontSize: 56, fontWeight: 'bold', color: '#00c781', letterSpacing: 12 },
-  pinHint: { fontSize: 13, color: '#555', marginTop: 6 },
+  pinLabel: { color: "#888", fontSize: 13, letterSpacing: 4, marginBottom: 8 },
+  pin: { fontSize: 60, fontWeight: "bold", color: "#00c781", letterSpacing: 14 },
+  pinHint: { color: "#555", fontSize: 13, marginTop: 6 },
 
-  playerCountLabel: { color: '#aaa', fontSize: 15, textAlign: 'center', marginBottom: 16 },
+  playerCount: { color: "#888", fontSize: 16, textAlign: "center", marginBottom: 16 },
 
-  playerList: { marginBottom: 8 },
-  playerRow: { justifyContent: 'flex-start', gap: 8, marginBottom: 8 },
+  emptyArea: { alignItems: "center", paddingVertical: 36 },
+  emptyText: { color: "#555", fontSize: 17, textAlign: "center" },
+
+  playerGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginBottom: 8 },
   playerCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#1e1e1e',
-    borderRadius: 12,
-    padding: 12,
-    flex: 1,
-    minWidth: 100,
-    borderWidth: 1,
-    borderColor: '#2a2a2a',
+    flexDirection: "row", alignItems: "center", backgroundColor: "#1e1e1e",
+    borderRadius: 12, paddingVertical: 12, paddingHorizontal: 14,
+    borderWidth: 1, borderColor: "#2a2a2a", minWidth: 120, flex: 1,
   },
-  playerCardHover: { borderColor: '#00c781' },
-  playerColorBadge: { width: 14, height: 14, borderRadius: 7, marginRight: 8 },
-  playerName: { color: '#fff', fontSize: 14, fontWeight: '500', flex: 1 },
+  playerDot: { width: 14, height: 14, borderRadius: 7, marginRight: 10 },
+  playerName: { color: "#fff", fontSize: 15, flex: 1 },
+  kickBtn: {
+    backgroundColor: "#3a0000", borderRadius: 8, width: 26, height: 26,
+    justifyContent: "center", alignItems: "center", marginLeft: 6,
+  },
+  kickBtnText: { color: "#ff6b6b", fontSize: 13, fontWeight: "bold" },
 
-  emptyPlayerArea: { alignItems: 'center', paddingVertical: 40 },
-  emptyText: { color: '#555', fontSize: 18, textAlign: 'center', marginBottom: 8 },
-  emptySubtext: { color: '#444', fontSize: 14, textAlign: 'center' },
-
-  // Host controls
-  hostControls: {
-    position: 'absolute',
-    bottom: 80,
-    left: 0,
-    right: 0,
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: 16,
-    paddingHorizontal: 24,
+  hostBar: {
+    position: "absolute", bottom: 50, left: 0, right: 0,
+    flexDirection: "row", gap: 12, paddingHorizontal: 20, alignItems: "center",
   },
   lockBtn: {
-    width: 60,
-    height: 60,
-    backgroundColor: '#1e1e1e',
-    borderRadius: 16,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#333',
+    backgroundColor: "#1e1e1e", borderRadius: 14, paddingVertical: 14, paddingHorizontal: 18,
+    alignItems: "center", borderWidth: 1, borderColor: "#333",
   },
-  lockBtnActive: { backgroundColor: '#003322', borderColor: '#00c781' },
-  lockBtnIcon: { fontSize: 26 },
+  lockBtnActive: { backgroundColor: "#003322", borderColor: "#00c781" },
+  lockIcon: { fontSize: 22 },
+  lockText: { color: "#888", fontSize: 11, fontWeight: "bold", marginTop: 2 },
   startBtn: {
-    flex: 1,
-    maxWidth: 260,
-    backgroundColor: '#00c781',
-    borderRadius: 16,
-    paddingVertical: 18,
-    alignItems: 'center',
+    flex: 1, backgroundColor: "#00c781", borderRadius: 16,
+    paddingVertical: 18, alignItems: "center",
   },
-  startBtnDisabled: { backgroundColor: '#2a2a2a', opacity: 0.5 },
-  startBtnText: { color: '#000', fontSize: 20, fontWeight: 'bold' },
+  startBtnDisabled: { backgroundColor: "#1e1e1e", opacity: 0.4 },
+  startBtnText: { color: "#000", fontSize: 19, fontWeight: "bold" },
 
-  cancelBtn: {
-    position: 'absolute',
-    bottom: 20,
-    left: 24,
-    backgroundColor: '#c0392b',
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    borderRadius: 12,
+  leaveBtn: {
+    position: "absolute", bottom: 12, left: 20,
+    backgroundColor: "#2a0000", paddingVertical: 10, paddingHorizontal: 20, borderRadius: 12,
   },
-  cancelBtnText: { color: '#fff', fontSize: 15, fontWeight: '600' },
+  leaveBtnText: { color: "#ff6b6b", fontSize: 14, fontWeight: "bold" },
 
-  // Modal
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.8)', justifyContent: 'center', alignItems: 'center' },
-  modal: { backgroundColor: '#1e1e1e', borderRadius: 16, padding: 28, width: 340, borderWidth: 1, borderColor: '#333' },
-  modalTitle: { fontSize: 20, fontWeight: 'bold', color: '#fff', marginBottom: 12, textAlign: 'center' },
-  modalText: { fontSize: 15, color: '#ccc', textAlign: 'center', marginBottom: 24 },
-  modalBtns: { flexDirection: 'row', gap: 12 },
-  modalBtnCancel: { flex: 1, backgroundColor: '#333', paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
-  modalBtnCancelText: { color: '#fff', fontWeight: 'bold' },
-  modalBtnConfirm: { flex: 1, backgroundColor: '#c0392b', paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
-  modalBtnConfirmText: { color: '#fff', fontWeight: 'bold' },
+  overlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.88)", justifyContent: "center", alignItems: "center" },
+  modal: {
+    backgroundColor: "#1e1e1e", borderRadius: 20, padding: 28,
+    width: "85%", maxWidth: 360, borderWidth: 1, borderColor: "#333",
+  },
+  modalTitle: { color: "#fff", fontSize: 20, fontWeight: "bold", marginBottom: 12 },
+  modalText: { color: "#ccc", fontSize: 15, lineHeight: 22, marginBottom: 24 },
+  modalBtns: { flexDirection: "row", gap: 12 },
+  cancelModal: { flex: 1, backgroundColor: "#2a2a2a", paddingVertical: 14, borderRadius: 12, alignItems: "center" },
+  cancelModalText: { color: "#fff", fontWeight: "bold" },
+  kickConfirm: { flex: 1, backgroundColor: "#c0392b", paddingVertical: 14, borderRadius: 12, alignItems: "center" },
+  kickConfirmText: { color: "#fff", fontWeight: "bold" },
 });
