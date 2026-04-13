@@ -1,19 +1,14 @@
 /**
- * HostGameMenu.js - Intermediary screen before launching the lobby
- * Review game → optional settings → Launch Lobby → Lobby.js
+ * HostGameMenu.js
+ * All settings including boardSize are now stored in the session.
+ * boardSize left blank = auto-computed from player count formula when game starts.
+ * nicknameGenerator, timePerQuestion, and gameDuration are all stored and used.
  */
 
 import React, { useState, useEffect } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  ActivityIndicator,
-  ScrollView,
-  Switch,
-  TextInput,
-  Modal,
+  View, Text, StyleSheet, TouchableOpacity,
+  ActivityIndicator, ScrollView, Switch, TextInput, Modal,
 } from 'react-native';
 import { db, auth } from '../firebaseConfig';
 import { doc, getDoc, addDoc, collection, serverTimestamp } from 'firebase/firestore';
@@ -27,15 +22,16 @@ export default function HostGameMenu({ navigation, route }) {
   const [showErrorModal, setShowErrorModal] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
 
-  // Settings with defaults
-  const [gameDuration, setGameDuration] = useState('10'); // minutes
-  const [maxPlayers, setMaxPlayers] = useState('30');
-  const [timePerQuestion, setTimePerQuestion] = useState('60'); // seconds
-  const [showAnswersAfter, setShowAnswersAfter] = useState(true);
-  const [nicknameGenerator, setNicknameGenerator] = useState(false);
-  const [hostPlays, setHostPlays] = useState(false);
+  // Settings
+  const [gameDuration, setGameDuration]       = useState('10');  // minutes
+  const [maxPlayers, setMaxPlayers]           = useState('30');
+  const [timePerQuestion, setTimePerQuestion] = useState('20');  // seconds
+  const [boardSize, setBoardSize]             = useState('');    // blank = auto (formula)
+  const [showAnswersAfter, setShowAnswersAfter]     = useState(true);
+  const [nicknameGenerator, setNicknameGenerator]   = useState(false);
+  const [hostPlays, setHostPlays]                   = useState(false);
   const [randomizeQuestions, setRandomizeQuestions] = useState(false);
-  const [randomizeAnswers, setRandomizeAnswers] = useState(false);
+  const [randomizeAnswers, setRandomizeAnswers]     = useState(false);
 
   useEffect(() => {
     const fetchGame = async () => {
@@ -44,8 +40,6 @@ export default function HostGameMenu({ navigation, route }) {
         if (gameDoc.exists()) {
           const gameData = gameDoc.data();
           setGame(gameData);
-
-          // Use creator's time per question if set
           if (gameData.timePerQuestion && gameData.timePerQuestion > 0) {
             setTimePerQuestion(gameData.timePerQuestion.toString());
           }
@@ -63,14 +57,13 @@ export default function HostGameMenu({ navigation, route }) {
         setIsLoading(false);
       }
     };
-
     fetchGame();
   }, [gameId]);
 
   const validateSettings = () => {
     const duration = parseInt(gameDuration, 10);
-    const players = parseInt(maxPlayers, 10);
-    const time = parseInt(timePerQuestion, 10);
+    const players  = parseInt(maxPlayers, 10);
+    const time     = parseInt(timePerQuestion, 10);
 
     if (isNaN(duration) || duration < 1 || duration > 180) {
       setErrorMessage('Game duration must be between 1 and 180 minutes.');
@@ -80,9 +73,16 @@ export default function HostGameMenu({ navigation, route }) {
       setErrorMessage('Maximum players must be between 1 and 500.');
       return false;
     }
-    if (isNaN(time) || time < 10 || time > 300) {
-      setErrorMessage('Time per question must be between 10 and 300 seconds.');
+    if (isNaN(time) || time < 5 || time > 300) {
+      setErrorMessage('Time per question must be between 5 and 300 seconds.');
       return false;
+    }
+    if (boardSize.trim() !== '') {
+      const size = parseInt(boardSize, 10);
+      if (isNaN(size) || size < 1 || size > 300) {
+        setErrorMessage('Board tiles must be between 1 and 300, or leave blank for auto.');
+        return false;
+      }
     }
     return true;
   };
@@ -96,17 +96,23 @@ export default function HostGameMenu({ navigation, route }) {
     try {
       const pin = Math.floor(100000 + Math.random() * 900000).toString();
 
+      // boardSize: null means "compute from player count formula when game starts"
+      const parsedBoardSize = boardSize.trim() ? Math.max(1, parseInt(boardSize, 10)) : null;
+
       const sessionRef = await addDoc(collection(db, 'gameSessions'), {
         gameId,
         hostId: auth.currentUser.uid,
         pin,
         status: 'lobby',
         players: [],
+        kickedPlayers: [],
         currentQuestionIndex: 0,
         settings: {
-          gameDuration: parseInt(gameDuration, 10),
-          maxPlayers: parseInt(maxPlayers, 10),
-          timePerQuestion: parseInt(timePerQuestion, 10),
+          gameDuration:       parseInt(gameDuration, 10),      // minutes
+          gameDurationSecs:   parseInt(gameDuration, 10) * 60, // seconds (for timer)
+          maxPlayers:         parseInt(maxPlayers, 10),
+          timePerQuestion:    parseInt(timePerQuestion, 10),   // seconds per question
+          boardSize:          parsedBoardSize,                  // null = auto
           showAnswersAfter,
           nicknameGenerator,
           hostPlays,
@@ -116,7 +122,6 @@ export default function HostGameMenu({ navigation, route }) {
         createdAt: serverTimestamp(),
       });
 
-      // Navigate to Lobby.js
       navigation.navigate('Lobby', {
         sessionId: sessionRef.id,
         pin,
@@ -141,7 +146,6 @@ export default function HostGameMenu({ navigation, route }) {
 
   return (
     <View style={styles.container}>
-      {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()}>
           <Text style={styles.backText}>← Back</Text>
@@ -166,122 +170,78 @@ export default function HostGameMenu({ navigation, route }) {
         <View style={styles.settingsCard}>
           <Text style={styles.sectionTitle}>Game Settings</Text>
 
-          {/* 1. Game duration */}
           <View style={styles.settingRow}>
             <Text style={styles.settingLabel}>Game duration (minutes)</Text>
-            <TextInput
-              style={styles.numberInput}
-              value={gameDuration}
-              onChangeText={setGameDuration}
-              keyboardType="numeric"
-              placeholder="10"
-              maxLength={3}
-            />
+            <TextInput style={styles.numberInput} value={gameDuration} onChangeText={setGameDuration} keyboardType="numeric" placeholder="10" maxLength={3} />
           </View>
 
-          {/* 2. Players allowed */}
           <View style={styles.settingRow}>
             <Text style={styles.settingLabel}>Players allowed</Text>
-            <TextInput
-              style={styles.numberInput}
-              value={maxPlayers}
-              onChangeText={setMaxPlayers}
-              keyboardType="numeric"
-              placeholder="30"
-              maxLength={4}
-            />
+            <TextInput style={styles.numberInput} value={maxPlayers} onChangeText={setMaxPlayers} keyboardType="numeric" placeholder="30" maxLength={4} />
           </View>
 
-          {/* 3. Time per question */}
           <View style={styles.settingRow}>
             <Text style={styles.settingLabel}>Time per question (seconds)</Text>
+            <TextInput style={styles.numberInput} value={timePerQuestion} onChangeText={setTimePerQuestion} keyboardType="numeric" placeholder="20" maxLength={3} />
+          </View>
+
+          <View style={styles.settingRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.settingLabel}>Board tiles</Text>
+              <Text style={styles.settingHint}>Leave blank to auto-calculate from player count</Text>
+            </View>
             <TextInput
               style={styles.numberInput}
-              value={timePerQuestion}
-              onChangeText={setTimePerQuestion}
+              value={boardSize}
+              onChangeText={setBoardSize}
               keyboardType="numeric"
-              placeholder="60"
+              placeholder="Auto"
+              placeholderTextColor="#666"
               maxLength={3}
             />
           </View>
 
-          {/* Toggles */}
           <View style={styles.settingRow}>
-            <Text style={styles.settingLabel}>Show correct answers after each question</Text>
-            <Switch
-              value={showAnswersAfter}
-              onValueChange={setShowAnswersAfter}
-              trackColor={{ false: '#333', true: '#00c781' }}
-              thumbColor={showAnswersAfter ? '#fff' : '#ccc'}
-            />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.settingLabel}>Nickname generator</Text>
+              <Text style={styles.settingHint}>Auto-assign random names to all players</Text>
+            </View>
+            <Switch value={nicknameGenerator} onValueChange={setNicknameGenerator} trackColor={{ false: '#333', true: '#00c781' }} thumbColor={nicknameGenerator ? '#fff' : '#ccc'} />
           </View>
 
           <View style={styles.settingRow}>
-            <Text style={styles.settingLabel}>Nickname generator</Text>
-            <Switch
-              value={nicknameGenerator}
-              onValueChange={setNicknameGenerator}
-              trackColor={{ false: '#333', true: '#00c781' }}
-              thumbColor={nicknameGenerator ? '#fff' : '#ccc'}
-            />
+            <Text style={styles.settingLabel}>Show correct answers after each question</Text>
+            <Switch value={showAnswersAfter} onValueChange={setShowAnswersAfter} trackColor={{ false: '#333', true: '#00c781' }} thumbColor={showAnswersAfter ? '#fff' : '#ccc'} />
           </View>
 
           <View style={styles.settingRow}>
             <Text style={styles.settingLabel}>Host can play</Text>
-            <Switch
-              value={hostPlays}
-              onValueChange={setHostPlays}
-              trackColor={{ false: '#333', true: '#00c781' }}
-              thumbColor={hostPlays ? '#fff' : '#ccc'}
-            />
+            <Switch value={hostPlays} onValueChange={setHostPlays} trackColor={{ false: '#333', true: '#00c781' }} thumbColor={hostPlays ? '#fff' : '#ccc'} />
           </View>
 
           <View style={styles.settingRow}>
             <Text style={styles.settingLabel}>Randomize order of questions</Text>
-            <Switch
-              value={randomizeQuestions}
-              onValueChange={setRandomizeQuestions}
-              trackColor={{ false: '#333', true: '#00c781' }}
-              thumbColor={randomizeQuestions ? '#fff' : '#ccc'}
-            />
+            <Switch value={randomizeQuestions} onValueChange={setRandomizeQuestions} trackColor={{ false: '#333', true: '#00c781' }} thumbColor={randomizeQuestions ? '#fff' : '#ccc'} />
           </View>
 
           <View style={styles.settingRow}>
             <Text style={styles.settingLabel}>Randomize order of answers</Text>
-            <Switch
-              value={randomizeAnswers}
-              onValueChange={setRandomizeAnswers}
-              trackColor={{ false: '#333', true: '#00c781' }}
-              thumbColor={randomizeAnswers ? '#fff' : '#ccc'}
-            />
+            <Switch value={randomizeAnswers} onValueChange={setRandomizeAnswers} trackColor={{ false: '#333', true: '#00c781' }} thumbColor={randomizeAnswers ? '#fff' : '#ccc'} />
           </View>
         </View>
 
-        {/* Launch Button */}
         <TouchableOpacity style={styles.launchButton} onPress={launchLobby}>
           <Text style={styles.launchText}>Launch Lobby</Text>
           <Text style={styles.launchSubtext}>Students will join with a PIN</Text>
         </TouchableOpacity>
       </ScrollView>
 
-      {/* Error Modal */}
-      <Modal
-        visible={showErrorModal}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowErrorModal(false)}
-      >
+      <Modal visible={showErrorModal} transparent animationType="fade" onRequestClose={() => setShowErrorModal(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>Oops!</Text>
             <Text style={styles.modalMessage}>{errorMessage}</Text>
-            <TouchableOpacity
-              style={styles.modalButton}
-              onPress={() => {
-                setShowErrorModal(false);
-                if (error) navigation.goBack(); // Go back if game failed to load
-              }}
-            >
+            <TouchableOpacity style={styles.modalButton} onPress={() => { setShowErrorModal(false); if (error) navigation.goBack(); }}>
               <Text style={styles.modalButtonText}>OK</Text>
             </TouchableOpacity>
           </View>
@@ -292,180 +252,30 @@ export default function HostGameMenu({ navigation, route }) {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#111',
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#111',
-  },
-  loadingText: {
-    color: '#fff',
-    marginTop: 20,
-    fontSize: 18,
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 20,
-    backgroundColor: '#0d0d0d',
-    borderBottomWidth: 1,
-    borderBottomColor: '#222',
-  },
-  backText: {
-    color: '#00c781',
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  headerTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#fff',
-  },
-  content: {
-    padding: 30,
-    alignItems: 'center',
-  },
-  gameCard: {
-    backgroundColor: '#1e1e1e',
-    borderRadius: 20,
-    padding: 24,
-    width: '100%',
-    maxWidth: 500,
-    alignItems: 'center',
-    marginBottom: 30,
-    borderWidth: 1,
-    borderColor: '#333',
-  },
-  gameCover: {
-    width: 140,
-    height: 140,
-    backgroundColor: '#2a2a2a',
-    borderRadius: 16,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  gameTitle: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#fff',
-    marginBottom: 8,
-    textAlign: 'center',
-  },
-  gameInfo: {
-    fontSize: 16,
-    color: '#aaa',
-  },
-  settingsCard: {
-    backgroundColor: '#1e1e1e',
-    borderRadius: 20,
-    padding: 24,
-    width: '100%',
-    maxWidth: 500,
-    marginBottom: 30,
-    borderWidth: 1,
-    borderColor: '#333',
-  },
-  sectionTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#fff',
-    marginBottom: 20,
-  },
-  settingRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  settingLabel: {
-    fontSize: 16,
-    color: '#ddd',
-    flex: 1,
-  },
-  numberInput: {
-    width: 90,
-    height: 44,
-    backgroundColor: '#333',
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    color: '#fff',
-    fontSize: 16,
-    textAlign: 'center',
-    borderWidth: 1,
-    borderColor: '#444',
-  },
-  launchButton: {
-    backgroundColor: '#00c781',
-    paddingVertical: 20,
-    paddingHorizontal: 40,
-    borderRadius: 16,
-    alignItems: 'center',
-    width: '100%',
-    maxWidth: 500,
-    shadowColor: '#00c781',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
-    shadowRadius: 10,
-  },
-  launchText: {
-    color: '#fff',
-    fontSize: 20,
-    fontWeight: 'bold',
-  },
-  launchSubtext: {
-    color: '#fff',
-    fontSize: 14,
-    opacity: 0.8,
-    marginTop: 4,
-  },
-
-  // Error Modal Styles
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  modalContent: {
-    backgroundColor: '#1e1e1e',
-    borderRadius: 16,
-    padding: 24,
-    width: '80%',
-    maxWidth: 400,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#333',
-  },
-  modalTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#ff6b6b',
-    marginBottom: 16,
-  },
-  modalMessage: {
-    fontSize: 16,
-    color: '#ddd',
-    textAlign: 'center',
-    marginBottom: 24,
-    lineHeight: 22,
-  },
-  modalButton: {
-    backgroundColor: '#00c781',
-    paddingVertical: 14,
-    paddingHorizontal: 40,
-    borderRadius: 12,
-    width: '100%',
-    alignItems: 'center',
-  },
-  modalButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
+  container: { flex: 1, backgroundColor: '#111' },
+  loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#111' },
+  loadingText: { color: '#fff', marginTop: 20, fontSize: 18 },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 20, backgroundColor: '#0d0d0d', borderBottomWidth: 1, borderBottomColor: '#222' },
+  backText: { color: '#00c781', fontSize: 18, fontWeight: 'bold' },
+  headerTitle: { fontSize: 24, fontWeight: 'bold', color: '#fff' },
+  content: { padding: 30, alignItems: 'center' },
+  gameCard: { backgroundColor: '#1e1e1e', borderRadius: 20, padding: 24, width: '100%', maxWidth: 500, alignItems: 'center', marginBottom: 30, borderWidth: 1, borderColor: '#333' },
+  gameCover: { width: 140, height: 140, backgroundColor: '#2a2a2a', borderRadius: 16, justifyContent: 'center', alignItems: 'center', marginBottom: 16 },
+  gameTitle: { fontSize: 28, fontWeight: 'bold', color: '#fff', marginBottom: 8, textAlign: 'center' },
+  gameInfo: { fontSize: 16, color: '#aaa' },
+  settingsCard: { backgroundColor: '#1e1e1e', borderRadius: 20, padding: 24, width: '100%', maxWidth: 500, marginBottom: 30, borderWidth: 1, borderColor: '#333' },
+  sectionTitle: { fontSize: 20, fontWeight: 'bold', color: '#fff', marginBottom: 20 },
+  settingRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
+  settingLabel: { fontSize: 16, color: '#ddd', flex: 1 },
+  settingHint: { fontSize: 12, color: '#666', marginTop: 2 },
+  numberInput: { width: 90, height: 44, backgroundColor: '#333', borderRadius: 12, paddingHorizontal: 12, color: '#fff', fontSize: 16, textAlign: 'center', borderWidth: 1, borderColor: '#444' },
+  launchButton: { backgroundColor: '#00c781', paddingVertical: 20, paddingHorizontal: 40, borderRadius: 16, alignItems: 'center', width: '100%', maxWidth: 500 },
+  launchText: { color: '#fff', fontSize: 20, fontWeight: 'bold' },
+  launchSubtext: { color: '#fff', fontSize: 14, opacity: 0.8, marginTop: 4 },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', alignItems: 'center' },
+  modalContent: { backgroundColor: '#1e1e1e', borderRadius: 16, padding: 24, width: '80%', maxWidth: 400, alignItems: 'center', borderWidth: 1, borderColor: '#333' },
+  modalTitle: { fontSize: 24, fontWeight: 'bold', color: '#ff6b6b', marginBottom: 16 },
+  modalMessage: { fontSize: 16, color: '#ddd', textAlign: 'center', marginBottom: 24, lineHeight: 22 },
+  modalButton: { backgroundColor: '#00c781', paddingVertical: 14, paddingHorizontal: 40, borderRadius: 12, width: '100%', alignItems: 'center' },
+  modalButtonText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
 });

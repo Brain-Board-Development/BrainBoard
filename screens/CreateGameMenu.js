@@ -1,9 +1,6 @@
 /**
- * CreateGameMenu.js - UPDATED
- * - Auto-creates first question
- * - Only question list scrolls
- * - Removed estimated time & points
- * - Enhanced checkmark styling
+ * CreateGameMenu.js
+ * Fix: saveGame now validates that every question has at least one correct answer marked.
  */
 
 import React, { useState, useEffect, useRef } from 'react';
@@ -47,7 +44,6 @@ export default function CreateGameMenu({ navigation, route }) {
   const coverInputRef = useRef(null);
   const questionInputRef = useRef(null);
 
-  // Auto-create first question if none exist
   useEffect(() => {
     if (questions.length === 0 && !isLoading) {
       const initialQuestion = {
@@ -142,29 +138,17 @@ export default function CreateGameMenu({ navigation, route }) {
   const handleImageUpload = async (e, isCover = false) => {
     const file = e.target.files[0];
     if (!file) return;
-
     try {
       const user = auth.currentUser;
-      if (!user) {
-        alert('User not authenticated');
-        return;
-      }
-
+      if (!user) { alert('User not authenticated'); return; }
       const ext = file.name.split('.').pop() || 'jpg';
       const fileName = `${isCover ? 'cover' : 'question'}-${Date.now()}.${ext}`;
       const storagePath = `games/${user.uid}/${fileName}`;
-
       const storageInstance = getStorage();
       const storageRefPath = storageRef(storageInstance, storagePath);
       const snapshot = await uploadBytes(storageRefPath, file);
       const url = await getDownloadURL(snapshot.ref);
-
-      if (isCover) {
-        setCoverImage(url);
-      } else {
-        updateCurrentQuestion({ imageUrl: url });
-      }
-
+      if (isCover) { setCoverImage(url); } else { updateCurrentQuestion({ imageUrl: url }); }
       e.target.value = '';
     } catch (err) {
       console.error('Upload failed:', err);
@@ -180,6 +164,17 @@ export default function CreateGameMenu({ navigation, route }) {
     if (questions.length === 0) {
       alert('Please add at least one question');
       return;
+    }
+
+    // Validate: every question must have at least one correct answer
+    for (let i = 0; i < questions.length; i++) {
+      const q = questions[i];
+      const hasCorrect = Array.isArray(q.correctAnswers) && q.correctAnswers.some(v => v === true);
+      if (!hasCorrect) {
+        alert(`Question ${i + 1} has no correct answer selected.\n\nPlease mark at least one answer as correct before saving.`);
+        setSelectedQuestionIndex(i);
+        return;
+      }
     }
 
     const gameData = {
@@ -223,23 +218,9 @@ export default function CreateGameMenu({ navigation, route }) {
 
   return (
     <View style={styles.container}>
-      {/* Hidden file inputs */}
-      <input
-        type="file"
-        accept="image/*"
-        ref={coverInputRef}
-        style={{ display: 'none' }}
-        onChange={(e) => handleImageUpload(e, true)}
-      />
-      <input
-        type="file"
-        accept="image/*"
-        ref={questionInputRef}
-        style={{ display: 'none' }}
-        onChange={(e) => handleImageUpload(e, false)}
-      />
+      <input type="file" accept="image/*" ref={coverInputRef} style={{ display: 'none' }} onChange={(e) => handleImageUpload(e, true)} />
+      <input type="file" accept="image/*" ref={questionInputRef} style={{ display: 'none' }} onChange={(e) => handleImageUpload(e, false)} />
 
-      {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()}>
           <Text style={styles.backBtn}>← Back</Text>
@@ -248,7 +229,6 @@ export default function CreateGameMenu({ navigation, route }) {
         <View style={{ width: 60 }} />
       </View>
 
-      {/* Cover & Title */}
       <View style={styles.coverSection}>
         <TouchableOpacity style={styles.coverUpload} onPress={() => coverInputRef.current?.click()}>
           {coverImage ? (
@@ -256,69 +236,56 @@ export default function CreateGameMenu({ navigation, route }) {
           ) : (
             <Text style={styles.coverPlaceholder}>+ Add Cover Image</Text>
           )}
-          <View style={styles.coverOverlay}>
-            <Text style={styles.coverOverlayText}>Upload</Text>
-          </View>
+          <View style={styles.coverOverlay}><Text style={styles.coverOverlayText}>Upload</Text></View>
         </TouchableOpacity>
         <View style={styles.titleSection}>
-          <TextInput
-            style={styles.gameTitleInput}
-            value={gameTitle}
-            onChangeText={setGameTitle}
-            placeholder="Enter game title..."
-            placeholderTextColor="#666"
-          />
-          <TextInput
-            style={styles.tagsInput}
-            value={tags}
-            onChangeText={setTags}
-            placeholder="Tags (comma separated)"
-            placeholderTextColor="#666"
-          />
+          <TextInput style={styles.gameTitleInput} value={gameTitle} onChangeText={setGameTitle} placeholder="Enter game title..." placeholderTextColor="#666" />
+          <TextInput style={styles.tagsInput} value={tags} onChangeText={setTags} placeholder="Tags (comma separated)" placeholderTextColor="#666" />
         </View>
       </View>
 
-      {/* Three Column Layout */}
       <View style={styles.mainLayout}>
-        {/* Left: Question Navigator (only scrollable part) */}
+        {/* Left: Question Navigator */}
         <View style={styles.leftSidebar}>
           <TouchableOpacity style={styles.addQuestionBtn} onPress={addQuestion}>
             <Text style={styles.addQuestionText}>+ Add Question</Text>
           </TouchableOpacity>
           <ScrollView style={styles.questionList}>
-            {questions.map((q, i) => (
-              <TouchableOpacity
-                key={i}
-                style={[
-                  styles.questionThumb,
-                  selectedQuestionIndex === i && styles.questionThumbSelected,
-                ]}
-                onPress={() => setSelectedQuestionIndex(i)}
-              >
-                <Text style={styles.thumbNumber}>{i + 1}</Text>
-                <Text style={styles.thumbText} numberOfLines={2}>
-                  {q.question || 'New Question'}
-                </Text>
-                <View style={styles.reorderButtons}>
-                  <TouchableOpacity onPress={() => moveQuestionUp(i)} disabled={i === 0}>
-                    <Text style={[styles.reorderText, i === 0 && styles.disabledReorder]}>↑</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity onPress={() => moveQuestionDown(i)} disabled={i === questions.length - 1}>
-                    <Text style={[styles.reorderText, i === questions.length - 1 && styles.disabledReorder]}>↓</Text>
-                  </TouchableOpacity>
-                </View>
+            {questions.map((q, i) => {
+              const hasCorrect = Array.isArray(q.correctAnswers) && q.correctAnswers.some(v => v === true);
+              return (
                 <TouchableOpacity
-                  style={styles.deleteThumbBtn}
-                  onPress={() => deleteQuestion(i)}
+                  key={i}
+                  style={[
+                    styles.questionThumb,
+                    selectedQuestionIndex === i && styles.questionThumbSelected,
+                    !hasCorrect && styles.questionThumbNoAnswer,
+                  ]}
+                  onPress={() => setSelectedQuestionIndex(i)}
                 >
-                  <Text style={styles.deleteThumbText}>×</Text>
+                  <Text style={styles.thumbNumber}>{i + 1}</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.thumbText} numberOfLines={2}>{q.question || 'New Question'}</Text>
+                    {!hasCorrect && <Text style={styles.noAnswerWarning}>No correct answer!</Text>}
+                  </View>
+                  <View style={styles.reorderButtons}>
+                    <TouchableOpacity onPress={() => moveQuestionUp(i)} disabled={i === 0}>
+                      <Text style={[styles.reorderText, i === 0 && styles.disabledReorder]}>↑</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => moveQuestionDown(i)} disabled={i === questions.length - 1}>
+                      <Text style={[styles.reorderText, i === questions.length - 1 && styles.disabledReorder]}>↓</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <TouchableOpacity style={styles.deleteThumbBtn} onPress={() => deleteQuestion(i)}>
+                    <Text style={styles.deleteThumbText}>×</Text>
+                  </TouchableOpacity>
                 </TouchableOpacity>
-              </TouchableOpacity>
-            ))}
+              );
+            })}
           </ScrollView>
         </View>
 
-        {/* Center: Question Editor – NO ScrollView */}
+        {/* Center: Question Editor */}
         <View style={styles.centerEditor}>
           <Text style={styles.editorLabel}>Question {selectedQuestionIndex + 1}</Text>
           <TextInput
@@ -329,7 +296,6 @@ export default function CreateGameMenu({ navigation, route }) {
             multiline
           />
 
-          {/* Question Image Upload */}
           <TouchableOpacity style={styles.imageUpload} onPress={() => questionInputRef.current?.click()}>
             {currentQuestion.imageUrl ? (
               <Image source={{ uri: currentQuestion.imageUrl }} style={styles.questionImage} />
@@ -337,13 +303,10 @@ export default function CreateGameMenu({ navigation, route }) {
               <Text style={styles.imageUploadText}>+ Add Image</Text>
             )}
             <View style={styles.imageOverlay}>
-              <Text style={styles.imageOverlayText}>
-                {currentQuestion.imageUrl ? 'Change Image' : 'Upload'}
-              </Text>
+              <Text style={styles.imageOverlayText}>{currentQuestion.imageUrl ? 'Change Image' : 'Upload'}</Text>
             </View>
           </TouchableOpacity>
 
-          {/* Answer Choices */}
           {currentQuestion.type === 'multipleChoice' ? (
             currentQuestion.answers.map((ans, i) => (
               <View key={i} style={styles.answerRow}>
@@ -358,10 +321,7 @@ export default function CreateGameMenu({ navigation, route }) {
                   placeholder={`Answer ${i + 1}`}
                 />
                 <TouchableOpacity
-                  style={[
-                    styles.correctToggle,
-                    currentQuestion.correctAnswers[i] && styles.correctToggleActive,
-                  ]}
+                  style={[styles.correctToggle, currentQuestion.correctAnswers[i] && styles.correctToggleActive]}
                   onPress={() => {
                     const newCorrect = [...currentQuestion.correctAnswers];
                     newCorrect[i] = !newCorrect[i];
@@ -377,10 +337,7 @@ export default function CreateGameMenu({ navigation, route }) {
               {['True', 'False'].map((label, i) => (
                 <TouchableOpacity
                   key={i}
-                  style={[
-                    styles.tfBtn,
-                    currentQuestion.correctAnswers[i] && styles.tfBtnCorrect,
-                  ]}
+                  style={[styles.tfBtn, currentQuestion.correctAnswers[i] && styles.tfBtnCorrect]}
                   onPress={() => updateCurrentQuestion({ correctAnswers: i === 0 ? [true, false] : [false, true] })}
                 >
                   <Text style={styles.tfText}>{label}</Text>
@@ -389,7 +346,6 @@ export default function CreateGameMenu({ navigation, route }) {
             </View>
           )}
 
-          {/* Only Time Limit (no Points) */}
           <View style={styles.timeSetting}>
             <Text style={styles.settingLabel}>Time Limit</Text>
             <TextInput
@@ -407,11 +363,11 @@ export default function CreateGameMenu({ navigation, route }) {
           <View style={styles.summary}>
             <Text style={styles.summaryTitle}>Game Summary</Text>
             <Text style={styles.summaryText}>{questions.length} Question(s)</Text>
-            <Text style={styles.summaryText}>
-              Tags: {tags || 'None'}
-            </Text>
+            <Text style={styles.summaryText}>Tags: {tags || 'None'}</Text>
+            {questions.some(q => !q.correctAnswers?.some(v => v === true)) && (
+              <Text style={styles.warningText}>Some questions have no correct answer marked.</Text>
+            )}
           </View>
-
           <View style={styles.actionButtons}>
             <TouchableOpacity style={styles.saveExitBtn} onPress={() => saveGame(false)}>
               <Text style={styles.actionBtnText}>Save & Exit</Text>
@@ -442,34 +398,22 @@ const styles = StyleSheet.create({
   gameTitleInput: { fontSize: 36, fontWeight: 'bold', color: '#fff', backgroundColor: 'transparent', borderBottomWidth: 2, borderBottomColor: '#00c781', paddingBottom: 10, marginBottom: 20 },
   tagsInput: { fontSize: 16, color: '#aaa', backgroundColor: '#222', padding: 12, borderRadius: 8 },
   mainLayout: { flex: 1, flexDirection: 'row' },
-  leftSidebar: { 
-    width: 300, 
-    backgroundColor: '#0d0d0d', 
-    padding: 20, 
-    borderRightWidth: 1, 
-    borderRightColor: '#222' 
-  },
+  leftSidebar: { width: 300, backgroundColor: '#0d0d0d', padding: 20, borderRightWidth: 1, borderRightColor: '#222' },
   addQuestionBtn: { backgroundColor: '#00c781', padding: 16, borderRadius: 12, alignItems: 'center', marginBottom: 20 },
   addQuestionText: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
-  questionList: { 
-    flex: 1,
-    maxHeight: '100%',  // ensures internal scrolling
-  },
+  questionList: { flex: 1, maxHeight: '100%' },
   questionThumb: { backgroundColor: '#1e1e1e', borderRadius: 12, padding: 12, marginBottom: 12, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: 'transparent', position: 'relative' },
   questionThumbSelected: { borderColor: '#00c781', backgroundColor: '#003322' },
+  questionThumbNoAnswer: { borderColor: '#e74c3c' },
   thumbNumber: { color: '#00c781', fontWeight: 'bold', marginRight: 12, fontSize: 16 },
-  thumbText: { color: '#fff', flex: 1 },
+  thumbText: { color: '#fff' },
+  noAnswerWarning: { color: '#e74c3c', fontSize: 11, marginTop: 2 },
   deleteThumbBtn: { position: 'absolute', right: 8, top: 8, width: 24, height: 24, backgroundColor: '#c0392b', borderRadius: 12, justifyContent: 'center', alignItems: 'center' },
   deleteThumbText: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
   reorderButtons: { flexDirection: 'column', marginLeft: 8 },
   reorderText: { color: '#00c781', fontSize: 18, fontWeight: 'bold' },
   disabledReorder: { opacity: 0.3 },
-  centerEditor: { 
-    flex: 1, 
-    padding: 40, 
-    backgroundColor: '#111',
-    // No ScrollView – content fits or overflows naturally
-  },
+  centerEditor: { flex: 1, padding: 40, backgroundColor: '#111' },
   editorLabel: { fontSize: 18, color: '#aaa', marginBottom: 20 },
   questionInput: { fontSize: 28, color: '#fff', backgroundColor: '#1e1e1e', padding: 20, borderRadius: 16, minHeight: 120, marginBottom: 20 },
   imageUpload: { height: 200, backgroundColor: '#1e1e1e', borderRadius: 16, justifyContent: 'center', alignItems: 'center', marginBottom: 20, position: 'relative' },
@@ -479,35 +423,14 @@ const styles = StyleSheet.create({
   imageOverlayText: { color: '#fff', fontWeight: 'bold' },
   answerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
   answerInput: { flex: 1, backgroundColor: '#1e1e1e', color: '#fff', padding: 16, borderRadius: 12, fontSize: 18 },
-  correctToggle: { 
-    width: 50, 
-    height: 50, 
-    backgroundColor: '#333', 
-    borderRadius: 25, 
-    marginLeft: 12, 
-    justifyContent: 'center', 
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: 'transparent',
-  },
-  correctToggleActive: { 
-    backgroundColor: '#00c781',
-    borderColor: '#fff',    // white border for visibility
-  },
-  toggleIcon: { 
-    color: '#fff', 
-    fontSize: 28,           // bigger checkmark
-    fontWeight: 'bold',
-  },
+  correctToggle: { width: 50, height: 50, backgroundColor: '#333', borderRadius: 25, marginLeft: 12, justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: 'transparent' },
+  correctToggleActive: { backgroundColor: '#00c781', borderColor: '#fff' },
+  toggleIcon: { color: '#fff', fontSize: 28, fontWeight: 'bold' },
   trueFalseRow: { flexDirection: 'row', gap: 20, marginBottom: 20 },
   tfBtn: { flex: 1, backgroundColor: '#1e1e1e', padding: 20, borderRadius: 16, alignItems: 'center' },
   tfBtnCorrect: { backgroundColor: '#00c781' },
   tfText: { color: '#fff', fontSize: 20, fontWeight: 'bold' },
-  timeSetting: { 
-    flexDirection: 'row', 
-    alignItems: 'center', 
-    marginTop: 30 
-  },
+  timeSetting: { flexDirection: 'row', alignItems: 'center', marginTop: 30 },
   settingLabel: { color: '#aaa', marginRight: 12 },
   timeInput: { backgroundColor: '#1e1e1e', color: '#fff', width: 60, padding: 10, borderRadius: 8, textAlign: 'center' },
   seconds: { color: '#aaa', marginLeft: 8 },
@@ -515,6 +438,7 @@ const styles = StyleSheet.create({
   summary: { flex: 1 },
   summaryTitle: { fontSize: 20, fontWeight: 'bold', color: '#fff', marginBottom: 20 },
   summaryText: { color: '#ccc', fontSize: 16, marginBottom: 12 },
+  warningText: { color: '#e74c3c', fontSize: 14, marginBottom: 12 },
   actionButtons: { gap: 12 },
   saveExitBtn: { backgroundColor: '#333', padding: 16, borderRadius: 12, alignItems: 'center' },
   saveHostBtn: { backgroundColor: '#00c781', padding: 16, borderRadius: 12, alignItems: 'center' },
