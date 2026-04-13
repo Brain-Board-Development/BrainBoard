@@ -88,18 +88,17 @@ export default function JoinGameScreen({ navigation }) {
 
   return (
     <SafeAreaView style={styles.container}>
-      <Text style={styles.title}>🎲 Brain Board</Text>
+      <Text style={styles.title}>Brain Board</Text>
       <Text style={styles.subtitle}>Enter your 6-digit game PIN</Text>
 
       <TextInput
         style={styles.input}
-        placeholder="_ _ _ _ _ _"
+        placeholder="000000"
         placeholderTextColor="#333"
         value={gameCode}
         onChangeText={t => setGameCode(t.replace(/[^0-9]/g, ""))}
         keyboardType="numeric"
         maxLength={6}
-        textAlign="center"
         editable={!isJoining}
       />
 
@@ -141,8 +140,10 @@ const styles = StyleSheet.create({
   input: {
     width: "100%", maxWidth: 340, height: 72,
     backgroundColor: "#1e1e1e", borderRadius: 16, color: "#fff",
-    fontSize: 32, letterSpacing: 14, marginBottom: 20,
+    fontSize: 32, marginBottom: 20,
     borderWidth: 2, borderColor: "#333",
+    textAlign: "center",
+    paddingHorizontal: 20,
   },
   btn: {
     width: "100%", maxWidth: 340, height: 58, backgroundColor: "#00c781",

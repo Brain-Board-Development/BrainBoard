@@ -17,6 +17,7 @@ import {
 } from "react-native";
 import { db } from "../firebaseConfig";
 import { doc, onSnapshot, updateDoc, getDoc } from "firebase/firestore";
+import { auth } from "../firebaseConfig";
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get("window");
 const BOARD_COLS = 10;
@@ -156,11 +157,27 @@ export default function BoardGameScreen({ route, navigation }) {
   const boardScrollRef = useRef(null);
   const diceAnim = useRef(new Animated.Value(0)).current;
 
-  // ── Load game ──────────────────────────────────────────────────────────────
+  // ── Load questions ─────────────────────────────────────────────────────────
+  // Primary source: session.questions (embedded by host when game starts)
+  // Fallback: games/{gameId} collection
+  // This effect runs whenever session changes so questions load as soon as the
+  // session doc is received, even if gameId route param is missing.
   useEffect(() => {
-    if (!gameId) return;
-    getDoc(doc(db, "games", gameId)).then((s) => { if (s.exists()) setGame(s.data()); });
-  }, [gameId]);
+    if (game) return; // already loaded
+
+    // If session already has questions embedded (set by Lobby on start), use them
+    if (session?.questions?.length) {
+      setGame({ questions: session.questions });
+      return;
+    }
+
+    // Fallback: load from games collection using gameId from route params or session
+    const gid = gameId || session?.gameId;
+    if (!gid) return;
+    getDoc(doc(db, "games", gid)).then((s) => {
+      if (s.exists()) setGame(s.data());
+    }).catch(console.error);
+  }, [session, gameId, game]);
 
   // ── Session listener ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -365,23 +382,28 @@ export default function BoardGameScreen({ route, navigation }) {
   const isStunned = myState?.stunned === true;
   const ROLL_AT  = 3;
 
+  // Route guests to Home, authenticated users to Dashboard
+  const exitGame = () => {
+    const dest = auth.currentUser ? "Dashboard" : "Home";
+    navigation.reset({ index: 0, routes: [{ name: dest }] });
+  };
+
   // ── HOST VIEW ──────────────────────────────────────────────────────────────
   if (isHost) {
     const sorted = [...players].sort((a, b) => (b.position || 0) - (a.position || 0));
     return (
       <SafeAreaView style={S.container}>
         <View style={S.hostHeader}>
-          <Text style={S.hostTitle}>🎲 Brain Board — Host</Text>
+          <Text style={S.hostTitle}>Brain Board — Host</Text>
           <TouchableOpacity style={S.endBtn} onPress={async () => {
             await updateDoc(doc(db, "gameSessions", sessionId), { status: "ended" }).catch(console.error);
-            navigation.reset({ index: 0, routes: [{ name: "Dashboard" }] });
+            exitGame();
           }}>
             <Text style={S.endBtnText}>End Game</Text>
           </TouchableOpacity>
         </View>
 
         <View style={S.hostBody}>
-          {/* FIX #7: Bigger board */}
           <ScrollView ref={boardScrollRef} style={S.hostBoardArea} contentContainerStyle={{ padding: 12 }}>
             <SnakeBoard
               board={board} players={players}
@@ -390,29 +412,24 @@ export default function BoardGameScreen({ route, navigation }) {
             />
           </ScrollView>
 
-          {/* FIX #7: Bigger leaderboard, top 10 */}
           <View style={S.hostSidebar}>
-            <Text style={S.lbHeader}>🏆 Leaderboard</Text>
+            <Text style={S.lbHeader}>Leaderboard</Text>
             {sorted.slice(0, 10).map((p, i) => (
               <View key={p.name} style={S.lbRow}>
-                <Text style={S.lbRank}>{["🥇","🥈","🥉"][i] || `#${i+1}`}</Text>
+                <Text style={S.lbRank}>#{i+1}</Text>
                 <View style={[S.lbDot, { backgroundColor: p.color || "#888" }]} />
                 <Text style={S.lbName} numberOfLines={1}>{p.name}</Text>
                 <Text style={S.lbPos}>{p.position || 0}/{boardEnd}</Text>
-                {p.stunned && <Text style={{ fontSize: 14 }}>😵</Text>}
+                {p.stunned && <Text style={[S.lbPos, { color: "#e74c3c" }]}>stunned</Text>}
               </View>
             ))}
           </View>
         </View>
 
-        {/* FIX #3: Game over with working back button */}
         {session?.status === "ended" && !gameOverDismissed && (
           <GameOverModal
             session={session} myPos={-1} boardEnd={boardEnd}
-            onExit={() => {
-              setGameOverDismissed(true);
-              navigation.reset({ index: 0, routes: [{ name: "Dashboard" }] });
-            }}
+            onExit={() => { setGameOverDismissed(true); exitGame(); }}
           />
         )}
       </SafeAreaView>
@@ -425,15 +442,15 @@ export default function BoardGameScreen({ route, navigation }) {
   return (
     <SafeAreaView style={S.container}>
 
-      {/* FIX #11: Much bigger HUD */}
+      {/* HUD */}
       <View style={S.hud}>
         <View style={S.hudItem}>
           <Text style={S.hudLabel}>LUCK</Text>
-          <Text style={S.hudValue}>🍀 {luck}%</Text>
+          <Text style={S.hudValue}>{luck}%</Text>
         </View>
         <View style={S.hudItem}>
           <Text style={S.hudLabel}>STREAK</Text>
-          <Text style={S.hudValue}>🔥 {correctStreak}/{ROLL_AT}</Text>
+          <Text style={S.hudValue}>{correctStreak}/{ROLL_AT}</Text>
         </View>
         <View style={S.hudItem}>
           <Text style={S.hudLabel}>SPACE</Text>
@@ -444,19 +461,18 @@ export default function BoardGameScreen({ route, navigation }) {
           <Text style={[S.hudValueSm, { color: playerColor }]} numberOfLines={1}>{playerName}</Text>
         </View>
 
-        {/* FIX #6: Map toggle */}
+        {/* Map toggle */}
         <TouchableOpacity
           style={[S.mapToggle, showMap && S.mapToggleActive]}
           onPress={() => setViewMode((v) => v === "map" ? "questions" : "map")}
         >
-          <Text style={S.mapToggleIcon}>🗺️</Text>
+          <Text style={S.mapToggleText}>Map</Text>
         </TouchableOpacity>
       </View>
 
       {/* Content area: map OR questions */}
       <View style={S.mainArea}>
         {showMap ? (
-          // MAP VIEW
           <ScrollView ref={boardScrollRef} contentContainerStyle={{ padding: 10 }}>
             <SnakeBoard
               board={board} players={players}
@@ -465,16 +481,15 @@ export default function BoardGameScreen({ route, navigation }) {
             />
           </ScrollView>
         ) : (
-          // QUESTIONS VIEW — FIX #6: default for players
           <ScrollView contentContainerStyle={S.questionsArea}>
             {isStunned ? (
               <View style={S.stunnedCard}>
-                <Text style={S.stunnedTitle}>😵 Stunned!</Text>
+                <Text style={S.stunnedTitle}>Stunned</Text>
                 <Text style={S.stunnedSub}>Answer {ROLL_AT} correct in a row to recover</Text>
               </View>
             ) : currentQuestion ? (
               <View style={S.questionCard}>
-                <Text style={S.progressBar}>{correctStreak}/{ROLL_AT} correct • {ROLL_AT - correctStreak} more to earn a roll</Text>
+                <Text style={S.progressBar}>{correctStreak}/{ROLL_AT} correct — {ROLL_AT - correctStreak} more to earn a roll</Text>
                 <Text style={S.questionText}>{currentQuestion.question}</Text>
                 <View style={S.answersGrid}>
                   {(currentQuestion.type === "multipleChoice"
@@ -502,7 +517,7 @@ export default function BoardGameScreen({ route, navigation }) {
                 </View>
                 {answerFeedback && (
                   <Text style={[S.feedback, { color: answerFeedback === "correct" ? "#00c781" : "#e74c3c" }]}>
-                    {answerFeedback === "correct" ? "✅ Correct!" : "❌ Wrong!"}
+                    {answerFeedback === "correct" ? "Correct!" : "Wrong!"}
                   </Text>
                 )}
               </View>
@@ -519,14 +534,14 @@ export default function BoardGameScreen({ route, navigation }) {
       {/* Rolling phase panel */}
       {phase === "rolling" && (
         <View style={S.dicePanel}>
-          <Text style={S.dicePanelTitle}>🎉 Roll the Dice!</Text>
+          <Text style={S.dicePanelTitle}>Roll the Dice!</Text>
           <Animated.Text style={[S.diceFace, { transform: [{ translateX: diceAnim }] }]}>
-            {diceValue ? getDiceFace(diceValue) : "🎲"}
+            {diceValue ? getDiceFace(diceValue) : "-"}
           </Animated.Text>
           {diceValue
-            ? <Text style={S.diceResult}>Rolled a {diceValue}! Moving…</Text>
+            ? <Text style={S.diceResult}>Rolled a {diceValue} — moving…</Text>
             : <TouchableOpacity style={S.rollBtn} onPress={handleRoll} disabled={diceRolling}>
-                <Text style={S.rollBtnText}>{diceRolling ? "Rolling…" : "🎲 Roll!"}</Text>
+                <Text style={S.rollBtnText}>{diceRolling ? "Rolling…" : "Roll!"}</Text>
               </TouchableOpacity>
           }
         </View>
@@ -545,33 +560,29 @@ export default function BoardGameScreen({ route, navigation }) {
         <View style={S.overlay}>
           <View style={S.eventCard}>
             {spaceEvent?.type === "lava" && (<>
-              <Text style={S.eventEmoji}>🌋</Text>
-              <Text style={S.eventTitle}>Lava!</Text>
-              <Text style={S.eventDesc}>You'll be pushed back…</Text>
+              <Text style={[S.eventTitle, { color: "#e74c3c" }]}>Lava Space</Text>
+              <Text style={S.eventDesc}>You'll be pushed back a few spaces.</Text>
               <TouchableOpacity style={[S.eventBtn, { backgroundColor: "#e74c3c" }]} onPress={() => resolveEvent()}>
                 <Text style={S.eventBtnText}>OK</Text>
               </TouchableOpacity>
             </>)}
             {spaceEvent?.type === "cannon" && (<>
-              <Text style={S.eventEmoji}>💨</Text>
-              <Text style={S.eventTitle}>Cannon!</Text>
-              <Text style={S.eventDesc}>Launching you forward!</Text>
+              <Text style={[S.eventTitle, { color: "#3498db" }]}>Cannon Space</Text>
+              <Text style={S.eventDesc}>You're being launched forward!</Text>
               <TouchableOpacity style={[S.eventBtn, { backgroundColor: "#3498db" }]} onPress={() => resolveEvent()}>
-                <Text style={S.eventBtnText}>Launch! 🚀</Text>
+                <Text style={S.eventBtnText}>Launch!</Text>
               </TouchableOpacity>
             </>)}
             {spaceEvent?.type === "mystery" && (<>
-              <Text style={S.eventEmoji}>❓</Text>
-              <Text style={S.eventTitle}>Mystery Box!</Text>
+              <Text style={[S.eventTitle, { color: "#9b59b6" }]}>Mystery Box</Text>
               <Text style={S.eventDesc}>+2 bonus spaces!</Text>
               <TouchableOpacity style={[S.eventBtn, { backgroundColor: "#9b59b6" }]} onPress={() => resolveEvent()}>
-                <Text style={S.eventBtnText}>Reveal!</Text>
+                <Text style={S.eventBtnText}>Collect</Text>
               </TouchableOpacity>
             </>)}
             {spaceEvent?.type === "trap" && spaceEvent.question && (<>
-              <Text style={S.eventEmoji}>⚠️</Text>
-              <Text style={S.eventTitle}>Trap! Answer Fast!</Text>
-              <Text style={[S.trapTimer, trapTimer <= 3 && { color: "#e74c3c" }]}>⏱ {trapTimer}s</Text>
+              <Text style={[S.eventTitle, { color: "#f39c12" }]}>Trap — Answer Fast!</Text>
+              <Text style={[S.trapTimer, trapTimer <= 3 && { color: "#e74c3c" }]}>{trapTimer}s</Text>
               <Text style={S.eventDesc}>{spaceEvent.question.question}</Text>
               <View style={S.answersGrid}>
                 {(spaceEvent.question.type === "multipleChoice"
@@ -597,22 +608,18 @@ export default function BoardGameScreen({ route, navigation }) {
         </View>
       </Modal>
 
-      {/* FIX #3: Game over */}
+      {/* Game over */}
       {session?.status === "ended" && !gameOverDismissed && (
         <GameOverModal
           session={session} myPos={myPos} boardEnd={boardEnd}
-          onExit={() => {
-            setGameOverDismissed(true);
-            navigation.reset({ index: 0, routes: [{ name: "Dashboard" }] });
-          }}
+          onExit={() => { setGameOverDismissed(true); exitGame(); }}
         />
       )}
 
-      {/* FIX #12: Kicked in-game */}
+      {/* Kicked in-game */}
       <Modal visible={showKicked} transparent animationType="fade">
         <View style={S.overlay}>
           <View style={S.eventCard}>
-            <Text style={{ fontSize: 56, marginBottom: 10 }}>🚫</Text>
             <Text style={S.eventTitle}>You've Been Kicked</Text>
             <Text style={S.eventDesc}>The host has removed you from this game.</Text>
             <TouchableOpacity
@@ -639,11 +646,10 @@ function GameOverModal({ session, myPos, boardEnd, onExit }) {
     <Modal visible transparent animationType="fade">
       <View style={S.overlay}>
         <View style={S.eventCard}>
-          <Text style={{ fontSize: 64 }}>🏆</Text>
-          <Text style={S.eventTitle}>Game Over!</Text>
+          <Text style={S.eventTitle}>Game Over</Text>
           {winner && (
             <Text style={[S.eventDesc, { fontSize: 18 }]}>
-              🥇 <Text style={{ color: winner.color, fontWeight: "bold" }}>{winner.name}</Text> wins at space {winner.position}!
+              Winner: <Text style={{ color: winner.color, fontWeight: "bold" }}>{winner.name}</Text> — Space {winner.position}
             </Text>
           )}
           {myPos >= 0 && (
@@ -652,19 +658,18 @@ function GameOverModal({ session, myPos, boardEnd, onExit }) {
           <View style={{ width: "100%", marginTop: 12, marginBottom: 4 }}>
             {sorted.slice(0, 10).map((p, i) => (
               <View key={p.name} style={S.lbRow}>
-                <Text style={S.lbRank}>{["🥇","🥈","🥉"][i] || `#${i+1}`}</Text>
+                <Text style={S.lbRank}>#{i+1}</Text>
                 <View style={[S.lbDot, { backgroundColor: p.color || "#888" }]} />
                 <Text style={S.lbName}>{p.name}</Text>
                 <Text style={S.lbPos}>{p.position || 0}/{boardEnd}</Text>
               </View>
             ))}
           </View>
-          {/* FIX #3: This now actually works */}
           <TouchableOpacity
             style={[S.eventBtn, { backgroundColor: "#00c781", marginTop: 16 }]}
             onPress={onExit}
           >
-            <Text style={S.eventBtnText}>Back to Dashboard</Text>
+            <Text style={S.eventBtnText}>Back to Menu</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -694,7 +699,7 @@ const S = StyleSheet.create({
     borderWidth: 1, borderColor: "#333", marginLeft: 4,
   },
   mapToggleActive: { backgroundColor: "#003322", borderColor: "#00c781" },
-  mapToggleIcon: { fontSize: 22 },
+  mapToggleText: { color: "#aaa", fontSize: 12, fontWeight: "bold" },
 
   mainArea: { flex: 1 },
 

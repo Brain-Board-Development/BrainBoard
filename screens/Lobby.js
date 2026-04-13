@@ -1,6 +1,10 @@
 /**
  * Lobby.js — HOST-ONLY Lobby Screen
-
+ *
+ * FIX #5:  Lock button actually writes isLobbyLocked to Firestore (JoinGameScreen reads it)
+ * FIX #8:  Settings modal before start (board size, host plays, random names, timers)
+ * FIX #9:  Default board size from formula f(x) = 9.14*(x-1)^0.714 + 25, max 150
+ * FIX #12: Kick players — hover/press shows kick confirm, adds to kickedPlayers[]
  */
 
 import React, { useState, useEffect, useRef } from "react";
@@ -10,7 +14,7 @@ import {
   ScrollView, TextInput, Switch, Animated, Dimensions,
 } from "react-native";
 import { db } from "../firebaseConfig";
-import { doc, onSnapshot, updateDoc, arrayUnion } from "firebase/firestore";
+import { doc, onSnapshot, updateDoc, arrayUnion, getDoc } from "firebase/firestore";
 
 const BOARD_COLS = 10;
 const { width: SCREEN_W } = Dimensions.get("window");
@@ -273,17 +277,24 @@ export default function Lobby({ route, navigation }) {
     } catch (err) { Alert.alert("Error", "Failed to update lock."); }
   };
 
-  // FIX #12: Kick player
+  // FIX #1: Read fresh data from Firestore before writing to avoid race conditions
   const confirmKick = async (player) => {
     setKickTarget(null);
     try {
-      // Remove from players array, add to kickedPlayers list
-      const updatedPlayers = players.filter((p) => p.uid !== player.uid);
+      const sessionSnap = await getDoc(doc(db, "gameSessions", sessionId));
+      if (!sessionSnap.exists()) return;
+      const currentPlayers = sessionSnap.data()?.players || [];
+      // Filter by both uid and name to handle any uid mismatch
+      const updatedPlayers = currentPlayers.filter(
+        (p) => p.uid !== player.uid && p.name !== player.name
+      );
       await updateDoc(doc(db, "gameSessions", sessionId), {
         players: updatedPlayers,
         kickedPlayers: arrayUnion(player.name),
       });
-    } catch (err) { Alert.alert("Error", "Failed to kick player."); }
+    } catch (err) {
+      Alert.alert("Error", "Failed to kick player.");
+    }
   };
 
   // FIX #8: Start button shows settings first
@@ -299,11 +310,24 @@ export default function Lobby({ route, navigation }) {
     setShowSettings(false);
     try {
       const boardData = buildBoardData(settings.boardSize);
+
+      // Load questions from the game doc and embed them in the session
+      // This prevents players from needing a separate getDoc call with a potentially missing gameId
+      let questions = [];
+      const gid = session?.gameId || gameId;
+      if (gid) {
+        const gameSnap = await getDoc(doc(db, "games", gid));
+        if (gameSnap.exists()) {
+          questions = gameSnap.data()?.questions || [];
+        }
+      }
+
       await updateDoc(doc(db, "gameSessions", sessionId), {
         status: "playing",
         settings: { ...session?.settings, ...settings, boardSize: settings.boardSize },
         board: boardData,
         currentQuestionIndex: 0,
+        questions, // embed questions directly in the session
       });
       navigation.replace("BoardGameScreen", {
         sessionId,
