@@ -43,11 +43,11 @@ const BASE_TILE  = Math.min(72, Math.max(36, Math.floor((SCREEN_W - 32) / BOARD_
 const HOST_TILE  = Math.min(80, Math.max(44, Math.floor((SCREEN_W * 0.65 - 32) / BOARD_COLS)));
 
 const SPACE_CFG = {
-  normal:  { bg: "#1a2a1a", border: "#2ecc71" },
-  lava:    { bg: "#2a0a00", border: "#e74c3c" },
-  cannon:  { bg: "#001a2a", border: "#3498db" },
-  trap:    { bg: "#2a1a00", border: "#f39c12" },
-  mystery: { bg: "#1a0a2a", border: "#9b59b6" },
+  normal:  { bg: "#1a3d1a", border: "#27ae60", label: ""  },
+  lava:    { bg: "#3d1200", border: "#e74c3c", label: "L" },
+  cannon:  { bg: "#00213d", border: "#2980b9", label: "C" },
+  trap:    { bg: "#3d2d00", border: "#d68910", label: "T" },
+  mystery: { bg: "#2a0a3d", border: "#8e44ad", label: "?" },
 };
 
 function buildSnakeRows(boardEnd) {
@@ -64,8 +64,9 @@ function buildSnakeRows(boardEnd) {
 function SnakeBoard({ board, players, myPosition, highlightPos, boardEnd, tileSize = BASE_TILE }) {
   const rows = buildSnakeRows(boardEnd);
   const getPlayersAt = (idx) => players.filter((p) => (p.position || 0) === idx);
+  const getSpaceType = (idx) => (idx === 0 || idx === boardEnd) ? "normal" : (board[idx]?.type || "normal");
   const getStyle = (idx) => {
-    const cfg  = SPACE_CFG[board[idx]?.type] || SPACE_CFG.normal;
+    const cfg  = SPACE_CFG[getSpaceType(idx)] || SPACE_CFG.normal;
     const isMe = idx === myPosition;
     const isHL = idx === highlightPos;
     return {
@@ -80,13 +81,23 @@ function SnakeBoard({ board, players, myPosition, highlightPos, boardEnd, tileSi
       {rows.map((row, ri) => (
         <View key={ri} style={bS.row}>
           {row.map((idx) => {
-            const here = getPlayersAt(idx);
+            const here      = getPlayersAt(idx);
+            const spaceType = getSpaceType(idx);
+            const cfg       = SPACE_CFG[spaceType] || SPACE_CFG.normal;
             return (
               <View key={idx} style={[bS.tile, { width: tileSize, height: tileSize }, getStyle(idx)]}>
                 {idx === boardEnd ? (
                   <Text style={{ fontSize: tileSize * 0.48 }}>🐍</Text>
                 ) : idx === 0 ? (
                   <Text style={{ fontSize: tileSize * 0.4 }}>🏁</Text>
+                ) : spaceType !== "normal" ? (
+                  /* Non-normal tiles: show large colored label */
+                  <Text style={[bS.tileLabel, {
+                    fontSize: tileSize * 0.36,
+                    color: cfg.border,
+                  }]}>
+                    {cfg.label}
+                  </Text>
                 ) : (
                   <Text style={[bS.tileNum, { fontSize: tileSize * 0.28 }]}>{idx}</Text>
                 )}
@@ -107,12 +118,13 @@ function SnakeBoard({ board, players, myPosition, highlightPos, boardEnd, tileSi
   );
 }
 const bS = StyleSheet.create({
-  board:    { paddingBottom: 8 },
-  row:      { flexDirection: "row", justifyContent: "center", marginBottom: 4 },
-  tile:     { borderRadius: 9, margin: 2, alignItems: "center", justifyContent: "center", position: "relative" },
-  tileNum:  { color: "#556", fontWeight: "bold" },
-  tokenRow: { position: "absolute", bottom: 3, flexDirection: "row", flexWrap: "wrap", justifyContent: "center" },
-  token:    { margin: 1, borderWidth: 1, borderColor: "rgba(255,255,255,0.3)" },
+  board:     { paddingBottom: 8 },
+  row:       { flexDirection: "row", justifyContent: "center", marginBottom: 4 },
+  tile:      { borderRadius: 9, margin: 2, alignItems: "center", justifyContent: "center", position: "relative" },
+  tileNum:   { color: "#4a6a4a", fontWeight: "bold" },
+  tileLabel: { fontWeight: "bold" },
+  tokenRow:  { position: "absolute", bottom: 3, flexDirection: "row", flexWrap: "wrap", justifyContent: "center" },
+  token:     { margin: 1, borderWidth: 1, borderColor: "rgba(255,255,255,0.3)" },
 });
 
 const DICE_EMOJI = ["⚀","⚁","⚂","⚃","⚄","⚅"];
@@ -562,13 +574,14 @@ export default function BoardGameScreen({ route, navigation }) {
         console.error("Leave error:", err);
       }
     }
-    const dest = auth.currentUser ? "Dashboard" : "Home";
-    navigation.reset({ index: 0, routes: [{ name: dest }] });
+    // Anonymous (guest) users go to Home/JoinGame, real accounts go to Dashboard
+    const isRealAccount = auth.currentUser && !auth.currentUser.isAnonymous;
+    navigation.reset({ index: 0, routes: [{ name: isRealAccount ? "Dashboard" : "Home" }] });
   };
 
   const exitGame = () => {
-    const dest = auth.currentUser ? "Dashboard" : "Home";
-    navigation.reset({ index: 0, routes: [{ name: dest }] });
+    const isRealAccount = auth.currentUser && !auth.currentUser.isAnonymous;
+    navigation.reset({ index: 0, routes: [{ name: isRealAccount ? "Dashboard" : "Home" }] });
   };
 
   // ── Loading ───────────────────────────────────────────────────────────────
@@ -682,6 +695,24 @@ export default function BoardGameScreen({ route, navigation }) {
           <ScrollView ref={boardScrollRef} contentContainerStyle={{ padding: 10 }}>
             <SnakeBoard board={board} players={players} myPosition={myPos}
               highlightPos={highlightPos} boardEnd={boardEnd} tileSize={BASE_TILE} />
+            {/* Tile legend */}
+            <View style={S.legend}>
+              {[
+                { type:"normal",  label:"Normal" },
+                { type:"mystery", label:"Mystery" },
+                { type:"lava",    label:"Lava" },
+                { type:"cannon",  label:"Cannon" },
+                { type:"trap",    label:"Trap" },
+              ].map(({ type, label }) => {
+                const cfg = SPACE_CFG[type];
+                return (
+                  <View key={type} style={S.legendItem}>
+                    <View style={[S.legendSwatch, { backgroundColor: cfg.bg, borderColor: cfg.border }]} />
+                    <Text style={[S.legendTxt, { color: cfg.border }]}>{label}</Text>
+                  </View>
+                );
+              })}
+            </View>
           </ScrollView>
         )}
 
@@ -960,6 +991,11 @@ const S = StyleSheet.create({
   fb:       { textAlign: "center", fontSize: 20, fontWeight: "bold" },
   waitBox:  { alignItems: "center", paddingVertical: 80, gap: 14 },
   waitTxt:  { color: "#555", fontSize: 16 },
+
+  legend:      { flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: 12, paddingVertical: 10, paddingHorizontal: 8 },
+  legendItem:  { flexDirection: "row", alignItems: "center", gap: 5 },
+  legendSwatch:{ width: 14, height: 14, borderRadius: 3, borderWidth: 1.5 },
+  legendTxt:   { fontSize: 11, fontWeight: "600" },
 
   // Dice
   diceBox:  { flex: 1, alignItems: "center", justifyContent: "center", gap: 20, backgroundColor: "#0d0d0d", padding: 24 },

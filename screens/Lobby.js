@@ -1,8 +1,8 @@
 /**
- * Lobby.js
+ * Lobby.js — Host lobby screen
  */
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
   View, Text, StyleSheet, TouchableOpacity, ActivityIndicator,
   SafeAreaView, Modal, ScrollView, Animated, Dimensions,
@@ -12,17 +12,29 @@ import { doc, onSnapshot, updateDoc, getDoc } from "firebase/firestore";
 
 const BOARD_COLS = 10;
 const { width: SCREEN_W } = Dimensions.get("window");
-const TILE_SIZE = Math.min(52, Math.floor((SCREEN_W - 64) / BOARD_COLS));
+const TILE_SIZE = Math.min(48, Math.floor((SCREEN_W - 64) / BOARD_COLS));
 
+// ── Tile colour config — must match BoardGameScreen exactly ──────────────────
+const SPACE_CFG = {
+  normal:  { bg: "#1a3d1a", border: "#27ae60", label: ""  },
+  lava:    { bg: "#3d1200", border: "#e74c3c", label: "L" },
+  cannon:  { bg: "#00213d", border: "#2980b9", label: "C" },
+  trap:    { bg: "#3d2d00", border: "#d68910", label: "T" },
+  mystery: { bg: "#2a0a3d", border: "#8e44ad", label: "?" },
+};
+
+// Same distribution as handleStartGame so the preview density matches the real board
+const SPACE_POOL = [
+  "normal","normal","normal","lava",
+  "normal","normal","normal","cannon",
+  "normal","normal","normal","trap",
+  "normal","normal","normal","mystery",
+  "normal","normal",
+];
+
+// ── Board helpers ─────────────────────────────────────────────────────────────
 const calcBoardSize = (n) =>
   Math.min(150, Math.round(9.14 * Math.pow(Math.max(1, n - 1), 0.714) + 25));
-
-const NICK_ADJ  = ["Swift","Brave","Clever","Bold","Quick","Bright","Sharp","Fierce","Calm","Wild","Sly","Wise","Daring","Lucky","Keen"];
-const NICK_NOUN = ["Fox","Wolf","Eagle","Bear","Lion","Tiger","Hawk","Shark","Raven","Dragon","Falcon","Puma","Cobra","Viper","Lynx"];
-const randomNick = () =>
-  NICK_ADJ[Math.floor(Math.random() * NICK_ADJ.length)] +
-  NICK_NOUN[Math.floor(Math.random() * NICK_NOUN.length)] +
-  Math.floor(Math.random() * 100);
 
 function buildSnakeRows(total) {
   const rows = [];
@@ -35,71 +47,132 @@ function buildSnakeRows(total) {
   return rows.reverse();
 }
 
+// ── Nick helpers ──────────────────────────────────────────────────────────────
+const NICK_ADJ  = ["Swift","Brave","Clever","Bold","Quick","Bright","Sharp","Fierce","Calm","Wild","Sly","Wise","Daring","Lucky","Keen"];
+const NICK_NOUN = ["Fox","Wolf","Eagle","Bear","Lion","Tiger","Hawk","Shark","Raven","Dragon","Falcon","Puma","Cobra","Viper","Lynx"];
+const randomNick = () =>
+  NICK_ADJ[Math.floor(Math.random() * NICK_ADJ.length)] +
+  NICK_NOUN[Math.floor(Math.random() * NICK_NOUN.length)] +
+  Math.floor(Math.random() * 100);
+
+// ── Board preview component ───────────────────────────────────────────────────
 function BoardPreview({ players, boardSize }) {
-  const rows = buildSnakeRows(boardSize);
   const sz   = Math.min(TILE_SIZE, Math.floor((SCREEN_W - 64) / BOARD_COLS));
-  const at   = (idx) => players.filter((p) => (p.position || 0) === idx);
+  const rows = buildSnakeRows(boardSize);
+
+  // Generate a sample board once per boardSize change so colours look realistic
+  const sampleBoard = useMemo(() => {
+    return Array.from({ length: boardSize + 1 }, (_, i) => {
+      if (i === 0 || i === boardSize) return { type: "normal" };
+      return { type: SPACE_POOL[Math.floor(Math.random() * SPACE_POOL.length)] };
+    });
+  }, [boardSize]);
+
+  const playersAt = (idx) => players.filter((p) => (p.position || 0) === idx);
+
   return (
     <View style={brd.wrapper}>
       <Text style={brd.title}>Board Preview — {boardSize} tiles</Text>
-      <ScrollView>
+      <Text style={brd.sub}>(Sample layout — actual board generated at game start)</Text>
+
+      <ScrollView nestedScrollEnabled>
         {rows.map((row, ri) => (
           <View key={ri} style={brd.row}>
-            {row.map((idx) => (
-              <View key={idx} style={[
-                brd.tile,
-                { width: sz, height: sz },
-                idx === boardSize && brd.end,
-                idx === 0 && brd.start,
-              ]}>
-                <Text style={brd.num}>{idx === boardSize ? "END" : idx === 0 ? "GO" : idx}</Text>
-                <View style={brd.dots}>
-                  {at(idx).slice(0, 4).map((p, i) => (
-                    <View key={i} style={[brd.dot, { backgroundColor: p.color || "#888" }]} />
-                  ))}
+            {row.map((idx) => {
+              const type     = sampleBoard[idx] ? sampleBoard[idx].type : "normal";
+              const cfg      = SPACE_CFG[type] || SPACE_CFG.normal;
+              const isEnd    = idx === boardSize;
+              const isStart  = idx === 0;
+              const here     = playersAt(idx);
+              return (
+                <View
+                  key={idx}
+                  style={[
+                    brd.tile,
+                    { width: sz, height: sz, backgroundColor: cfg.bg, borderColor: cfg.border },
+                    (isEnd || isStart) && brd.tileSpecial,
+                  ]}
+                >
+                  {isEnd ? (
+                    <Text style={[brd.tileLabel, { color: "#2980b9", fontSize: sz * 0.28 }]}>END</Text>
+                  ) : isStart ? (
+                    <Text style={[brd.tileLabel, { color: "#27ae60", fontSize: sz * 0.28 }]}>GO</Text>
+                  ) : type !== "normal" ? (
+                    <Text style={[brd.tileLabel, { color: cfg.border, fontSize: sz * 0.38 }]}>{cfg.label}</Text>
+                  ) : (
+                    <Text style={[brd.tileNum, { fontSize: sz * 0.26 }]}>{idx}</Text>
+                  )}
+                  {here.length > 0 && (
+                    <View style={brd.tokens}>
+                      {here.slice(0, 4).map((p, i) => (
+                        <View key={i} style={[brd.token, { backgroundColor: p.color || "#888" }]} />
+                      ))}
+                    </View>
+                  )}
                 </View>
-              </View>
-            ))}
+              );
+            })}
           </View>
         ))}
       </ScrollView>
+
+      {/* Legend */}
+      <View style={brd.legend}>
+        {Object.entries(SPACE_CFG).map(([type, cfg]) => (
+          <View key={type} style={brd.legendRow}>
+            <View style={[brd.legendSwatch, { backgroundColor: cfg.bg, borderColor: cfg.border }]} />
+            <Text style={[brd.legendTxt, { color: cfg.border }]}>
+              {type.charAt(0).toUpperCase() + type.slice(1)}
+            </Text>
+          </View>
+        ))}
+      </View>
     </View>
   );
 }
 
 const brd = StyleSheet.create({
-  wrapper: { backgroundColor: "#0d0d0d", borderRadius: 16, padding: 14, marginTop: 20, borderWidth: 1, borderColor: "#222" },
-  title:   { color: "#00c781", fontSize: 15, fontWeight: "bold", marginBottom: 10, textAlign: "center" },
-  row:     { flexDirection: "row", justifyContent: "center", marginBottom: 3 },
-  tile:    { borderRadius: 7, margin: 2, alignItems: "center", justifyContent: "center", backgroundColor: "#1a2a1a", borderWidth: 1, borderColor: "#2a3a2a" },
-  end:     { backgroundColor: "#001a3d", borderColor: "#3498db", borderWidth: 2 },
-  start:   { backgroundColor: "#003322", borderColor: "#00c781" },
-  num:     { color: "#555", fontSize: 10, fontWeight: "bold" },
-  dots:    { flexDirection: "row", flexWrap: "wrap", justifyContent: "center" },
-  dot:     { width: 7, height: 7, borderRadius: 4, margin: 1 },
+  wrapper:      { backgroundColor: "#0d0d0d", borderRadius: 16, padding: 14, marginTop: 20, borderWidth: 1, borderColor: "#222" },
+  title:        { color: "#00c781", fontSize: 15, fontWeight: "bold", marginBottom: 4, textAlign: "center" },
+  sub:          { color: "#444", fontSize: 11, textAlign: "center", marginBottom: 10 },
+  row:          { flexDirection: "row", justifyContent: "center", marginBottom: 3 },
+  tile:         { borderRadius: 7, margin: 2, alignItems: "center", justifyContent: "center", borderWidth: 1 },
+  tileSpecial:  { borderWidth: 2 },
+  tileNum:      { color: "#3a5a3a", fontWeight: "bold" },
+  tileLabel:    { fontWeight: "bold" },
+  tokens:       { position: "absolute", bottom: 2, flexDirection: "row", flexWrap: "wrap", justifyContent: "center" },
+  token:        { width: 7, height: 7, borderRadius: 4, margin: 1 },
+  legend:       { flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: 10, marginTop: 12, paddingTop: 10, borderTopWidth: 1, borderTopColor: "#222" },
+  legendRow:    { flexDirection: "row", alignItems: "center", gap: 5 },
+  legendSwatch: { width: 14, height: 14, borderRadius: 3, borderWidth: 1.5 },
+  legendTxt:    { fontSize: 11, fontWeight: "600" },
 });
 
+// ── Main Lobby component ──────────────────────────────────────────────────────
 export default function Lobby({ route, navigation }) {
   const { sessionId, pin, gameId, isHost } = route.params;
 
-  const [players,       setPlayers]       = useState([]);
-  const [session,       setSession]       = useState(null);
-  const [isLobbyLocked, setIsLobbyLocked] = useState(false);
-  const [loading,       setLoading]       = useState(true);
-  const [showLeave,     setShowLeave]     = useState(false);
-  const [kickTarget,    setKickTarget]    = useState(null);
-  const [starting,      setStarting]      = useState(false);
-  const [writeError,    setWriteError]    = useState(null);
+  const [players,       setPlayers]    = useState([]);
+  const [session,       setSession]    = useState(null);
+  const [lobbyLocked,   setLocked]     = useState(false);
+  const [loading,       setLoading]    = useState(true);
+  const [showLeave,     setShowLeave]  = useState(false);
+  const [kickTarget,    setKickTarget] = useState(null);
+  const [starting,      setStarting]   = useState(false);
+  const [writeError,    setWriteError] = useState(null);
 
-  // Updated synchronously inside onSnapshot — never stale
   const sessionRef = useRef(null);
+  const pinPulse   = useRef(new Animated.Value(1)).current;
 
-  const pinPulse = useRef(new Animated.Value(1)).current;
   useEffect(() => {
-    Animated.loop(Animated.sequence([
-      Animated.timing(pinPulse, { toValue: 1.03, duration: 1200, useNativeDriver: true }),
-      Animated.timing(pinPulse, { toValue: 1,    duration: 1200, useNativeDriver: true }),
-    ])).start();
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pinPulse, { toValue: 1.03, duration: 1200, useNativeDriver: false }),
+        Animated.timing(pinPulse, { toValue: 1.0,  duration: 1200, useNativeDriver: false }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
   }, []);
 
   useEffect(() => {
@@ -110,7 +183,7 @@ export default function Lobby({ route, navigation }) {
       sessionRef.current = data;
       setSession(data);
       setPlayers(data.players || []);
-      setIsLobbyLocked(data.isLobbyLocked || false);
+      setLocked(data.isLobbyLocked || false);
       setLoading(false);
       if (!isHost && data.status === "abandoned") {
         navigation.reset({ index: 0, routes: [{ name: "JoinGameScreen" }] });
@@ -120,7 +193,7 @@ export default function Lobby({ route, navigation }) {
 
   const toggleLock = async () => {
     try {
-      await updateDoc(doc(db, "gameSessions", sessionId), { isLobbyLocked: !isLobbyLocked });
+      await updateDoc(doc(db, "gameSessions", sessionId), { isLobbyLocked: !lobbyLocked });
     } catch (err) {
       setWriteError("Lock failed: " + err.message);
     }
@@ -132,25 +205,21 @@ export default function Lobby({ route, navigation }) {
     try {
       const sess = sessionRef.current;
       if (!sess) return;
-      const updatedPlayers = (sess.players || []).filter(p => p.name !== player.name);
-      const kickedList     = [...(sess.kickedPlayers || [])];
-      if (!kickedList.includes(player.name)) kickedList.push(player.name);
+      const updPlayers = (sess.players || []).filter((p) => p.name !== player.name);
+      const kicked     = [...(sess.kickedPlayers || [])];
+      if (!kicked.includes(player.name)) kicked.push(player.name);
       await updateDoc(doc(db, "gameSessions", sessionId), {
-        players:       updatedPlayers,
-        kickedPlayers: kickedList,
+        players:       updPlayers,
+        kickedPlayers: kicked,
       });
     } catch (err) {
-      console.error("Kick error:", err);
-      // Show error in UI instead of Alert (browsers block window.alert popups)
+      console.error("Kick:", err);
       setWriteError("Kick failed — " + err.message + ". Check Firestore rules.");
     }
   };
 
   const handleStartGame = async () => {
-    if (players.length === 0) {
-      setWriteError("Wait for at least one player to join.");
-      return;
-    }
+    if (players.length === 0) { setWriteError("Wait for at least one player to join."); return; }
     if (starting) return;
     setStarting(true);
     setWriteError(null);
@@ -159,20 +228,16 @@ export default function Lobby({ route, navigation }) {
       const sd = sessionRef.current;
       if (!sd) { setStarting(false); return; }
       const currentPlayers = sd.players || [];
+      const manualSize     = sd.settings ? sd.settings.boardSize : null;
+      const boardEnd       = (manualSize != null && manualSize > 0) ? manualSize : calcBoardSize(currentPlayers.length);
 
-      const manualSize = sd.settings?.boardSize;
-      const boardEnd   = (manualSize != null && manualSize > 0)
-        ? manualSize
-        : calcBoardSize(currentPlayers.length);
-
-      const spaceTypes = ["normal","normal","normal","normal","lava","cannon","trap","mystery"];
       const board = Array.from({ length: boardEnd + 1 }, (_, i) => ({
         index: i,
-        type: (i === 0 || i === boardEnd) ? "normal" : spaceTypes[Math.floor(Math.random() * spaceTypes.length)],
+        type:  (i === 0 || i === boardEnd) ? "normal" : SPACE_POOL[Math.floor(Math.random() * SPACE_POOL.length)],
       }));
 
       let finalPlayers = currentPlayers;
-      if (sd.settings?.nicknameGenerator) {
+      if (sd.settings && sd.settings.nicknameGenerator) {
         const used = new Set();
         finalPlayers = currentPlayers.map((p) => {
           let nick = randomNick();
@@ -187,15 +252,30 @@ export default function Lobby({ route, navigation }) {
       if (gid) {
         const gSnap = await getDoc(doc(db, "games", gid));
         if (gSnap.exists()) {
-          questions = gSnap.data()?.questions || [];
-          if (sd.settings?.randomizeQuestions) {
+          questions = (gSnap.data() || {}).questions || [];
+          if (sd.settings && sd.settings.randomizeQuestions) {
             questions = [...questions].sort(() => Math.random() - 0.5);
+          }
+          if (sd.settings && sd.settings.randomizeAnswers) {
+            questions = questions.map((q) => {
+              if (q.type !== "multipleChoice" || !q.answers || !q.answers.length) return q;
+              const n   = q.answers.length;
+              const idx = Array.from({ length: n }, (_, i) => i);
+              for (let i = n - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                const tmp = idx[i]; idx[i] = idx[j]; idx[j] = tmp;
+              }
+              return {
+                ...q,
+                answers:        idx.map((i) => q.answers[i]),
+                correctAnswers: idx.map((i) => q.correctAnswers[i]),
+              };
+            });
           }
         }
       }
 
-      const gameDurationSecs = (sd.settings?.gameDuration || 10) * 60;
-      const gameEndsAt       = Date.now() + gameDurationSecs * 1000;
+      const gameDurationSecs = ((sd.settings && sd.settings.gameDuration) || 10) * 60;
 
       await updateDoc(doc(db, "gameSessions", sessionId), {
         status:               "playing",
@@ -203,8 +283,8 @@ export default function Lobby({ route, navigation }) {
         players:              finalPlayers,
         questions,
         currentQuestionIndex: 0,
-        gameEndsAt,
-        settings:             { ...sd.settings, boardSize: boardEnd },
+        gameEndsAt:           Date.now() + gameDurationSecs * 1000,
+        settings:             { ...(sd.settings || {}), boardSize: boardEnd },
       });
 
       navigation.replace("BoardGameScreen", {
@@ -224,11 +304,7 @@ export default function Lobby({ route, navigation }) {
   const handleLeaveConfirm = async () => {
     setShowLeave(false);
     if (isHost) {
-      try {
-        await updateDoc(doc(db, "gameSessions", sessionId), { status: "abandoned" });
-      } catch (err) {
-        console.error("Abandon error:", err);
-      }
+      try { await updateDoc(doc(db, "gameSessions", sessionId), { status: "abandoned" }); } catch {}
       navigation.navigate("Dashboard");
     } else {
       navigation.navigate("JoinGameScreen");
@@ -242,27 +318,23 @@ export default function Lobby({ route, navigation }) {
     </SafeAreaView>
   );
 
-  const maxPlayers  = session?.settings?.maxPlayers || 30;
-  const manualSize  = session?.settings?.boardSize;
-  const previewSize = (manualSize != null && manualSize > 0)
-    ? manualSize
-    : calcBoardSize(players.length);
+  const maxPlayers  = (session && session.settings) ? session.settings.maxPlayers || 30 : 30;
+  const manualSize  = (session && session.settings) ? session.settings.boardSize : null;
+  const previewSize = (manualSize != null && manualSize > 0) ? manualSize : calcBoardSize(players.length);
 
   return (
     <SafeAreaView style={S.container}>
       <ScrollView contentContainerStyle={S.scroll}>
 
-        {/* Error banner — replaces Alert (browsers block window.alert) */}
         {writeError ? (
           <View style={S.errBanner}>
-            <Text style={S.errTxt}>{writeError}</Text>
+            <Text style={S.errTxt} numberOfLines={3}>{writeError}</Text>
             <TouchableOpacity onPress={() => setWriteError(null)}>
               <Text style={S.errClose}>✕</Text>
             </TouchableOpacity>
           </View>
         ) : null}
 
-        {/* PIN */}
         <Animated.View style={[S.pinCard, { transform: [{ scale: pinPulse }] }]}>
           <Text style={S.pinLbl}>GAME PIN</Text>
           <Text style={S.pin}>{pin || "------"}</Text>
@@ -271,22 +343,24 @@ export default function Lobby({ route, navigation }) {
 
         <Text style={S.countTxt}>{players.length} / {maxPlayers} players</Text>
 
-        {/* Settings summary */}
         <View style={S.settingsBox}>
           <Text style={S.settingsLbl}>Settings</Text>
           <View style={S.settingsRow}>
-            <Text style={S.settingsItem}>Duration: {session?.settings?.gameDuration || 10} min</Text>
-            <Text style={S.settingsItem}>Time/Q: {session?.settings?.timePerQuestion || 20}s</Text>
             <Text style={S.settingsItem}>
-              Tiles: {manualSize != null ? manualSize : `Auto (~${previewSize})`}
+              Duration: {(session && session.settings) ? session.settings.gameDuration || 10 : 10} min
+            </Text>
+            <Text style={S.settingsItem}>
+              Time/Q: {(session && session.settings) ? session.settings.timePerQuestion || 20 : 20}s
+            </Text>
+            <Text style={S.settingsItem}>
+              Tiles: {manualSize != null ? manualSize : "Auto (~" + previewSize + ")"}
             </Text>
           </View>
-          {session?.settings?.nicknameGenerator ? (
+          {session && session.settings && session.settings.nicknameGenerator ? (
             <Text style={S.nickBadge}>Nickname generator ON</Text>
           ) : null}
         </View>
 
-        {/* Players */}
         {players.length === 0 ? (
           <View style={S.emptyArea}>
             <Text style={S.emptyTxt}>Waiting for players to join…</Text>
@@ -310,12 +384,11 @@ export default function Lobby({ route, navigation }) {
         <BoardPreview players={players} boardSize={previewSize} />
       </ScrollView>
 
-      {/* Host controls */}
       {isHost ? (
         <View style={S.hostBar}>
-          <TouchableOpacity style={[S.lockBtn, isLobbyLocked && S.lockOn]} onPress={toggleLock}>
-            <Text style={[S.lockTxt, isLobbyLocked && { color: "#00c781" }]}>
-              {isLobbyLocked ? "LOCKED" : "OPEN"}
+          <TouchableOpacity style={[S.lockBtn, lobbyLocked && S.lockOn]} onPress={toggleLock}>
+            <Text style={[S.lockTxt, lobbyLocked && { color: "#00c781" }]}>
+              {lobbyLocked ? "LOCKED" : "OPEN"}
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
@@ -328,20 +401,19 @@ export default function Lobby({ route, navigation }) {
         </View>
       ) : null}
 
-      {/* Leave button */}
       <TouchableOpacity style={S.leaveBtn} onPress={() => setShowLeave(true)}>
         <Text style={S.leaveTxt}>Leave</Text>
       </TouchableOpacity>
 
-      {/* Kick confirm modal */}
+      {/* Kick confirm */}
       <Modal visible={!!kickTarget} transparent animationType="fade">
         <View style={S.overlay}>
           <View style={S.modal}>
             <Text style={S.mTtl}>Kick Player?</Text>
             <Text style={S.mTxt}>
               Remove{" "}
-              <Text style={{ color: kickTarget?.color || "#fff", fontWeight: "bold" }}>
-                {kickTarget?.name}
+              <Text style={{ color: kickTarget ? kickTarget.color || "#fff" : "#fff", fontWeight: "bold" }}>
+                {kickTarget ? kickTarget.name : ""}
               </Text>
               {" "}from the game?
             </Text>
@@ -357,7 +429,7 @@ export default function Lobby({ route, navigation }) {
         </View>
       </Modal>
 
-      {/* Leave confirm modal */}
+      {/* Leave confirm */}
       <Modal visible={showLeave} transparent animationType="fade">
         <View style={S.overlay}>
           <View style={S.modal}>
@@ -389,10 +461,10 @@ const S = StyleSheet.create({
   errTxt:    { color: "#ff6b6b", fontSize: 13, flex: 1, lineHeight: 18 },
   errClose:  { color: "#ff6b6b", fontSize: 16, fontWeight: "bold", marginLeft: 8 },
 
-  pinCard: { backgroundColor: "#1e1e1e", borderRadius: 22, padding: 28, alignItems: "center", marginBottom: 16, borderWidth: 2, borderColor: "#00c781" },
-  pinLbl:  { color: "#888", fontSize: 13, letterSpacing: 4, marginBottom: 8 },
-  pin:     { fontSize: 60, fontWeight: "bold", color: "#00c781", letterSpacing: 14 },
-  pinHint: { color: "#555", fontSize: 13, marginTop: 6 },
+  pinCard:  { backgroundColor: "#1e1e1e", borderRadius: 22, padding: 28, alignItems: "center", marginBottom: 16, borderWidth: 2, borderColor: "#00c781" },
+  pinLbl:   { color: "#888", fontSize: 13, letterSpacing: 4, marginBottom: 8 },
+  pin:      { fontSize: 60, fontWeight: "bold", color: "#00c781", letterSpacing: 14 },
+  pinHint:  { color: "#555", fontSize: 13, marginTop: 6 },
 
   countTxt: { color: "#888", fontSize: 16, textAlign: "center", marginBottom: 12 },
 
@@ -412,23 +484,23 @@ const S = StyleSheet.create({
   kickBtn:    { backgroundColor: "#3a0000", borderRadius: 8, width: 26, height: 26, justifyContent: "center", alignItems: "center", marginLeft: 6 },
   kickTxt:    { color: "#ff6b6b", fontSize: 13, fontWeight: "bold" },
 
-  hostBar: { position: "absolute", bottom: 50, left: 0, right: 0, flexDirection: "row", gap: 12, paddingHorizontal: 20, alignItems: "center" },
-  lockBtn: { backgroundColor: "#1e1e1e", borderRadius: 14, paddingVertical: 14, paddingHorizontal: 18, alignItems: "center", borderWidth: 1, borderColor: "#333" },
-  lockOn:  { backgroundColor: "#003322", borderColor: "#00c781" },
-  lockTxt: { color: "#888", fontSize: 12, fontWeight: "bold" },
+  hostBar:  { position: "absolute", bottom: 50, left: 0, right: 0, flexDirection: "row", gap: 12, paddingHorizontal: 20, alignItems: "center" },
+  lockBtn:  { backgroundColor: "#1e1e1e", borderRadius: 14, paddingVertical: 14, paddingHorizontal: 18, alignItems: "center", borderWidth: 1, borderColor: "#333" },
+  lockOn:   { backgroundColor: "#003322", borderColor: "#00c781" },
+  lockTxt:  { color: "#888", fontSize: 12, fontWeight: "bold" },
   startBtn: { flex: 1, backgroundColor: "#00c781", borderRadius: 16, paddingVertical: 18, alignItems: "center" },
   startOff: { backgroundColor: "#1e1e1e", opacity: 0.4 },
   startTxt: { color: "#000", fontSize: 19, fontWeight: "bold" },
 
-  leaveBtn:  { position: "absolute", bottom: 12, left: 20, backgroundColor: "#2a0000", paddingVertical: 10, paddingHorizontal: 20, borderRadius: 12 },
-  leaveTxt:  { color: "#ff6b6b", fontSize: 14, fontWeight: "bold" },
+  leaveBtn: { position: "absolute", bottom: 12, left: 20, backgroundColor: "#2a0000", paddingVertical: 10, paddingHorizontal: 20, borderRadius: 12 },
+  leaveTxt: { color: "#ff6b6b", fontSize: 14, fontWeight: "bold" },
 
-  overlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.88)", justifyContent: "center", alignItems: "center" },
-  modal:   { backgroundColor: "#1e1e1e", borderRadius: 20, padding: 28, width: "85%", maxWidth: 360, borderWidth: 1, borderColor: "#333" },
-  mTtl:    { color: "#fff", fontSize: 20, fontWeight: "bold", marginBottom: 12 },
-  mTxt:    { color: "#ccc", fontSize: 15, lineHeight: 22, marginBottom: 24 },
-  mRow:    { flexDirection: "row", gap: 12 },
-  mBtnGrey:{ flex: 1, backgroundColor: "#2a2a2a", paddingVertical: 14, borderRadius: 12, alignItems: "center" },
-  mBtnRed: { flex: 1, backgroundColor: "#c0392b", paddingVertical: 14, borderRadius: 12, alignItems: "center" },
-  mBtnTxt: { color: "#fff", fontWeight: "bold" },
+  overlay:  { flex: 1, backgroundColor: "rgba(0,0,0,0.88)", justifyContent: "center", alignItems: "center" },
+  modal:    { backgroundColor: "#1e1e1e", borderRadius: 20, padding: 28, width: "85%", maxWidth: 360, borderWidth: 1, borderColor: "#333" },
+  mTtl:     { color: "#fff", fontSize: 20, fontWeight: "bold", marginBottom: 12 },
+  mTxt:     { color: "#ccc", fontSize: 15, lineHeight: 22, marginBottom: 24 },
+  mRow:     { flexDirection: "row", gap: 12 },
+  mBtnGrey: { flex: 1, backgroundColor: "#2a2a2a", paddingVertical: 14, borderRadius: 12, alignItems: "center" },
+  mBtnRed:  { flex: 1, backgroundColor: "#c0392b", paddingVertical: 14, borderRadius: 12, alignItems: "center" },
+  mBtnTxt:  { color: "#fff", fontWeight: "bold" },
 });
