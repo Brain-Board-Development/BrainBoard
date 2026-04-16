@@ -1,5 +1,6 @@
 /**
- * Lobby.js — Host lobby screen
+ * Lobby.js
+ * Space distribution: 60% mystery, 10% normal, 10% lava, 10% cannon, 10% trap
  */
 
 import React, { useState, useEffect, useRef, useMemo } from "react";
@@ -14,7 +15,6 @@ const BOARD_COLS = 10;
 const { width: SCREEN_W } = Dimensions.get("window");
 const TILE_SIZE = Math.min(48, Math.floor((SCREEN_W - 64) / BOARD_COLS));
 
-// ── Tile colour config — must match BoardGameScreen exactly ──────────────────
 const SPACE_CFG = {
   normal:  { bg: "#1a3d1a", border: "#27ae60", label: ""  },
   lava:    { bg: "#3d1200", border: "#e74c3c", label: "L" },
@@ -23,16 +23,15 @@ const SPACE_CFG = {
   mystery: { bg: "#2a0a3d", border: "#8e44ad", label: "?" },
 };
 
-// Same distribution as handleStartGame so the preview density matches the real board
+// Distribution: 60% mystery, 10% normal, 10% lava, 10% cannon, 10% trap (pool of 10)
 const SPACE_POOL = [
-  "normal","normal","normal","lava",
-  "normal","normal","normal","cannon",
-  "normal","normal","normal","trap",
-  "normal","normal","normal","mystery",
-  "normal","normal",
+  "mystery", "mystery", "mystery", "mystery", "mystery", "mystery",
+  "normal",
+  "lava",
+  "cannon",
+  "trap",
 ];
 
-// ── Board helpers ─────────────────────────────────────────────────────────────
 const calcBoardSize = (n) =>
   Math.min(150, Math.round(9.14 * Math.pow(Math.max(1, n - 1), 0.714) + 25));
 
@@ -47,7 +46,6 @@ function buildSnakeRows(total) {
   return rows.reverse();
 }
 
-// ── Nick helpers ──────────────────────────────────────────────────────────────
 const NICK_ADJ  = ["Swift","Brave","Clever","Bold","Quick","Bright","Sharp","Fierce","Calm","Wild","Sly","Wise","Daring","Lucky","Keen"];
 const NICK_NOUN = ["Fox","Wolf","Eagle","Bear","Lion","Tiger","Hawk","Shark","Raven","Dragon","Falcon","Puma","Cobra","Viper","Lynx"];
 const randomNick = () =>
@@ -55,12 +53,10 @@ const randomNick = () =>
   NICK_NOUN[Math.floor(Math.random() * NICK_NOUN.length)] +
   Math.floor(Math.random() * 100);
 
-// ── Board preview component ───────────────────────────────────────────────────
 function BoardPreview({ players, boardSize }) {
   const sz   = Math.min(TILE_SIZE, Math.floor((SCREEN_W - 64) / BOARD_COLS));
   const rows = buildSnakeRows(boardSize);
 
-  // Generate a sample board once per boardSize change so colours look realistic
   const sampleBoard = useMemo(() => {
     return Array.from({ length: boardSize + 1 }, (_, i) => {
       if (i === 0 || i === boardSize) return { type: "normal" };
@@ -73,34 +69,30 @@ function BoardPreview({ players, boardSize }) {
   return (
     <View style={brd.wrapper}>
       <Text style={brd.title}>Board Preview — {boardSize} tiles</Text>
-      <Text style={brd.sub}>(Sample layout — actual board generated at game start)</Text>
-
+      <Text style={brd.sub}>(Sample — actual layout generated at start)</Text>
       <ScrollView nestedScrollEnabled>
         {rows.map((row, ri) => (
           <View key={ri} style={brd.row}>
             {row.map((idx) => {
-              const type     = sampleBoard[idx] ? sampleBoard[idx].type : "normal";
-              const cfg      = SPACE_CFG[type] || SPACE_CFG.normal;
-              const isEnd    = idx === boardSize;
-              const isStart  = idx === 0;
-              const here     = playersAt(idx);
+              const type    = sampleBoard[idx] ? sampleBoard[idx].type : "normal";
+              const cfg     = SPACE_CFG[type] || SPACE_CFG.normal;
+              const isEnd   = idx === boardSize;
+              const isStart = idx === 0;
+              const here    = playersAt(idx);
               return (
-                <View
-                  key={idx}
-                  style={[
-                    brd.tile,
-                    { width: sz, height: sz, backgroundColor: cfg.bg, borderColor: cfg.border },
-                    (isEnd || isStart) && brd.tileSpecial,
-                  ]}
-                >
+                <View key={idx} style={[
+                  brd.tile,
+                  { width: sz, height: sz, backgroundColor: cfg.bg, borderColor: cfg.border },
+                  (isEnd || isStart) && brd.tileSpecial,
+                ]}>
                   {isEnd ? (
-                    <Text style={[brd.tileLabel, { color: "#2980b9", fontSize: sz * 0.28 }]}>END</Text>
+                    <Text style={[brd.lbl, { color: "#2980b9", fontSize: sz * 0.28 }]}>END</Text>
                   ) : isStart ? (
-                    <Text style={[brd.tileLabel, { color: "#27ae60", fontSize: sz * 0.28 }]}>GO</Text>
+                    <Text style={[brd.lbl, { color: "#27ae60", fontSize: sz * 0.28 }]}>GO</Text>
                   ) : type !== "normal" ? (
-                    <Text style={[brd.tileLabel, { color: cfg.border, fontSize: sz * 0.38 }]}>{cfg.label}</Text>
+                    <Text style={[brd.lbl, { color: cfg.border, fontSize: sz * 0.38 }]}>{cfg.label}</Text>
                   ) : (
-                    <Text style={[brd.tileNum, { fontSize: sz * 0.26 }]}>{idx}</Text>
+                    <Text style={[brd.num, { fontSize: sz * 0.26 }]}>{idx}</Text>
                   )}
                   {here.length > 0 && (
                     <View style={brd.tokens}>
@@ -115,12 +107,10 @@ function BoardPreview({ players, boardSize }) {
           </View>
         ))}
       </ScrollView>
-
-      {/* Legend */}
       <View style={brd.legend}>
         {Object.entries(SPACE_CFG).map(([type, cfg]) => (
           <View key={type} style={brd.legendRow}>
-            <View style={[brd.legendSwatch, { backgroundColor: cfg.bg, borderColor: cfg.border }]} />
+            <View style={[brd.swatch, { backgroundColor: cfg.bg, borderColor: cfg.border }]} />
             <Text style={[brd.legendTxt, { color: cfg.border }]}>
               {type.charAt(0).toUpperCase() + type.slice(1)}
             </Text>
@@ -132,45 +122,42 @@ function BoardPreview({ players, boardSize }) {
 }
 
 const brd = StyleSheet.create({
-  wrapper:      { backgroundColor: "#0d0d0d", borderRadius: 16, padding: 14, marginTop: 20, borderWidth: 1, borderColor: "#222" },
-  title:        { color: "#00c781", fontSize: 15, fontWeight: "bold", marginBottom: 4, textAlign: "center" },
-  sub:          { color: "#444", fontSize: 11, textAlign: "center", marginBottom: 10 },
-  row:          { flexDirection: "row", justifyContent: "center", marginBottom: 3 },
-  tile:         { borderRadius: 7, margin: 2, alignItems: "center", justifyContent: "center", borderWidth: 1 },
-  tileSpecial:  { borderWidth: 2 },
-  tileNum:      { color: "#3a5a3a", fontWeight: "bold" },
-  tileLabel:    { fontWeight: "bold" },
-  tokens:       { position: "absolute", bottom: 2, flexDirection: "row", flexWrap: "wrap", justifyContent: "center" },
-  token:        { width: 7, height: 7, borderRadius: 4, margin: 1 },
-  legend:       { flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: 10, marginTop: 12, paddingTop: 10, borderTopWidth: 1, borderTopColor: "#222" },
-  legendRow:    { flexDirection: "row", alignItems: "center", gap: 5 },
-  legendSwatch: { width: 14, height: 14, borderRadius: 3, borderWidth: 1.5 },
-  legendTxt:    { fontSize: 11, fontWeight: "600" },
+  wrapper:     { backgroundColor: "#0d0d0d", borderRadius: 16, padding: 14, marginTop: 20, borderWidth: 1, borderColor: "#222" },
+  title:       { color: "#00c781", fontSize: 15, fontWeight: "bold", marginBottom: 4, textAlign: "center" },
+  sub:         { color: "#444", fontSize: 11, textAlign: "center", marginBottom: 10 },
+  row:         { flexDirection: "row", justifyContent: "center", marginBottom: 3 },
+  tile:        { borderRadius: 7, margin: 2, alignItems: "center", justifyContent: "center", borderWidth: 1 },
+  tileSpecial: { borderWidth: 2 },
+  lbl:         { fontWeight: "bold" },
+  num:         { color: "#3a5a3a", fontWeight: "bold" },
+  tokens:      { position: "absolute", bottom: 2, flexDirection: "row", flexWrap: "wrap", justifyContent: "center" },
+  token:       { width: 7, height: 7, borderRadius: 4, margin: 1 },
+  legend:      { flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: 10, marginTop: 12, paddingTop: 10, borderTopWidth: 1, borderTopColor: "#222" },
+  legendRow:   { flexDirection: "row", alignItems: "center", gap: 5 },
+  swatch:      { width: 14, height: 14, borderRadius: 3, borderWidth: 1.5 },
+  legendTxt:   { fontSize: 11, fontWeight: "600" },
 });
 
-// ── Main Lobby component ──────────────────────────────────────────────────────
 export default function Lobby({ route, navigation }) {
   const { sessionId, pin, gameId, isHost } = route.params;
 
-  const [players,       setPlayers]    = useState([]);
-  const [session,       setSession]    = useState(null);
-  const [lobbyLocked,   setLocked]     = useState(false);
-  const [loading,       setLoading]    = useState(true);
-  const [showLeave,     setShowLeave]  = useState(false);
-  const [kickTarget,    setKickTarget] = useState(null);
-  const [starting,      setStarting]   = useState(false);
-  const [writeError,    setWriteError] = useState(null);
+  const [players,    setPlayers]    = useState([]);
+  const [session,    setSession]    = useState(null);
+  const [locked,     setLocked]     = useState(false);
+  const [loading,    setLoading]    = useState(true);
+  const [showLeave,  setShowLeave]  = useState(false);
+  const [kickTarget, setKickTarget] = useState(null);
+  const [starting,   setStarting]   = useState(false);
+  const [writeError, setWriteError] = useState(null);
 
   const sessionRef = useRef(null);
   const pinPulse   = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(pinPulse, { toValue: 1.03, duration: 1200, useNativeDriver: false }),
-        Animated.timing(pinPulse, { toValue: 1.0,  duration: 1200, useNativeDriver: false }),
-      ])
-    );
+    const loop = Animated.loop(Animated.sequence([
+      Animated.timing(pinPulse, { toValue: 1.03, duration: 1200, useNativeDriver: false }),
+      Animated.timing(pinPulse, { toValue: 1.0,  duration: 1200, useNativeDriver: false }),
+    ]));
     loop.start();
     return () => loop.stop();
   }, []);
@@ -193,10 +180,8 @@ export default function Lobby({ route, navigation }) {
 
   const toggleLock = async () => {
     try {
-      await updateDoc(doc(db, "gameSessions", sessionId), { isLobbyLocked: !lobbyLocked });
-    } catch (err) {
-      setWriteError("Lock failed: " + err.message);
-    }
+      await updateDoc(doc(db, "gameSessions", sessionId), { isLobbyLocked: !locked });
+    } catch (err) { setWriteError("Lock failed: " + err.message); }
   };
 
   const confirmKick = async (player) => {
@@ -205,13 +190,10 @@ export default function Lobby({ route, navigation }) {
     try {
       const sess = sessionRef.current;
       if (!sess) return;
-      const updPlayers = (sess.players || []).filter((p) => p.name !== player.name);
-      const kicked     = [...(sess.kickedPlayers || [])];
+      const upd    = (sess.players || []).filter((p) => p.name !== player.name);
+      const kicked = [...(sess.kickedPlayers || [])];
       if (!kicked.includes(player.name)) kicked.push(player.name);
-      await updateDoc(doc(db, "gameSessions", sessionId), {
-        players:       updPlayers,
-        kickedPlayers: kicked,
-      });
+      await updateDoc(doc(db, "gameSessions", sessionId), { players: upd, kickedPlayers: kicked });
     } catch (err) {
       console.error("Kick:", err);
       setWriteError("Kick failed — " + err.message + ". Check Firestore rules.");
@@ -219,7 +201,7 @@ export default function Lobby({ route, navigation }) {
   };
 
   const handleStartGame = async () => {
-    if (players.length === 0) { setWriteError("Wait for at least one player to join."); return; }
+    if (players.length === 0) { setWriteError("Wait for at least one player."); return; }
     if (starting) return;
     setStarting(true);
     setWriteError(null);
@@ -229,11 +211,14 @@ export default function Lobby({ route, navigation }) {
       if (!sd) { setStarting(false); return; }
       const currentPlayers = sd.players || [];
       const manualSize     = sd.settings ? sd.settings.boardSize : null;
-      const boardEnd       = (manualSize != null && manualSize > 0) ? manualSize : calcBoardSize(currentPlayers.length);
+      const boardEnd       = (manualSize != null && manualSize > 0)
+        ? manualSize : calcBoardSize(currentPlayers.length);
 
       const board = Array.from({ length: boardEnd + 1 }, (_, i) => ({
         index: i,
-        type:  (i === 0 || i === boardEnd) ? "normal" : SPACE_POOL[Math.floor(Math.random() * SPACE_POOL.length)],
+        type:  (i === 0 || i === boardEnd)
+          ? "normal"
+          : SPACE_POOL[Math.floor(Math.random() * SPACE_POOL.length)],
       }));
 
       let finalPlayers = currentPlayers;
@@ -253,12 +238,26 @@ export default function Lobby({ route, navigation }) {
         const gSnap = await getDoc(doc(db, "games", gid));
         if (gSnap.exists()) {
           questions = (gSnap.data() || {}).questions || [];
+
+          // ── Fisher-Yates shuffle helper ──────────────────────────────────
+          const shuffle = (arr) => {
+            const a = [...arr];
+            for (let i = a.length - 1; i > 0; i--) {
+              const j = Math.floor(Math.random() * (i + 1));
+              [a[i], a[j]] = [a[j], a[i]];
+            }
+            return a;
+          };
+
+          // Randomize question ORDER if setting is on
           if (sd.settings && sd.settings.randomizeQuestions) {
-            questions = [...questions].sort(() => Math.random() - 0.5);
+            questions = shuffle(questions);
           }
+
+          // Randomize ANSWER ORDER within each question if setting is on
           if (sd.settings && sd.settings.randomizeAnswers) {
             questions = questions.map((q) => {
-              if (q.type !== "multipleChoice" || !q.answers || !q.answers.length) return q;
+              if (q.type !== "multipleChoice" || !Array.isArray(q.answers) || !q.answers.length) return q;
               const n   = q.answers.length;
               const idx = Array.from({ length: n }, (_, i) => i);
               for (let i = n - 1; i > 0; i--) {
@@ -275,7 +274,7 @@ export default function Lobby({ route, navigation }) {
         }
       }
 
-      const gameDurationSecs = ((sd.settings && sd.settings.gameDuration) || 10) * 60;
+      const durSecs = ((sd.settings && sd.settings.gameDuration) || 10) * 60;
 
       await updateDoc(doc(db, "gameSessions", sessionId), {
         status:               "playing",
@@ -283,7 +282,7 @@ export default function Lobby({ route, navigation }) {
         players:              finalPlayers,
         questions,
         currentQuestionIndex: 0,
-        gameEndsAt:           Date.now() + gameDurationSecs * 1000,
+        gameEndsAt:           Date.now() + durSecs * 1000,
         settings:             { ...(sd.settings || {}), boardSize: boardEnd },
       });
 
@@ -295,7 +294,7 @@ export default function Lobby({ route, navigation }) {
         isHost:      true,
       });
     } catch (err) {
-      console.error("Start error:", err);
+      console.error("Start:", err);
       setWriteError("Failed to start — " + err.message + ". Check Firestore rules.");
       setStarting(false);
     }
@@ -356,8 +355,17 @@ export default function Lobby({ route, navigation }) {
               Tiles: {manualSize != null ? manualSize : "Auto (~" + previewSize + ")"}
             </Text>
           </View>
-          {session && session.settings && session.settings.nicknameGenerator ? (
-            <Text style={S.nickBadge}>Nickname generator ON</Text>
+          {(session && session.settings && session.settings.nicknameGenerator) ? (
+            <Text style={S.badge}>🎲 Nickname generator ON</Text>
+          ) : null}
+          {(session && session.settings && session.settings.randomizeQuestions) ? (
+            <Text style={S.badge}>🔀 Questions randomized</Text>
+          ) : null}
+          {(session && session.settings && session.settings.randomizeAnswers) ? (
+            <Text style={S.badge}>🔀 Answer order randomized</Text>
+          ) : null}
+          {(session && session.settings && session.settings.showCorrectAnswer === false) ? (
+            <Text style={[S.badge, { color: "#e74c3c" }]}>❌ Correct answer hidden</Text>
           ) : null}
         </View>
 
@@ -386,9 +394,9 @@ export default function Lobby({ route, navigation }) {
 
       {isHost ? (
         <View style={S.hostBar}>
-          <TouchableOpacity style={[S.lockBtn, lobbyLocked && S.lockOn]} onPress={toggleLock}>
-            <Text style={[S.lockTxt, lobbyLocked && { color: "#00c781" }]}>
-              {lobbyLocked ? "LOCKED" : "OPEN"}
+          <TouchableOpacity style={[S.lockBtn, locked && S.lockOn]} onPress={toggleLock}>
+            <Text style={[S.lockTxt, locked && { color: "#00c781" }]}>
+              {locked ? "LOCKED" : "OPEN"}
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
@@ -405,48 +413,40 @@ export default function Lobby({ route, navigation }) {
         <Text style={S.leaveTxt}>Leave</Text>
       </TouchableOpacity>
 
-      {/* Kick confirm */}
       <Modal visible={!!kickTarget} transparent animationType="fade">
-        <View style={S.overlay}>
-          <View style={S.modal}>
-            <Text style={S.mTtl}>Kick Player?</Text>
-            <Text style={S.mTxt}>
-              Remove{" "}
-              <Text style={{ color: kickTarget ? kickTarget.color || "#fff" : "#fff", fontWeight: "bold" }}>
-                {kickTarget ? kickTarget.name : ""}
-              </Text>
-              {" "}from the game?
+        <View style={S.overlay}><View style={S.modal}>
+          <Text style={S.mTtl}>Kick Player?</Text>
+          <Text style={S.mTxt}>
+            Remove{" "}
+            <Text style={{ color: kickTarget ? kickTarget.color || "#fff" : "#fff", fontWeight: "bold" }}>
+              {kickTarget ? kickTarget.name : ""}
             </Text>
-            <View style={S.mRow}>
-              <TouchableOpacity style={S.mBtnGrey} onPress={() => setKickTarget(null)}>
-                <Text style={S.mBtnTxt}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={S.mBtnRed} onPress={() => confirmKick(kickTarget)}>
-                <Text style={S.mBtnTxt}>Kick</Text>
-              </TouchableOpacity>
-            </View>
+            {" "}from the game?
+          </Text>
+          <View style={S.mRow}>
+            <TouchableOpacity style={S.mGrey} onPress={() => setKickTarget(null)}>
+              <Text style={S.mBtnTxt}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={S.mRed} onPress={() => confirmKick(kickTarget)}>
+              <Text style={S.mBtnTxt}>Kick</Text>
+            </TouchableOpacity>
           </View>
-        </View>
+        </View></View>
       </Modal>
 
-      {/* Leave confirm */}
       <Modal visible={showLeave} transparent animationType="fade">
-        <View style={S.overlay}>
-          <View style={S.modal}>
-            <Text style={S.mTtl}>{isHost ? "Close Lobby?" : "Leave Lobby?"}</Text>
-            <Text style={S.mTxt}>
-              {isHost ? "This will disconnect all players." : "Are you sure you want to leave?"}
-            </Text>
-            <View style={S.mRow}>
-              <TouchableOpacity style={S.mBtnGrey} onPress={() => setShowLeave(false)}>
-                <Text style={S.mBtnTxt}>Stay</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={S.mBtnRed} onPress={handleLeaveConfirm}>
-                <Text style={S.mBtnTxt}>Leave</Text>
-              </TouchableOpacity>
-            </View>
+        <View style={S.overlay}><View style={S.modal}>
+          <Text style={S.mTtl}>{isHost ? "Close Lobby?" : "Leave Lobby?"}</Text>
+          <Text style={S.mTxt}>{isHost ? "This will disconnect all players." : "Are you sure?"}</Text>
+          <View style={S.mRow}>
+            <TouchableOpacity style={S.mGrey} onPress={() => setShowLeave(false)}>
+              <Text style={S.mBtnTxt}>Stay</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={S.mRed} onPress={handleLeaveConfirm}>
+              <Text style={S.mBtnTxt}>Leave</Text>
+            </TouchableOpacity>
           </View>
-        </View>
+        </View></View>
       </Modal>
     </SafeAreaView>
   );
@@ -456,51 +456,42 @@ const S = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#111" },
   scroll:    { padding: 20, paddingBottom: 140 },
   loadTxt:   { color: "#fff", marginTop: 16, fontSize: 18, textAlign: "center" },
-
-  errBanner: { backgroundColor: "#3a0000", borderRadius: 10, padding: 14, marginBottom: 12, flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", borderWidth: 1, borderColor: "#e74c3c" },
+  errBanner: { backgroundColor: "#3a0000", borderRadius: 10, padding: 14, marginBottom: 12, flexDirection: "row", alignItems: "flex-start", borderWidth: 1, borderColor: "#e74c3c" },
   errTxt:    { color: "#ff6b6b", fontSize: 13, flex: 1, lineHeight: 18 },
   errClose:  { color: "#ff6b6b", fontSize: 16, fontWeight: "bold", marginLeft: 8 },
-
-  pinCard:  { backgroundColor: "#1e1e1e", borderRadius: 22, padding: 28, alignItems: "center", marginBottom: 16, borderWidth: 2, borderColor: "#00c781" },
-  pinLbl:   { color: "#888", fontSize: 13, letterSpacing: 4, marginBottom: 8 },
-  pin:      { fontSize: 60, fontWeight: "bold", color: "#00c781", letterSpacing: 14 },
-  pinHint:  { color: "#555", fontSize: 13, marginTop: 6 },
-
-  countTxt: { color: "#888", fontSize: 16, textAlign: "center", marginBottom: 12 },
-
+  pinCard:   { backgroundColor: "#1e1e1e", borderRadius: 22, padding: 28, alignItems: "center", marginBottom: 16, borderWidth: 2, borderColor: "#00c781" },
+  pinLbl:    { color: "#888", fontSize: 13, letterSpacing: 4, marginBottom: 8 },
+  pin:       { fontSize: 60, fontWeight: "bold", color: "#00c781", letterSpacing: 14 },
+  pinHint:   { color: "#555", fontSize: 13, marginTop: 6 },
+  countTxt:  { color: "#888", fontSize: 16, textAlign: "center", marginBottom: 12 },
   settingsBox:  { backgroundColor: "#1a1a1a", borderRadius: 12, padding: 14, marginBottom: 16, borderWidth: 1, borderColor: "#2a2a2a" },
   settingsLbl:  { color: "#666", fontSize: 11, letterSpacing: 1, fontWeight: "bold", marginBottom: 6 },
   settingsRow:  { flexDirection: "row", flexWrap: "wrap", gap: 14 },
   settingsItem: { color: "#ccc", fontSize: 14 },
-  nickBadge:    { color: "#00c781", fontSize: 12, marginTop: 6 },
-
-  emptyArea: { alignItems: "center", paddingVertical: 36 },
-  emptyTxt:  { color: "#555", fontSize: 17 },
-
+  badge:        { color: "#00c781", fontSize: 12, marginTop: 4 },
+  emptyArea:  { alignItems: "center", paddingVertical: 36 },
+  emptyTxt:   { color: "#555", fontSize: 17 },
   playerGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginBottom: 8 },
   playerCard: { flexDirection: "row", alignItems: "center", backgroundColor: "#1e1e1e", borderRadius: 12, paddingVertical: 12, paddingHorizontal: 14, borderWidth: 1, borderColor: "#2a2a2a", minWidth: 120, flex: 1 },
   playerDot:  { width: 14, height: 14, borderRadius: 7, marginRight: 10 },
   playerName: { color: "#fff", fontSize: 15, flex: 1 },
   kickBtn:    { backgroundColor: "#3a0000", borderRadius: 8, width: 26, height: 26, justifyContent: "center", alignItems: "center", marginLeft: 6 },
   kickTxt:    { color: "#ff6b6b", fontSize: 13, fontWeight: "bold" },
-
-  hostBar:  { position: "absolute", bottom: 50, left: 0, right: 0, flexDirection: "row", gap: 12, paddingHorizontal: 20, alignItems: "center" },
-  lockBtn:  { backgroundColor: "#1e1e1e", borderRadius: 14, paddingVertical: 14, paddingHorizontal: 18, alignItems: "center", borderWidth: 1, borderColor: "#333" },
-  lockOn:   { backgroundColor: "#003322", borderColor: "#00c781" },
-  lockTxt:  { color: "#888", fontSize: 12, fontWeight: "bold" },
-  startBtn: { flex: 1, backgroundColor: "#00c781", borderRadius: 16, paddingVertical: 18, alignItems: "center" },
-  startOff: { backgroundColor: "#1e1e1e", opacity: 0.4 },
-  startTxt: { color: "#000", fontSize: 19, fontWeight: "bold" },
-
-  leaveBtn: { position: "absolute", bottom: 12, left: 20, backgroundColor: "#2a0000", paddingVertical: 10, paddingHorizontal: 20, borderRadius: 12 },
-  leaveTxt: { color: "#ff6b6b", fontSize: 14, fontWeight: "bold" },
-
-  overlay:  { flex: 1, backgroundColor: "rgba(0,0,0,0.88)", justifyContent: "center", alignItems: "center" },
-  modal:    { backgroundColor: "#1e1e1e", borderRadius: 20, padding: 28, width: "85%", maxWidth: 360, borderWidth: 1, borderColor: "#333" },
-  mTtl:     { color: "#fff", fontSize: 20, fontWeight: "bold", marginBottom: 12 },
-  mTxt:     { color: "#ccc", fontSize: 15, lineHeight: 22, marginBottom: 24 },
-  mRow:     { flexDirection: "row", gap: 12 },
-  mBtnGrey: { flex: 1, backgroundColor: "#2a2a2a", paddingVertical: 14, borderRadius: 12, alignItems: "center" },
-  mBtnRed:  { flex: 1, backgroundColor: "#c0392b", paddingVertical: 14, borderRadius: 12, alignItems: "center" },
-  mBtnTxt:  { color: "#fff", fontWeight: "bold" },
+  hostBar:    { position: "absolute", bottom: 50, left: 0, right: 0, flexDirection: "row", gap: 12, paddingHorizontal: 20, alignItems: "center" },
+  lockBtn:    { backgroundColor: "#1e1e1e", borderRadius: 14, paddingVertical: 14, paddingHorizontal: 18, alignItems: "center", borderWidth: 1, borderColor: "#333" },
+  lockOn:     { backgroundColor: "#003322", borderColor: "#00c781" },
+  lockTxt:    { color: "#888", fontSize: 12, fontWeight: "bold" },
+  startBtn:   { flex: 1, backgroundColor: "#00c781", borderRadius: 16, paddingVertical: 18, alignItems: "center" },
+  startOff:   { backgroundColor: "#1e1e1e", opacity: 0.4 },
+  startTxt:   { color: "#000", fontSize: 19, fontWeight: "bold" },
+  leaveBtn:   { position: "absolute", bottom: 12, left: 20, backgroundColor: "#2a0000", paddingVertical: 10, paddingHorizontal: 20, borderRadius: 12 },
+  leaveTxt:   { color: "#ff6b6b", fontSize: 14, fontWeight: "bold" },
+  overlay:    { flex: 1, backgroundColor: "rgba(0,0,0,0.88)", justifyContent: "center", alignItems: "center" },
+  modal:      { backgroundColor: "#1e1e1e", borderRadius: 20, padding: 28, width: "85%", maxWidth: 360, borderWidth: 1, borderColor: "#333" },
+  mTtl:       { color: "#fff", fontSize: 20, fontWeight: "bold", marginBottom: 12 },
+  mTxt:       { color: "#ccc", fontSize: 15, lineHeight: 22, marginBottom: 24 },
+  mRow:       { flexDirection: "row", gap: 12 },
+  mGrey:      { flex: 1, backgroundColor: "#2a2a2a", paddingVertical: 14, borderRadius: 12, alignItems: "center" },
+  mRed:       { flex: 1, backgroundColor: "#c0392b", paddingVertical: 14, borderRadius: 12, alignItems: "center" },
+  mBtnTxt:    { color: "#fff", fontWeight: "bold" },
 });

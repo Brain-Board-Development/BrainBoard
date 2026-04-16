@@ -1,32 +1,18 @@
 /**
  * BoardGameScreen.js
  *
- * ROOT CAUSE FIXES:
+ * Mystery box effects (spec-accurate):
+ *  1 Push Back   — choose a player, move them -3 spaces
+ *  2 Iso Ult     — BO3 quiz duel vs chosen player, winner takes loser's position
+ *  3 Stun        — choose a player, they must answer 3 correct in a row to unstun
+ *  4 Immunity    — self: protected from negative spaces + effects for 2 spaces / 45s
+ *  5 Double Roll — next 2 rolls use 2 dice summed
+ *  6 Bad Luck Aura — choose a player, they get -30% luck for 45s
  *
- * 1. POSITION RESETS TO 0 ON EVERY ROLL
- *    runTransaction was the culprit. Firestore Web SDK transactions do an optimistic
- *    local write (onSnapshot fires with position:4), then commit to the server.
- *    If the server rejects the transaction for ANY reason (auth, contention, etc.),
- *    the SDK fires a second onSnapshot reverting to position:0. Replaced with
- *    plain updateDoc using sessionRef.current.players (always fresh from onSnapshot).
- *
- * 2. MAP / HUD SHOWS 0 FOR EVERYONE
- *    Same cause — the revert wipes out the write so every client sees 0.
- *
- * 3. PLAYER NOT FOUND (position stays 0 even locally)
- *    find(p.name === playerName) fails when nickname generator renames players.
- *    Now uses find(p.uid === playerUid) with name fallback.
- *
- * 4. KICK / LEAVE DON'T UPDATE OTHER SCREENS
- *    Also used runTransaction. Replaced with sessionRef-based updateDoc.
- *    After a successful updateDoc, Firestore fires onSnapshot on ALL connected
- *    clients immediately — host, players, everyone.
- *
- * ARCHITECTURE:
- *   sessionRef.current  — always the latest data from onSnapshot (server-confirmed)
- *   myStateRef.current  — this player's latest state from onSnapshot
- *   Both are updated INSIDE the onSnapshot callback (not via useEffect) so they
- *   are synchronously current before any setState calls.
+ * Mystery box triggers:
+ *  • Landing on a mystery (purple ?) tile
+ *  • Rolling a 1 on the dice
+ *  • Every 6 total correct answers (cumulative, not consecutive)
  */
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
@@ -50,63 +36,70 @@ const SPACE_CFG = {
   mystery: { bg: "#2a0a3d", border: "#8e44ad", label: "?" },
 };
 
+const MYSTERY_DEFS = {
+  1: { emoji: "💥", title: "Push Back",     desc: "Choose a player — move them 3 spaces backward.",          color: "#e74c3c", needsTarget: true  },
+  2: { emoji: "⚔️",  title: "Iso Ult",       desc: "Challenge a player to a BO3 quiz duel. Winner takes loser's position!", color: "#3498db", needsTarget: true  },
+  3: { emoji: "😵", title: "Stun",           desc: "Choose a player — they must answer 3 in a row to recover.", color: "#e67e22", needsTarget: true  },
+  4: { emoji: "🛡️",  title: "Immunity",      desc: "You're protected from negative spaces and effects for 2 landings or 45 seconds.", color: "#2ecc71", needsTarget: false },
+  5: { emoji: "🎲", title: "Double Roll",   desc: "Your next 2 rolls each use 2 dice summed together.",     color: "#9b59b6", needsTarget: false },
+  6: { emoji: "🌑", title: "Bad Luck Aura", desc: "Choose a player — they lose 30% Luck for 45 seconds.",   color: "#7f8c8d", needsTarget: true  },
+};
+
+const DICE_EMOJI = ["⚀","⚁","⚂","⚃","⚄","⚅"];
+const getDiceFace  = (n) => DICE_EMOJI[Math.min(5, Math.max(0, n - 1))] || "?";
+const formatTime   = (s) => s == null ? "--:--" : `${Math.floor(s/60)}:${(s%60).toString().padStart(2,"0")}`;
+
+function getCorrectAnswerText(q) {
+  if (!q) return "";
+  if (q.type === "multipleChoice") {
+    const idx = (q.correctAnswers || []).indexOf(true);
+    return idx >= 0 ? (q.answers?.[idx] || "") : "";
+  }
+  return q.correctAnswers?.[0] === true ? "True" : "False";
+}
+
 function buildSnakeRows(boardEnd) {
   const rows = [];
-  for (let rowStart = 0; rowStart <= boardEnd; rowStart += BOARD_COLS) {
-    const spaces = [];
-    for (let s = rowStart; s < rowStart + BOARD_COLS && s <= boardEnd; s++) spaces.push(s);
-    if (Math.floor(rowStart / BOARD_COLS) % 2 === 1) spaces.reverse();
-    rows.push(spaces);
+  for (let r = 0; r <= boardEnd; r += BOARD_COLS) {
+    const row = [];
+    for (let s = r; s < r + BOARD_COLS && s <= boardEnd; s++) row.push(s);
+    if (Math.floor(r / BOARD_COLS) % 2 === 1) row.reverse();
+    rows.push(row);
   }
   return rows.reverse();
 }
 
-function SnakeBoard({ board, players, myPosition, highlightPos, boardEnd, tileSize = BASE_TILE }) {
+function SnakeBoard({ board, players, myPosition, highlightPos, boardEnd, tileSize }) {
+  const sz   = tileSize || BASE_TILE;
   const rows = buildSnakeRows(boardEnd);
   const getPlayersAt = (idx) => players.filter((p) => (p.position || 0) === idx);
-  const getSpaceType = (idx) => (idx === 0 || idx === boardEnd) ? "normal" : (board[idx]?.type || "normal");
-  const getStyle = (idx) => {
-    const cfg  = SPACE_CFG[getSpaceType(idx)] || SPACE_CFG.normal;
-    const isMe = idx === myPosition;
-    const isHL = idx === highlightPos;
-    return {
-      backgroundColor: cfg.bg,
-      borderColor: isHL ? "#fff" : isMe ? "#fff" : cfg.border,
-      borderWidth: isHL || isMe ? 3 : 1.5,
-      transform: [{ scale: isHL ? 1.12 : 1 }],
-    };
+  const getSpaceType = (idx) => {
+    if (idx === 0 || idx === boardEnd) return "normal";
+    const direct = board[idx];
+    if (direct?.type) return direct.type;
+    const byIdx = Array.isArray(board) && board.find((s) => s?.index === idx);
+    return byIdx?.type || "normal";
+  };
+  const getTileStyle = (idx) => {
+    const cfg = SPACE_CFG[getSpaceType(idx)] || SPACE_CFG.normal;
+    const isMe = idx === myPosition, isHL = idx === highlightPos;
+    return { backgroundColor: cfg.bg, borderColor: isHL||isMe ? "#fff" : cfg.border, borderWidth: isHL||isMe ? 3 : 1.5, transform: [{ scale: isHL ? 1.12 : 1 }] };
   };
   return (
     <View style={bS.board}>
       {rows.map((row, ri) => (
         <View key={ri} style={bS.row}>
           {row.map((idx) => {
-            const here      = getPlayersAt(idx);
-            const spaceType = getSpaceType(idx);
-            const cfg       = SPACE_CFG[spaceType] || SPACE_CFG.normal;
+            const here = getPlayersAt(idx), type = getSpaceType(idx), cfg = SPACE_CFG[type] || SPACE_CFG.normal;
             return (
-              <View key={idx} style={[bS.tile, { width: tileSize, height: tileSize }, getStyle(idx)]}>
-                {idx === boardEnd ? (
-                  <Text style={{ fontSize: tileSize * 0.48 }}>🐍</Text>
-                ) : idx === 0 ? (
-                  <Text style={{ fontSize: tileSize * 0.4 }}>🏁</Text>
-                ) : spaceType !== "normal" ? (
-                  /* Non-normal tiles: show large colored label */
-                  <Text style={[bS.tileLabel, {
-                    fontSize: tileSize * 0.36,
-                    color: cfg.border,
-                  }]}>
-                    {cfg.label}
-                  </Text>
-                ) : (
-                  <Text style={[bS.tileNum, { fontSize: tileSize * 0.28 }]}>{idx}</Text>
-                )}
+              <View key={idx} style={[bS.tile, { width: sz, height: sz }, getTileStyle(idx)]}>
+                {idx === boardEnd ? <Text style={{ fontSize: sz*0.46 }}>🐍</Text>
+                  : idx === 0    ? <Text style={{ fontSize: sz*0.38 }}>🏁</Text>
+                  : type !== "normal" ? <Text style={{ fontSize: sz*0.36, fontWeight:"bold", color: cfg.border }}>{cfg.label}</Text>
+                  : <Text style={{ fontSize: sz*0.26, color:"#4a6a4a", fontWeight:"bold" }}>{idx}</Text>}
                 <View style={bS.tokenRow}>
-                  {here.slice(0, 3).map((p, pi) => (
-                    <View key={pi} style={[bS.token, {
-                      backgroundColor: p.color || "#888",
-                      width: tileSize * 0.22, height: tileSize * 0.22, borderRadius: tileSize * 0.11,
-                    }]} />
+                  {here.slice(0,3).map((p,pi) => (
+                    <View key={pi} style={[bS.token, { backgroundColor:p.color||"#888", width:sz*0.22, height:sz*0.22, borderRadius:sz*0.11 }]} />
                   ))}
                 </View>
               </View>
@@ -118,24 +111,15 @@ function SnakeBoard({ board, players, myPosition, highlightPos, boardEnd, tileSi
   );
 }
 const bS = StyleSheet.create({
-  board:     { paddingBottom: 8 },
-  row:       { flexDirection: "row", justifyContent: "center", marginBottom: 4 },
-  tile:      { borderRadius: 9, margin: 2, alignItems: "center", justifyContent: "center", position: "relative" },
-  tileNum:   { color: "#4a6a4a", fontWeight: "bold" },
-  tileLabel: { fontWeight: "bold" },
-  tokenRow:  { position: "absolute", bottom: 3, flexDirection: "row", flexWrap: "wrap", justifyContent: "center" },
-  token:     { margin: 1, borderWidth: 1, borderColor: "rgba(255,255,255,0.3)" },
+  board: { paddingBottom: 8 }, row: { flexDirection:"row", justifyContent:"center", marginBottom:4 },
+  tile:  { borderRadius:9, margin:2, alignItems:"center", justifyContent:"center", position:"relative" },
+  tokenRow: { position:"absolute", bottom:3, flexDirection:"row", flexWrap:"wrap", justifyContent:"center" },
+  token: { margin:1, borderWidth:1, borderColor:"rgba(255,255,255,0.3)" },
 });
 
-const DICE_EMOJI = ["⚀","⚁","⚂","⚃","⚄","⚅"];
-const getDiceFace = (n) => DICE_EMOJI[(n - 1)] || "-";
-const formatTime = (s) => {
-  if (s == null || s < 0) return "--:--";
-  return `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, "0")}`;
-};
-
+// ─── Main Component ────────────────────────────────────────────────────────────
 export default function BoardGameScreen({ route, navigation }) {
-  const { sessionId, playerName, playerColor = "#00c781", playerUid, isHost, gameId } = route.params;
+  const { sessionId, playerName, playerColor="#00c781", playerUid, isHost, gameId } = route.params;
 
   const [session,  setSession]  = useState(null);
   const [game,     setGame]     = useState(null);
@@ -153,11 +137,10 @@ export default function BoardGameScreen({ route, navigation }) {
   const [selectedAnswer,  setSelectedAnswer]  = useState(null);
   const [answerFeedback,  setAnswerFeedback]  = useState(null);
 
-  // correctCount = CUMULATIVE toward next roll (wrong never resets it)
-  // streak = CONSECUTIVE (resets on wrong, drives luck bonuses only)
-  const [correctCount, setCorrectCount] = useState(0);
-  const [streak,       setStreak]       = useState(0);
+  const [correctCount, setCorrectCount] = useState(0); // cumulative toward roll
+  const [streak,       setStreak]       = useState(0); // consecutive (luck bonuses)
   const [luck,         setLuck]         = useState(0);
+  const [totalCorrect, setTotalCorrect] = useState(0); // ever-growing, for mystery trigger
   const ROLL_AT = 3;
 
   // Phase
@@ -165,12 +148,41 @@ export default function BoardGameScreen({ route, navigation }) {
   const [diceValue,    setDiceValue]    = useState(null);
   const [diceRolling,  setDiceRolling]  = useState(false);
   const [highlightPos, setHighlightPos] = useState(null);
+  const diceAnim = useRef(new Animated.Value(0)).current;
 
-  // Space events
+  // Lava / Cannon space roll
+  const [spaceRollType,    setSpaceRollType]    = useState(null);
+  const [spaceRollValue,   setSpaceRollValue]   = useState(null);
+  const [spaceRollRolling, setSpaceRollRolling] = useState(false);
+  const spaceRollDiceAnim = useRef(new Animated.Value(0)).current;
+
+  // Trap
   const [spaceEvent,   setSpaceEvent]   = useState(null);
   const [trapTimer,    setTrapTimer]    = useState(10);
   const [trapAnswered, setTrapAnswered] = useState(false);
   const trapRef = useRef(null);
+
+  // Mystery box state
+  const [mysteryPhase,    setMysteryPhase]    = useState("idle"); // idle|roll|target|duel|done
+  const [mysteryRoll,     setMysteryRoll]     = useState(null);
+  const [mysteryRolling,  setMysteryRolling]  = useState(false);
+  const [mysteryDef,      setMysteryDef]      = useState(null);
+  const [mysteryTarget,   setMysteryTarget]   = useState(null); // chosen player
+  const mysteryDiceAnim = useRef(new Animated.Value(0)).current;
+
+  // Mystery bonuses active on self
+  const [doubleRollsLeft, setDoubleRollsLeft] = useState(0);   // double dice rolls remaining
+  const [immunityLeft,    setImmunityLeft]    = useState(0);   // immunity landings remaining
+  const immunityTimerRef  = useRef(null);
+  const immunityExpiresAt = useRef(0);
+
+  // Bad luck aura on self (written to myState by opponent)
+  // read from myState.badLuckExpires (epoch ms)
+
+  // ISO duel
+  const [duelState, setDuelState] = useState(null);
+  // { opponentName, round:0-2, myScores:[], oppScores:[], question, answered, result }
+  const duelTimerRef = useRef(null);
 
   // Timers
   const [gameTimeLeft,     setGameTimeLeft]     = useState(null);
@@ -178,12 +190,13 @@ export default function BoardGameScreen({ route, navigation }) {
   const gameTimerRef     = useRef(null);
   const questionTimerRef = useRef(null);
 
+  const timerBarAnim = useRef(new Animated.Value(1)).current;
+  const flashOpacity = useRef(new Animated.Value(0)).current;
+  const [flashData,  setFlashData]  = useState(null);
+
   const [gameOverDismissed, setGameOverDismissed] = useState(false);
   const boardScrollRef = useRef(null);
-  const diceAnim = useRef(new Animated.Value(0)).current;
 
-  // ── REFS updated SYNCHRONOUSLY inside onSnapshot (not via useEffect) ──────
-  // This guarantees they are always current when async callbacks run.
   const sessionRef = useRef(null);
   const myStateRef = useRef(null);
 
@@ -193,26 +206,14 @@ export default function BoardGameScreen({ route, navigation }) {
     return onSnapshot(doc(db, "gameSessions", sessionId), (snap) => {
       if (!snap.exists()) return;
       const data = snap.data();
-
-      // Update refs FIRST, synchronously, before any setState
       sessionRef.current = data;
-
-      // Find this player by UID (works even after nickname generator renames them)
-      // Fall back to name match for backwards compatibility
-      const me = (data.players || []).find(
-        (p) => (playerUid && p.uid === playerUid) || p.name === playerName
-      );
-      if (me) {
-        myStateRef.current = me;
-        setMyState(me);
-      }
-
+      const me = (data.players||[]).find(p => (playerUid && p.uid===playerUid) || p.name===playerName);
+      if (me) { myStateRef.current = me; setMyState(me); }
       setSession(data);
       setLoading(false);
-
       if (!isHost) {
-        if (data.status === "abandoned") { setShowAbandoned(true); return; }
-        if ((data.kickedPlayers || []).includes(playerName)) { setShowKicked(true); return; }
+        if (data.status==="abandoned") { setShowAbandoned(true); return; }
+        if ((data.kickedPlayers||[]).includes(playerName)) { setShowKicked(true); return; }
       }
     });
   }, [sessionId, playerName, playerUid, isHost]);
@@ -221,17 +222,14 @@ export default function BoardGameScreen({ route, navigation }) {
   useEffect(() => {
     if (game) return;
     if (sessionRef.current?.questions?.length) {
-      setGame({ questions: sessionRef.current.questions });
-      return;
+      setGame({ questions: sessionRef.current.questions }); return;
     }
     const gid = gameId || sessionRef.current?.gameId;
     if (!gid) return;
-    getDoc(doc(db, "games", gid))
-      .then((s) => { if (s.exists()) setGame(s.data()); })
-      .catch(console.error);
+    getDoc(doc(db,"games",gid)).then(s => { if (s.exists()) setGame(s.data()); }).catch(console.error);
   }, [session, gameId, game]);
 
-  // ── Pick question whenever index changes ──────────────────────────────────
+  // ── Pick question ─────────────────────────────────────────────────────────
   useEffect(() => {
     if (!game?.questions?.length) return;
     setCurrentQuestion(game.questions[questionIndex % game.questions.length]);
@@ -239,13 +237,13 @@ export default function BoardGameScreen({ route, navigation }) {
     setAnswerFeedback(null);
   }, [questionIndex, game]);
 
-  // ── Auto-show map during rolling/moving ───────────────────────────────────
+  // ── Auto-show map ─────────────────────────────────────────────────────────
   useEffect(() => {
-    if (phase === "rolling" || phase === "moving") setViewMode("map");
-    if (phase === "questions") setViewMode("questions");
+    if (["rolling","moving","space_roll"].includes(phase)) setViewMode("map");
+    if (["questions","mystery"].includes(phase))           setViewMode("questions");
   }, [phase]);
 
-  // ── Game countdown timer (from session.gameEndsAt) ────────────────────────
+  // ── Game countdown timer ──────────────────────────────────────────────────
   useEffect(() => {
     const endsAt = session?.gameEndsAt;
     if (!endsAt) return;
@@ -255,9 +253,7 @@ export default function BoardGameScreen({ route, navigation }) {
       setGameTimeLeft(rem);
       if (rem <= 0) {
         clearInterval(gameTimerRef.current);
-        if (isHost) {
-          updateDoc(doc(db, "gameSessions", sessionId), { status: "ended" }).catch(console.error);
-        }
+        if (isHost) updateDoc(doc(db,"gameSessions",sessionId),{status:"ended"}).catch(console.error);
       }
     };
     tick();
@@ -265,330 +261,440 @@ export default function BoardGameScreen({ route, navigation }) {
     return () => clearInterval(gameTimerRef.current);
   }, [session?.gameEndsAt, isHost, sessionId]);
 
-  // ── Question timer ────────────────────────────────────────────────────────
+  // ── Question timer bar ────────────────────────────────────────────────────
   useEffect(() => {
     clearInterval(questionTimerRef.current);
+    timerBarAnim.stopAnimation();
     const timeLimit = session?.settings?.timePerQuestion;
-    if (!timeLimit || phase !== "questions" || !currentQuestion || selectedAnswer !== null) {
-      setQuestionTimeLeft(null);
-      return;
-    }
+    if (!timeLimit || phase !== "questions") { setQuestionTimeLeft(null); timerBarAnim.setValue(1); return; }
+    timerBarAnim.setValue(1);
+    Animated.timing(timerBarAnim, { toValue:0, duration:timeLimit*1000, useNativeDriver:false }).start();
     setQuestionTimeLeft(timeLimit);
     questionTimerRef.current = setInterval(() => {
-      setQuestionTimeLeft((t) => {
-        if (t === null) return null;
-        if (t <= 1) {
+      setQuestionTimeLeft(t => {
+        if (t===null) return null;
+        if (t<=1) {
           clearInterval(questionTimerRef.current);
-          setAnswerFeedback("wrong");
-          setStreak(0);
-          setLuck(0);
-          setTimeout(() => setQuestionIndex((i) => i + 1), 700);
+          triggerFlash(false, getCorrectAnswerText(currentQuestion));
+          setAnswerFeedback("wrong"); setStreak(0); setLuck(0);
+          setTimeout(() => setQuestionIndex(i => i+1), 1400);
           return 0;
         }
-        return t - 1;
+        return t-1;
       });
     }, 1000);
     return () => clearInterval(questionTimerRef.current);
   }, [questionIndex, phase, session?.settings?.timePerQuestion]);
 
-  // ── Scroll board to a tile ────────────────────────────────────────────────
+  // ── Flash ─────────────────────────────────────────────────────────────────
+  const triggerFlash = useCallback((isCorrect, txt) => {
+    setFlashData({ isCorrect, correctAnswerText: txt });
+    flashOpacity.setValue(1);
+    Animated.sequence([
+      Animated.delay(900),
+      Animated.timing(flashOpacity, { toValue:0, duration:500, useNativeDriver:false }),
+    ]).start(() => setFlashData(null));
+  }, []);
+
+  // ── Scroll board ──────────────────────────────────────────────────────────
   const scrollToPos = useCallback((pos, boardEnd) => {
     if (!boardScrollRef.current) return;
     const rowIdx    = Math.floor(pos / BOARD_COLS);
-    const totalRows = Math.ceil((boardEnd + 1) / BOARD_COLS);
-    const visualRow = totalRows - 1 - rowIdx;
-    boardScrollRef.current.scrollTo({ y: Math.max(0, visualRow * (BASE_TILE + 6) - 50), animated: true });
+    const totalRows = Math.ceil((boardEnd+1) / BOARD_COLS);
+    const vRow      = totalRows - 1 - rowIdx;
+    boardScrollRef.current.scrollTo({ y: Math.max(0, vRow*(BASE_TILE+6)-50), animated:true });
   }, []);
 
-  // ── Helper to cleanly exit moving phase ───────────────────────────────────
-  const exitMoving = () => {
+  const exitMoving = () => { setPhase("questions"); setDiceValue(null); setQuestionIndex(i=>i+1); };
+
+  // ── Open mystery box ──────────────────────────────────────────────────────
+  const openMysteryBox = useCallback(() => {
+    setMysteryRoll(null);
+    setMysteryDef(null);
+    setMysteryTarget(null);
+    setMysteryRolling(false);
+    setMysteryPhase("roll");
+    setPhase("mystery");
+  }, []);
+
+  const handleMysteryRoll = useCallback(async () => {
+    if (mysteryRolling) return;
+    setMysteryRolling(true);
+    Animated.sequence([
+      Animated.timing(mysteryDiceAnim,{toValue:12, duration:80,useNativeDriver:false}),
+      Animated.timing(mysteryDiceAnim,{toValue:-12,duration:80,useNativeDriver:false}),
+      Animated.timing(mysteryDiceAnim,{toValue:8,  duration:80,useNativeDriver:false}),
+      Animated.timing(mysteryDiceAnim,{toValue:0,  duration:80,useNativeDriver:false}),
+    ]).start();
+    await new Promise(r => setTimeout(r, 500));
+    const roll = Math.floor(Math.random()*6)+1;
+    const def  = MYSTERY_DEFS[roll];
+    setMysteryRoll(roll);
+    setMysteryDef(def);
+    setMysteryRolling(false);
+    // If no target needed, go straight to apply
+    if (!def.needsTarget) {
+      setMysteryPhase("apply");
+    } else {
+      setMysteryPhase("target");
+    }
+  }, [mysteryRolling]);
+
+  const applyMysteryToTarget = useCallback(async (target) => {
+    const sess = sessionRef.current;
+    const me   = myStateRef.current;
+    if (!sess||!me) { setMysteryPhase("idle"); setPhase("questions"); return; }
+    const boardEnd = sess.settings?.boardSize || 25;
+
+    switch (mysteryRoll) {
+      case 1: { // Push Back — target -3
+        const newPos = Math.max(0, (target.position||0) - 3);
+        const upd = (sess.players||[]).map(p => p.name===target.name ? {...p, position:newPos} : p);
+        await updateDoc(doc(db,"gameSessions",sessionId),{players:upd}).catch(console.error);
+        break;
+      }
+      case 2: { // Iso Ult — start duel
+        setDuelState({
+          opponentName: target.name,
+          round: 0, myScores: [], oppScores: [],
+          question: null, answered: false, result: null,
+        });
+        setMysteryPhase("idle");
+        setPhase("duel");
+        return;
+      }
+      case 3: { // Stun target
+        const upd = (sess.players||[]).map(p => p.name===target.name ? {...p, stunned:true} : p);
+        await updateDoc(doc(db,"gameSessions",sessionId),{players:upd}).catch(console.error);
+        break;
+      }
+      case 6: { // Bad Luck Aura — -30% luck for 45s
+        const expires = Date.now() + 45000;
+        const upd = (sess.players||[]).map(p => p.name===target.name ? {...p, badLuckExpires:expires} : p);
+        await updateDoc(doc(db,"gameSessions",sessionId),{players:upd}).catch(console.error);
+        break;
+      }
+    }
+    finishMystery();
+  }, [mysteryRoll, sessionId]);
+
+  const applyMysteryNoTarget = useCallback(async () => {
+    switch (mysteryRoll) {
+      case 4: { // Immunity — 2 landings or 45s
+        setImmunityLeft(2);
+        immunityExpiresAt.current = Date.now() + 45000;
+        clearTimeout(immunityTimerRef.current);
+        immunityTimerRef.current = setTimeout(() => setImmunityLeft(0), 45000);
+        break;
+      }
+      case 5: { // Double Roll ×2
+        setDoubleRollsLeft(2);
+        break;
+      }
+    }
+    finishMystery();
+  }, [mysteryRoll]);
+
+  const finishMystery = () => {
+    setMysteryPhase("idle");
+    setMysteryRoll(null);
+    setMysteryDef(null);
+    setMysteryTarget(null);
     setPhase("questions");
     setDiceValue(null);
-    setQuestionIndex((i) => i + 1);
+    setQuestionIndex(i => i+1);
   };
+
+  // ── ISO Duel ──────────────────────────────────────────────────────────────
+  const advanceDuel = useCallback(() => {
+    const questions = sessionRef.current?.questions || game?.questions || [];
+    if (!questions.length) return;
+    const q = questions[Math.floor(Math.random()*questions.length)];
+    setDuelState(prev => ({ ...prev, question:q, answered:false }));
+  }, [game]);
+
+  useEffect(() => {
+    if (phase === "duel" && duelState && !duelState.question && duelState.result === null) {
+      advanceDuel();
+    }
+  }, [phase, duelState]);
+
+  const handleDuelAnswer = useCallback(async (ansIdx) => {
+    if (!duelState || duelState.answered) return;
+    const q       = duelState.question;
+    const correct = q?.correctAnswers?.[ansIdx] === true;
+    setDuelState(prev => {
+      const newMyScores = [...prev.myScores, correct ? 1 : 0];
+      const newRound    = prev.round + 1;
+      if (newRound >= 3) {
+        // Duel over
+        const myTotal  = newMyScores.reduce((a,b)=>a+b,0);
+        const oppTotal = prev.oppScores.reduce((a,b)=>a+b,0);
+        const result   = myTotal > oppTotal ? "win" : myTotal < oppTotal ? "lose" : "tie";
+        return { ...prev, answered:true, myScores:newMyScores, round:newRound, result };
+      }
+      return { ...prev, answered:true, myScores:newMyScores, round:newRound };
+    });
+  }, [duelState]);
+
+  const finishDuel = useCallback(async () => {
+    if (!duelState) return;
+    const sess = sessionRef.current;
+    const me   = myStateRef.current;
+    if (sess && me && duelState.result === "win") {
+      // Winner takes loser's position
+      const opp    = (sess.players||[]).find(p => p.name===duelState.opponentName);
+      if (opp) {
+        const myPos  = me.position || 0;
+        const oppPos = opp.position || 0;
+        const upd    = (sess.players||[]).map(p => {
+          if ((playerUid && p.uid===playerUid) || p.name===playerName) return {...p, position:oppPos};
+          if (p.name===duelState.opponentName) return {...p, position:myPos};
+          return p;
+        });
+        await updateDoc(doc(db,"gameSessions",sessionId),{players:upd}).catch(console.error);
+      }
+    }
+    setDuelState(null);
+    setPhase("questions");
+    setQuestionIndex(i => i+1);
+  }, [duelState, playerName, playerUid, sessionId]);
 
   // ── Answer handler ────────────────────────────────────────────────────────
   const handleAnswer = useCallback((ansIdx) => {
-    if (selectedAnswer !== null || phase !== "questions") return;
+    if (selectedAnswer!==null || phase!=="questions") return;
     clearInterval(questionTimerRef.current);
+    timerBarAnim.stopAnimation();
 
     const q       = currentQuestion;
     const correct = q?.correctAnswers?.[ansIdx] === true;
     setSelectedAnswer(ansIdx);
     setAnswerFeedback(correct ? "correct" : "wrong");
+    triggerFlash(correct, getCorrectAnswerText(q));
 
     const stunned = myStateRef.current?.stunned === true;
-
     if (stunned) {
-      // Stun recovery needs ROLL_AT consecutive correct
       if (correct) {
-        const ns = streak + 1;
+        const ns = streak+1;
         setStreak(ns);
-        if (ns >= ROLL_AT) {
+        if (ns>=ROLL_AT) {
           setStreak(0);
-          // Unstun
           const sess = sessionRef.current;
           if (sess) {
-            const upd = (sess.players || []).map(p =>
-              (playerUid && p.uid === playerUid) || p.name === playerName
-                ? { ...p, stunned: false }
-                : p
+            const upd = (sess.players||[]).map(p =>
+              (playerUid&&p.uid===playerUid)||p.name===playerName ? {...p,stunned:false} : p
             );
-            updateDoc(doc(db, "gameSessions", sessionId), { players: upd }).catch(console.error);
+            updateDoc(doc(db,"gameSessions",sessionId),{players:upd}).catch(console.error);
           }
         }
-      } else {
-        setStreak(0);
-      }
-      setTimeout(() => setQuestionIndex((i) => i + 1), 900);
+      } else { setStreak(0); }
+      setTimeout(() => setQuestionIndex(i=>i+1), 1400);
       return;
     }
 
     if (correct) {
-      const newStreak = streak + 1;
-      const newCount  = correctCount + 1; // CUMULATIVE — wrong never resets
-      const newLuck   = Math.min(40, newStreak >= 2 ? luck + 5 : luck);
-      setStreak(newStreak);
-      setLuck(newLuck);
-      if (newCount >= ROLL_AT) {
+      const ns = streak+1, nc = correctCount+1;
+      setStreak(ns);
+      setLuck(Math.min(40, ns>=2 ? luck+5 : luck));
+
+      // Mystery box every 6 total correct
+      setTotalCorrect(prev => {
+        const next = prev+1;
+        if (next%6===0) {
+          setTimeout(() => openMysteryBox(), 1500);
+        }
+        return next;
+      });
+
+      if (nc >= ROLL_AT) {
         setCorrectCount(0);
-        setTimeout(() => { setPhase("rolling"); setDiceValue(null); }, 900);
+        setTimeout(() => { setPhase("rolling"); setDiceValue(null); }, 1400);
       } else {
-        setCorrectCount(newCount);
-        setTimeout(() => setQuestionIndex((i) => i + 1), 900);
+        setCorrectCount(nc);
+        setTimeout(() => setQuestionIndex(i=>i+1), 1400);
       }
     } else {
-      setStreak(0);
-      setLuck(0);
-      // correctCount stays — cumulative progress never lost on wrong answer
-      setTimeout(() => setQuestionIndex((i) => i + 1), 900);
+      setStreak(0); setLuck(0);
+      setTimeout(() => setQuestionIndex(i=>i+1), 1400);
     }
-  }, [selectedAnswer, phase, currentQuestion, correctCount, streak, luck, playerName, playerUid, sessionId]);
+  }, [selectedAnswer, phase, currentQuestion, correctCount, streak, luck,
+      playerName, playerUid, sessionId, triggerFlash, openMysteryBox]);
 
   // ── Dice roll ─────────────────────────────────────────────────────────────
   const handleRoll = useCallback(async () => {
     if (diceRolling) return;
     setDiceRolling(true);
     Animated.sequence([
-      Animated.timing(diceAnim, { toValue: 10,  duration: 80, useNativeDriver: true }),
-      Animated.timing(diceAnim, { toValue: -10, duration: 80, useNativeDriver: true }),
-      Animated.timing(diceAnim, { toValue: 8,   duration: 80, useNativeDriver: true }),
-      Animated.timing(diceAnim, { toValue: 0,   duration: 80, useNativeDriver: true }),
+      Animated.timing(diceAnim,{toValue:10, duration:80,useNativeDriver:false}),
+      Animated.timing(diceAnim,{toValue:-10,duration:80,useNativeDriver:false}),
+      Animated.timing(diceAnim,{toValue:8,  duration:80,useNativeDriver:false}),
+      Animated.timing(diceAnim,{toValue:0,  duration:80,useNativeDriver:false}),
     ]).start();
-    await new Promise((r) => setTimeout(r, 500));
+    await new Promise(r=>setTimeout(r,500));
 
-    let roll = Math.floor(Math.random() * 6) + 1;
-    if (luck > 0) {
-      const r2 = Math.floor(Math.random() * 6) + 1;
-      if (luck >= 20) roll = Math.max(roll, r2);
+    let roll = Math.floor(Math.random()*6)+1;
+
+    // Double Roll mystery bonus: sum 2 dice
+    if (doubleRollsLeft > 0) {
+      roll = roll + (Math.floor(Math.random()*6)+1);
+      setDoubleRollsLeft(n => n-1);
+    } else if (luck > 0) {
+      const r2 = Math.floor(Math.random()*6)+1;
+      if (luck>=20) roll = Math.max(roll,r2);
     }
-    if (streak >= 8) roll = Math.min(6, roll + 1);
+    if (streak>=8) roll = Math.min(12, roll+1);
 
     setDiceValue(roll);
     setDiceRolling(false);
-    // Small delay so the player can see the dice result before movement starts
+
+    // Rolling a 1 triggers mystery box (only when not using double roll bonus)
+    if (roll===1 && doubleRollsLeft===0) {
+      setTimeout(() => openMysteryBox(), 800);
+      return;
+    }
+
     setTimeout(() => movePlayer(roll), 800);
-  }, [diceRolling, luck, streak]);
+  }, [diceRolling, luck, streak, doubleRollsLeft, openMysteryBox]);
 
-  // ── MOVE PLAYER ───────────────────────────────────────────────────────────
-  // Uses sessionRef.current and myStateRef.current — both updated SYNCHRONOUSLY
-  // inside onSnapshot, so they are never stale cache like getDoc() would be.
-  // Uses plain updateDoc (not runTransaction) because transaction commits can be
-  // rolled back by the server causing position to snap back to 0.
-  const movePlayer = useCallback(async (spaces) => {
-    const me   = myStateRef.current;
-    const sess = sessionRef.current;
+  // ── Space dice roll ───────────────────────────────────────────────────────
+  const handleSpaceRoll = useCallback(async () => {
+    if (spaceRollRolling) return;
+    setSpaceRollRolling(true);
+    Animated.sequence([
+      Animated.timing(spaceRollDiceAnim,{toValue:10, duration:80,useNativeDriver:false}),
+      Animated.timing(spaceRollDiceAnim,{toValue:-10,duration:80,useNativeDriver:false}),
+      Animated.timing(spaceRollDiceAnim,{toValue:8,  duration:80,useNativeDriver:false}),
+      Animated.timing(spaceRollDiceAnim,{toValue:0,  duration:80,useNativeDriver:false}),
+    ]).start();
+    await new Promise(r=>setTimeout(r,500));
+    const roll = Math.floor(Math.random()*6)+1;
+    setSpaceRollValue(roll);
+    setSpaceRollRolling(false);
+    setTimeout(() => applySpaceRoll(spaceRollType, roll), 800);
+  }, [spaceRollRolling, spaceRollType]);
 
-    if (!me || !sess) {
-      // Player state not loaded yet — just exit moving safely
-      setPhase("questions");
-      setDiceValue(null);
-      return;
-    }
-
-    const boardEnd = sess.settings?.boardSize || 25;
-    const oldPos   = me.position || 0;
-    const newPos   = Math.min(oldPos + spaces, boardEnd);
-
+  const applySpaceRoll = useCallback(async (type, roll) => {
+    const me=myStateRef.current, sess=sessionRef.current;
+    if (!me||!sess) { setSpaceRollType(null); exitMoving(); return; }
+    const boardEnd = sess.settings?.boardSize||25, cur = me.position||0;
+    const newPos   = type==="lava" ? Math.max(0,cur-roll) : Math.min(boardEnd,cur+roll);
     setPhase("moving");
-
-    // Animate step by step
-    for (let cur = oldPos; cur <= newPos; cur++) {
-      setHighlightPos(cur);
-      scrollToPos(cur, boardEnd);
-      await new Promise((r) => setTimeout(r, 280));
-    }
+    const step = type==="lava" ? -1 : 1;
+    for (let p=cur; step>0?p<=newPos:p>=newPos; p+=step) { setHighlightPos(p); scrollToPos(p,boardEnd); await new Promise(r=>setTimeout(r,280)); }
     setHighlightPos(newPos);
-
-    // Write position — read latest sessionRef AFTER animation (may have updated)
     try {
-      const latestSess = sessionRef.current;
-      if (!latestSess) throw new Error("no session");
-
-      // Build updated players array — identify self by UID (robust to name changes)
-      const updatedPlayers = (latestSess.players || []).map((p) =>
-        (playerUid && p.uid === playerUid) || p.name === playerName
-          ? { ...p, position: newPos, color: playerColor }
-          : p
+      const upd = (sessionRef.current?.players||[]).map(p =>
+        (playerUid&&p.uid===playerUid)||p.name===playerName ? {...p,position:newPos,color:playerColor} : p
       );
+      await updateDoc(doc(db,"gameSessions",sessionId),{players:upd});
+      if (newPos>=boardEnd) { await updateDoc(doc(db,"gameSessions",sessionId),{status:"ended",winner:playerName}); return; }
+    } catch(e){ console.error(e); }
+    setSpaceRollType(null); setSpaceRollValue(null);
+    exitMoving();
+  }, [playerName,playerColor,playerUid,sessionId,scrollToPos]);
 
-      await updateDoc(doc(db, "gameSessions", sessionId), { players: updatedPlayers });
+  // ── Move player ───────────────────────────────────────────────────────────
+  const movePlayer = useCallback(async (spaces) => {
+    const me=myStateRef.current, sess=sessionRef.current;
+    if (!me||!sess) { setPhase("questions"); setDiceValue(null); return; }
+    const boardEnd=sess.settings?.boardSize||25, oldPos=me.position||0, newPos=Math.min(oldPos+spaces,boardEnd);
+    setPhase("moving");
+    for (let cur=oldPos;cur<=newPos;cur++) { setHighlightPos(cur); scrollToPos(cur,boardEnd); await new Promise(r=>setTimeout(r,280)); }
+    setHighlightPos(newPos);
+    try {
+      const latest = sessionRef.current;
+      const upd = (latest?.players||[]).map(p =>
+        (playerUid&&p.uid===playerUid)||p.name===playerName ? {...p,position:newPos,color:playerColor} : p
+      );
+      await updateDoc(doc(db,"gameSessions",sessionId),{players:upd});
+      if (newPos>=boardEnd) { await updateDoc(doc(db,"gameSessions",sessionId),{status:"ended",winner:playerName}); return; }
+      const landingSpace = (() => {
+        const b=latest?.board||[]; const d=b[newPos]; if(d?.type) return d;
+        return (Array.isArray(b)&&b.find(s=>s?.index===newPos))||null;
+      })();
+      handleLanding(landingSpace, newPos, boardEnd, latest?.questions||[]);
+    } catch(e) { console.error("movePlayer:",e); exitMoving(); }
+  }, [playerName,playerColor,playerUid,sessionId,scrollToPos]);
 
-      // Check for win condition
-      if (newPos >= boardEnd) {
-        await updateDoc(doc(db, "gameSessions", sessionId), {
-          status: "ended",
-          winner: playerName,
-        });
-        // Game over modal will appear via the onSnapshot listener
-        return;
-      }
-
-      // Handle space landing — read board from latestSess (not stale closure)
-      const landingSpace     = (latestSess.board || [])[newPos];
-      const landingQuestions = latestSess.questions || [];
-      handleLanding(landingSpace, newPos, boardEnd, landingQuestions);
-
-    } catch (err) {
-      console.error("movePlayer error:", err);
-      // ALWAYS exit moving phase so the game never freezes
-      exitMoving();
-    }
-  }, [playerName, playerColor, playerUid, sessionId, scrollToPos]);
-
-  // ── Space landing (plain function, not useCallback, reads refs directly) ──
+  // ── Space landing ─────────────────────────────────────────────────────────
   const handleLanding = (space, pos, boardEnd, questions) => {
-    const type = space?.type || "normal";
+    const type = space?.type||"normal";
 
-    if (type === "normal") {
-      setPhase("questions");
-      setDiceValue(null);
-      setQuestionIndex((i) => i + 1);
-      return;
+    // Check immunity
+    if (immunityLeft>0 && (type==="lava"||type==="trap"||type==="cannon")) {
+      setImmunityLeft(n => Math.max(0,n-1));
+      exitMoving(); return;
+    }
+    if (immunityLeft>0 && type!=="normal") {
+      setImmunityLeft(n => Math.max(0,n-1));
     }
 
-    if (type === "trap") {
+    if (type==="normal") { exitMoving(); return; }
+    if (type==="mystery") { openMysteryBox(); return; }
+    if (type==="lava"||type==="cannon") { setSpaceRollType(type); setSpaceRollValue(null); setSpaceRollRolling(false); setPhase("space_roll"); return; }
+    if (type==="trap") {
       const pool = questions?.length ? questions : [];
       if (pool.length) {
-        const trapQ = pool[Math.floor(Math.random() * pool.length)];
-        setSpaceEvent({ type: "trap", question: trapQ });
-        setTrapTimer(10);
-        setTrapAnswered(false);
-        setPhase("space_event");
+        const trapQ = pool[Math.floor(Math.random()*pool.length)];
+        setSpaceEvent({type:"trap",question:trapQ}); setTrapTimer(10); setTrapAnswered(false); setPhase("space_event");
         clearInterval(trapRef.current);
         trapRef.current = setInterval(() => {
-          setTrapTimer((t) => {
-            if (t <= 1) {
-              clearInterval(trapRef.current);
-              handleTrapFail();
-              return 0;
-            }
-            return t - 1;
-          });
-        }, 1000);
-      } else {
-        exitMoving();
-      }
+          setTrapTimer(t => { if(t<=1){ clearInterval(trapRef.current); handleTrapFail(); return 0; } return t-1; });
+        },1000);
+      } else { exitMoving(); }
       return;
     }
-
-    // lava, cannon, mystery
-    setSpaceEvent({ type });
-    setPhase("space_event");
+    exitMoving();
   };
 
   const handleTrapFail = async () => {
     clearInterval(trapRef.current);
     const sess = sessionRef.current;
     if (sess) {
-      const upd = (sess.players || []).map((p) =>
-        (playerUid && p.uid === playerUid) || p.name === playerName
-          ? { ...p, stunned: true }
-          : p
-      );
-      await updateDoc(doc(db, "gameSessions", sessionId), { players: upd }).catch(console.error);
+      const upd = (sess.players||[]).map(p => (playerUid&&p.uid===playerUid)||p.name===playerName ? {...p,stunned:true}:p);
+      await updateDoc(doc(db,"gameSessions",sessionId),{players:upd}).catch(console.error);
     }
-    setSpaceEvent(null);
-    setPhase("questions");
-    setDiceValue(null);
+    setSpaceEvent(null); setPhase("questions"); setDiceValue(null);
   };
 
-  const resolveEvent = async (opts = {}) => {
+  const resolveEvent = async (opts={}) => {
     clearInterval(trapRef.current);
-    const sess = sessionRef.current;
-    const me   = myStateRef.current;
-    if (!sess || !me) {
-      setSpaceEvent(null);
-      exitMoving();
-      return;
-    }
-
-    const boardEnd = sess.settings?.boardSize || 25;
-    const cur      = me.position || 0;
-    const type     = spaceEvent?.type;
-    let newPos     = cur;
-    let stun       = false;
-
-    switch (type) {
-      case "lava":    newPos = Math.max(0,        cur - (Math.floor(Math.random() * 4) + 1)); break;
-      case "cannon":  newPos = Math.min(boardEnd, cur + (Math.floor(Math.random() * 4) + 1)); break;
-      case "mystery": newPos = Math.min(boardEnd, cur + 2); break;
-      case "trap":    stun = !opts.correct; break;
-    }
-
-    try {
-      const latestSess = sessionRef.current;
-      const upd = (latestSess?.players || []).map((p) =>
-        (playerUid && p.uid === playerUid) || p.name === playerName
-          ? { ...p, position: newPos, stunned: stun }
-          : p
-      );
-      await updateDoc(doc(db, "gameSessions", sessionId), { players: upd });
-    } catch (err) {
-      console.error("resolveEvent:", err);
-    }
-
-    if (newPos !== cur) {
-      setHighlightPos(newPos);
-      scrollToPos(newPos, sess.settings?.boardSize || 25);
-    }
-    setSpaceEvent(null);
-    setPhase("questions");
-    setDiceValue(null);
-    setQuestionIndex((i) => i + 1);
+    const sess=sessionRef.current;
+    if (!sess) { setSpaceEvent(null); exitMoving(); return; }
+    const stun = spaceEvent?.type==="trap" && !opts.correct;
+    const upd = (sess.players||[]).map(p =>
+      (playerUid&&p.uid===playerUid)||p.name===playerName ? {...p,stunned:stun}:p
+    );
+    await updateDoc(doc(db,"gameSessions",sessionId),{players:upd}).catch(console.error);
+    setSpaceEvent(null); exitMoving();
   };
 
-  // ── Leave ─────────────────────────────────────────────────────────────────
+  // ── Leave / exit ──────────────────────────────────────────────────────────
   const handleLeave = async () => {
     setShowLeave(false);
     if (!isHost) {
       try {
-        const sess = sessionRef.current;
+        const sess=sessionRef.current;
         if (sess) {
-          const upd = (sess.players || []).filter(
-            (p) => !(playerUid && p.uid === playerUid) && p.name !== playerName
-          );
-          await updateDoc(doc(db, "gameSessions", sessionId), { players: upd });
+          const upd=(sess.players||[]).filter(p=>!(playerUid&&p.uid===playerUid)&&p.name!==playerName);
+          await updateDoc(doc(db,"gameSessions",sessionId),{players:upd});
         }
-      } catch (err) {
-        console.error("Leave error:", err);
-      }
+      } catch(e){ console.error(e); }
     }
-    // Anonymous (guest) users go to Home/JoinGame, real accounts go to Dashboard
-    const isRealAccount = auth.currentUser && !auth.currentUser.isAnonymous;
-    navigation.reset({ index: 0, routes: [{ name: isRealAccount ? "Dashboard" : "Home" }] });
+    const isReal = auth.currentUser && !auth.currentUser.isAnonymous;
+    navigation.reset({index:0,routes:[{name:isReal?"Dashboard":"Home"}]});
   };
 
   const exitGame = () => {
-    const isRealAccount = auth.currentUser && !auth.currentUser.isAnonymous;
-    navigation.reset({ index: 0, routes: [{ name: isRealAccount ? "Dashboard" : "Home" }] });
+    const isReal = auth.currentUser && !auth.currentUser.isAnonymous;
+    navigation.reset({index:0,routes:[{name:isReal?"Dashboard":"Home"}]});
   };
 
   // ── Loading ───────────────────────────────────────────────────────────────
   if (loading) return (
     <SafeAreaView style={S.center}>
       <ActivityIndicator size="large" color="#00c781" />
-      <Text style={S.loadingText}>Loading game…</Text>
+      <Text style={{color:"#fff",marginTop:16,fontSize:18}}>Loading game…</Text>
     </SafeAreaView>
   );
 
@@ -597,63 +703,58 @@ export default function BoardGameScreen({ route, navigation }) {
   const boardEnd = session?.settings?.boardSize || 25;
   const myPos    = myState?.position || 0;
   const stunned  = myState?.stunned  === true;
+  const showCorrectAnswer = session?.settings?.showAnswersAfter !== false;
+
+  // Bad luck aura check (written to Firestore by opponent)
+  const badLuckActive  = myState?.badLuckExpires && myState.badLuckExpires > Date.now();
+  const effectiveLuck  = badLuckActive ? Math.max(0, luck - 30) : luck;
+  const hasImmunity    = immunityLeft > 0;
+
+  const otherPlayers = players.filter(p =>
+    !((playerUid && p.uid===playerUid) || p.name===playerName)
+  );
 
   // ══ HOST VIEW ═════════════════════════════════════════════════════════════
   if (isHost) {
-    const sorted = [...players].sort((a, b) => (b.position || 0) - (a.position || 0));
+    const sorted = [...players].sort((a,b) => (b.position||0)-(a.position||0));
     return (
       <SafeAreaView style={S.container}>
         <View style={S.hostHeader}>
           <Text style={S.hostTitle}>Brain Board — Host</Text>
-          <View style={{ flexDirection: "row", gap: 12, alignItems: "center" }}>
-            {gameTimeLeft != null && (
-              <Text style={[S.timerTxt, gameTimeLeft <= 30 && { color: "#e74c3c" }]}>
-                {formatTime(gameTimeLeft)}
-              </Text>
-            )}
-            <TouchableOpacity style={S.endBtn} onPress={async () => {
-              await updateDoc(doc(db, "gameSessions", sessionId), { status: "ended" }).catch(console.error);
-              exitGame();
-            }}>
+          <View style={{flexDirection:"row",gap:12,alignItems:"center"}}>
+            {gameTimeLeft!=null && <Text style={[S.timerTxt,gameTimeLeft<=30&&{color:"#e74c3c"}]}>{formatTime(gameTimeLeft)}</Text>}
+            <TouchableOpacity style={S.endBtn} onPress={async()=>{ await updateDoc(doc(db,"gameSessions",sessionId),{status:"ended"}).catch(console.error); exitGame(); }}>
               <Text style={S.endBtnTxt}>End Game</Text>
             </TouchableOpacity>
           </View>
         </View>
-
         <View style={S.hostBody}>
-          <ScrollView ref={boardScrollRef} style={{ flex: 1 }} contentContainerStyle={{ padding: 12 }}>
-            <SnakeBoard board={board} players={players} myPosition={-1}
-              highlightPos={highlightPos} boardEnd={boardEnd} tileSize={HOST_TILE} />
+          <ScrollView ref={boardScrollRef} style={{flex:1}} contentContainerStyle={{padding:12}}>
+            <SnakeBoard board={board} players={players} myPosition={-1} highlightPos={null} boardEnd={boardEnd} tileSize={HOST_TILE}/>
+            <Legend />
           </ScrollView>
           <View style={S.hostSide}>
             <Text style={S.lbTitle}>Leaderboard</Text>
-            {sorted.slice(0, 10).map((p, i) => (
+            {sorted.slice(0,10).map((p,i)=>(
               <View key={p.name} style={S.lbRow}>
-                <Text style={S.lbRank}>#{i + 1}</Text>
-                <View style={[S.lbDot, { backgroundColor: p.color || "#888" }]} />
+                <Text style={S.lbRank}>#{i+1}</Text>
+                <View style={[S.lbDot,{backgroundColor:p.color||"#888"}]}/>
                 <Text style={S.lbName} numberOfLines={1}>{p.name}</Text>
-                <Text style={S.lbPos}>{p.position || 0}/{boardEnd}</Text>
-                {p.stunned && <Text style={[S.lbPos, { color: "#e74c3c" }]}>stunned</Text>}
+                <Text style={S.lbPos}>{p.position||0}/{boardEnd}</Text>
+                {p.stunned && <Text style={[S.lbPos,{color:"#e74c3c"}]}>stunned</Text>}
               </View>
             ))}
           </View>
         </View>
-
-        <TouchableOpacity style={S.leaveBtn} onPress={() => setShowLeave(true)}>
-          <Text style={S.leaveBtnTxt}>Leave</Text>
-        </TouchableOpacity>
-
-        {session?.status === "ended" && !gameOverDismissed && (
-          <GameOverModal session={session} myPos={-1} boardEnd={boardEnd}
-            onExit={() => { setGameOverDismissed(true); exitGame(); }} />
+        {session?.status==="ended"&&!gameOverDismissed&&(
+          <GameOverModal session={session} myPos={-1} boardEnd={boardEnd} onExit={()=>{setGameOverDismissed(true);exitGame();}}/>
         )}
-        <LeaveModal visible={showLeave} isHost onStay={() => setShowLeave(false)} onLeave={handleLeave} />
       </SafeAreaView>
     );
   }
 
   // ══ PLAYER VIEW ═══════════════════════════════════════════════════════════
-  const showMap = viewMode === "map";
+  const showMap = viewMode==="map";
 
   return (
     <SafeAreaView style={S.container}>
@@ -661,380 +762,409 @@ export default function BoardGameScreen({ route, navigation }) {
       {/* HUD */}
       <View style={S.hud}>
         <View style={S.hudCell}>
-          <Text style={S.hudLbl}>CORRECT</Text>
-          <Text style={S.hudVal}>{stunned ? `${streak}/${ROLL_AT}` : `${correctCount}/${ROLL_AT}`}</Text>
+          <Text style={S.hudLbl}>STREAK</Text>
+          <Text style={[S.hudVal,streak>0&&{color:"#f39c12"}]}>{streak>0?`🔥 ${streak}`:streak}</Text>
         </View>
         <View style={S.hudCell}>
           <Text style={S.hudLbl}>LUCK</Text>
-          <Text style={S.hudVal}>{luck}%</Text>
+          <Text style={[S.hudVal,badLuckActive&&{color:"#e74c3c"}]}>{effectiveLuck}%</Text>
         </View>
         <View style={S.hudCell}>
           <Text style={S.hudLbl}>SPACE</Text>
-          <Text style={[S.hudVal, { color: playerColor }]}>{myPos}/{boardEnd}</Text>
+          <Text style={[S.hudVal,{color:playerColor}]}>{myPos}/{boardEnd}</Text>
         </View>
-        {gameTimeLeft != null && (
-          <View style={S.hudCell}>
-            <Text style={S.hudLbl}>TIME</Text>
-            <Text style={[S.hudVal, gameTimeLeft <= 30 && { color: "#e74c3c" }]}>
-              {formatTime(gameTimeLeft)}
-            </Text>
-          </View>
-        )}
-        <TouchableOpacity
-          style={[S.mapBtn, showMap && S.mapBtnOn]}
-          onPress={() => setViewMode((v) => v === "map" ? "questions" : "map")}
-        >
+        {hasImmunity && <View style={S.hudCell}><Text style={S.hudLbl}>SHIELD</Text><Text style={[S.hudVal,{color:"#2ecc71"}]}>🛡️{immunityLeft}</Text></View>}
+        {doubleRollsLeft>0 && <View style={S.hudCell}><Text style={S.hudLbl}>2×ROLL</Text><Text style={[S.hudVal,{color:"#9b59b6"}]}>×{doubleRollsLeft}</Text></View>}
+        {gameTimeLeft!=null && <View style={S.hudCell}><Text style={S.hudLbl}>TIME</Text><Text style={[S.hudVal,gameTimeLeft<=30&&{color:"#e74c3c"}]}>{formatTime(gameTimeLeft)}</Text></View>}
+        <TouchableOpacity style={[S.mapBtn,showMap&&S.mapBtnOn]} onPress={()=>setViewMode(v=>v==="map"?"questions":"map")}>
           <Text style={S.mapBtnTxt}>Map</Text>
         </TouchableOpacity>
       </View>
+
+      {/* Timer bar */}
+      {!!(session?.settings?.timePerQuestion) && phase==="questions" && !showMap && (
+        <View style={S.timerBarTrack}>
+          <Animated.View style={[S.timerBarFill,{width:timerBarAnim.interpolate({inputRange:[0,1],outputRange:["0%","100%"]})}]}/>
+        </View>
+      )}
 
       <View style={S.main}>
 
         {/* MAP */}
         {showMap && (
-          <ScrollView ref={boardScrollRef} contentContainerStyle={{ padding: 10 }}>
-            <SnakeBoard board={board} players={players} myPosition={myPos}
-              highlightPos={highlightPos} boardEnd={boardEnd} tileSize={BASE_TILE} />
-            {/* Tile legend */}
-            <View style={S.legend}>
-              {[
-                { type:"normal",  label:"Normal" },
-                { type:"mystery", label:"Mystery" },
-                { type:"lava",    label:"Lava" },
-                { type:"cannon",  label:"Cannon" },
-                { type:"trap",    label:"Trap" },
-              ].map(({ type, label }) => {
-                const cfg = SPACE_CFG[type];
-                return (
-                  <View key={type} style={S.legendItem}>
-                    <View style={[S.legendSwatch, { backgroundColor: cfg.bg, borderColor: cfg.border }]} />
-                    <Text style={[S.legendTxt, { color: cfg.border }]}>{label}</Text>
-                  </View>
-                );
-              })}
-            </View>
+          <ScrollView ref={boardScrollRef} contentContainerStyle={{padding:10}}>
+            <SnakeBoard board={board} players={players} myPosition={myPos} highlightPos={highlightPos} boardEnd={boardEnd} tileSize={BASE_TILE}/>
+            <Legend />
           </ScrollView>
         )}
 
         {/* QUESTIONS */}
-        {!showMap && phase === "questions" && (
-          <ScrollView contentContainerStyle={S.qArea}>
-            {stunned && (
-              <View style={S.stunnedBanner}>
-                <Text style={S.stunnedTxt}>
-                  STUNNED — answer {ROLL_AT} in a row to recover ({streak}/{ROLL_AT})
-                </Text>
+        {!showMap && phase==="questions" && (
+          <ScrollView contentContainerStyle={S.qScroll}>
+            {stunned && <View style={S.stunnedBanner}><Text style={S.stunnedTxt}>STUNNED — answer {ROLL_AT} in a row to recover ({streak}/{ROLL_AT})</Text></View>}
+            {!stunned && (
+              <View style={S.rollProgressBar}>
+                {[0,1,2].map(i=><View key={i} style={[S.rollDot,i<correctCount&&S.rollDotOn]}/>)}
+                <Text style={S.rollProgressTxt}>{ROLL_AT-correctCount} more correct to roll</Text>
               </View>
             )}
             {currentQuestion ? (
               <View style={S.qCard}>
-                {!stunned && (
-                  <>
-                    <View style={S.progDots}>
-                      {[0, 1, 2].map((i) => (
-                        <View key={i} style={[S.dot, i < correctCount && S.dotOn]} />
-                      ))}
-                    </View>
-                    <Text style={S.progTxt}>{correctCount}/{ROLL_AT} correct — {ROLL_AT - correctCount} more to roll</Text>
-                  </>
-                )}
-                {questionTimeLeft != null && (
-                  <Text style={[S.qTimer, questionTimeLeft <= 5 && { color: "#e74c3c" }]}>
-                    {questionTimeLeft}s
-                  </Text>
-                )}
                 <Text style={S.qTxt}>{currentQuestion.question}</Text>
                 <View style={S.aGrid}>
-                  {(currentQuestion.type === "multipleChoice"
-                    ? currentQuestion.answers
-                    : ["True", "False"]
-                  ).map((ans, i) => {
-                    const isSel  = selectedAnswer === i;
-                    const isCorr = currentQuestion.correctAnswers?.[i] === true;
-                    let bg = "#1e1e1e", bc = "#333";
-                    if (isSel) {
-                      bg = answerFeedback === "correct" ? "#003d1a" : "#3d0000";
-                      bc = answerFeedback === "correct" ? "#00c781" : "#e74c3c";
-                    } else if (selectedAnswer !== null && isCorr) {
-                      bg = "#003d1a"; bc = "#00c781";
-                    }
+                  {(currentQuestion.type==="multipleChoice" ? currentQuestion.answers : ["True","False"]).map((ans,i)=>{
+                    const isSel=selectedAnswer===i, isCorr=currentQuestion.correctAnswers?.[i]===true;
+                    let bg="#1c1c1c",bc="#383838";
+                    if (isSel){ bg=answerFeedback==="correct"?"#003d1a":"#3d0000"; bc=answerFeedback==="correct"?"#00c781":"#e74c3c"; }
+                    else if (selectedAnswer!==null&&isCorr&&showCorrectAnswer){ bg="#003d1a"; bc="#00c781"; }
                     return (
-                      <TouchableOpacity key={i}
-                        style={[S.aBtn, { backgroundColor: bg, borderColor: bc }]}
-                        onPress={() => handleAnswer(i)}
-                        disabled={selectedAnswer !== null}
-                        activeOpacity={0.75}>
+                      <TouchableOpacity key={i} style={[S.aBtn,{backgroundColor:bg,borderColor:bc}]} onPress={()=>handleAnswer(i)} disabled={selectedAnswer!==null} activeOpacity={0.75}>
                         <Text style={S.aTxt}>{ans}</Text>
                       </TouchableOpacity>
                     );
                   })}
                 </View>
-                {answerFeedback && (
-                  <Text style={[S.fb, { color: answerFeedback === "correct" ? "#00c781" : "#e74c3c" }]}>
-                    {answerFeedback === "correct" ? "Correct!" : "Wrong!"}
-                  </Text>
-                )}
               </View>
-            ) : (
-              <View style={S.waitBox}>
-                <ActivityIndicator color="#00c781" />
-                <Text style={S.waitTxt}>Loading questions…</Text>
-              </View>
-            )}
+            ) : <View style={S.waitBox}><ActivityIndicator color="#00c781"/><Text style={S.waitTxt}>Loading…</Text></View>}
           </ScrollView>
         )}
 
         {/* ROLLING */}
-        {phase === "rolling" && (
+        {phase==="rolling" && (
           <View style={S.diceBox}>
             <Text style={S.diceTtl}>Roll the Dice!</Text>
-            {luck > 0 && <Text style={S.luckTxt}>Luck {luck}% — higher chance of big numbers</Text>}
-            <Animated.Text style={[S.diceFace, { transform: [{ translateX: diceAnim }] }]}>
-              {diceValue ? getDiceFace(diceValue) : "?"}
-            </Animated.Text>
-            {diceValue ? (
-              <Text style={S.diceRes}>Rolled {diceValue} — moving…</Text>
-            ) : (
-              <TouchableOpacity style={S.rollBtn} onPress={handleRoll}>
-                <Text style={S.rollTxt}>Roll!</Text>
-              </TouchableOpacity>
-            )}
+            {doubleRollsLeft>0 && <Text style={[S.luckTxt,{color:"#9b59b6"}]}>🎯 Double Roll active — 2 dice summed!</Text>}
+            {effectiveLuck>0 && doubleRollsLeft===0 && <Text style={S.luckTxt}>🍀 Luck {effectiveLuck}%</Text>}
+            <Animated.Text style={[S.diceFace,{transform:[{translateX:diceAnim}]}]}>{diceValue?getDiceFace(Math.min(6,diceValue)):"?"}</Animated.Text>
+            {diceValue ? <Text style={S.diceRes}>Rolled {diceValue}!</Text>
+            : <TouchableOpacity style={S.rollBtn} onPress={handleRoll}><Text style={S.rollTxt}>Roll!</Text></TouchableOpacity>}
+          </View>
+        )}
+
+        {/* SPACE ROLL */}
+        {phase==="space_roll" && spaceRollType && (
+          <View style={S.diceBox}>
+            <Text style={[S.diceTtl,{color:spaceRollType==="lava"?"#e74c3c":"#3498db",fontSize:28}]}>
+              {spaceRollType==="lava"?"🌋 Lava Space!":"💥 Cannon Space!"}
+            </Text>
+            <Text style={S.luckTxt}>{spaceRollType==="lava"?"Roll to see how far you're pushed BACK":"Roll to see how far you're LAUNCHED forward"}</Text>
+            <Animated.Text style={[S.diceFace,{transform:[{translateX:spaceRollDiceAnim}]}]}>{spaceRollValue?getDiceFace(spaceRollValue):"?"}</Animated.Text>
+            {spaceRollValue
+              ? <Text style={[S.diceRes,{color:spaceRollType==="lava"?"#e74c3c":"#3498db"}]}>{spaceRollType==="lava"?`Back ${spaceRollValue} spaces!`:`Forward ${spaceRollValue} spaces!`}</Text>
+              : <TouchableOpacity style={[S.rollBtn,{backgroundColor:spaceRollType==="lava"?"#c0392b":"#2980b9"}]} onPress={handleSpaceRoll} disabled={spaceRollRolling}><Text style={S.rollTxt}>{spaceRollRolling?"Rolling…":"Roll!"}</Text></TouchableOpacity>}
           </View>
         )}
 
         {/* MOVING */}
-        {phase === "moving" && (
-          <View style={S.movingBox}>
-            <ActivityIndicator color="#00c781" size="large" />
-            <Text style={S.movingTxt}>Moving…</Text>
-          </View>
+        {phase==="moving" && <View style={S.movingBox}><ActivityIndicator color="#00c781" size="large"/><Text style={S.movingTxt}>Moving…</Text></View>}
+
+        {/* MYSTERY BOX */}
+        {phase==="mystery" && (
+          <ScrollView contentContainerStyle={S.mysteryScroll}>
+            <Text style={S.mysteryBigTtl}>🎁 Mystery Box!</Text>
+
+            {/* Step 1: Roll */}
+            {mysteryPhase==="roll" && (
+              <>
+                <Text style={S.luckTxt}>Roll to reveal your effect…</Text>
+                <Animated.Text style={[S.diceFace,{transform:[{translateX:mysteryDiceAnim}]}]}>{mysteryRoll?getDiceFace(mysteryRoll):"?"}</Animated.Text>
+                <TouchableOpacity style={[S.rollBtn,{backgroundColor:"#8e44ad"}]} onPress={handleMysteryRoll} disabled={mysteryRolling}>
+                  <Text style={S.rollTxt}>{mysteryRolling?"Rolling…":"Open Box!"}</Text>
+                </TouchableOpacity>
+              </>
+            )}
+
+            {/* Step 2a: Apply (no target needed) */}
+            {mysteryPhase==="apply" && mysteryDef && (
+              <View style={[S.mysteryCard,{borderColor:mysteryDef.color}]}>
+                <Text style={S.mysteryEmoji}>{mysteryDef.emoji}</Text>
+                <Text style={[S.mysteryTitle,{color:mysteryDef.color}]}>{mysteryDef.title}</Text>
+                <Text style={S.mysteryDesc}>{mysteryDef.desc}</Text>
+                <TouchableOpacity style={[S.rollBtn,{backgroundColor:mysteryDef.color,marginTop:12}]} onPress={applyMysteryNoTarget}>
+                  <Text style={S.rollTxt}>Claim!</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {/* Step 2b: Choose target */}
+            {mysteryPhase==="target" && mysteryDef && (
+              <>
+                <View style={[S.mysteryCard,{borderColor:mysteryDef.color}]}>
+                  <Text style={S.mysteryEmoji}>{mysteryDef.emoji}</Text>
+                  <Text style={[S.mysteryTitle,{color:mysteryDef.color}]}>{mysteryDef.title}</Text>
+                  <Text style={S.mysteryDesc}>{mysteryDef.desc}</Text>
+                </View>
+                <Text style={[S.luckTxt,{marginTop:16,fontSize:15}]}>Choose a player:</Text>
+                {otherPlayers.length===0 ? (
+                  <Text style={[S.mysteryDesc,{marginTop:8}]}>No other players — effect skipped.</Text>
+                ) : null}
+                {otherPlayers.map(p => (
+                  <TouchableOpacity key={p.name} style={[S.targetBtn,{borderColor:p.color||"#888"}]} onPress={()=>applyMysteryToTarget(p)}>
+                    <View style={[S.lbDot,{backgroundColor:p.color||"#888",marginRight:10}]}/>
+                    <Text style={[S.targetName,{color:p.color||"#fff"}]}>{p.name}</Text>
+                    <Text style={S.targetPos}>Space {p.position||0}</Text>
+                  </TouchableOpacity>
+                ))}
+                {otherPlayers.length===0 && (
+                  <TouchableOpacity style={[S.rollBtn,{backgroundColor:"#555",marginTop:12}]} onPress={finishMystery}>
+                    <Text style={S.rollTxt}>Skip</Text>
+                  </TouchableOpacity>
+                )}
+              </>
+            )}
+          </ScrollView>
+        )}
+
+        {/* ISO DUEL */}
+        {phase==="duel" && duelState && (
+          <ScrollView contentContainerStyle={S.mysteryScroll}>
+            <Text style={[S.mysteryBigTtl,{color:"#3498db"}]}>⚔️ ISO Duel!</Text>
+            <Text style={[S.luckTxt,{fontSize:14}]}>vs <Text style={{color:"#fff",fontWeight:"bold"}}>{duelState.opponentName}</Text></Text>
+            <Text style={[S.luckTxt,{fontSize:13,marginBottom:12}]}>Round {Math.min(duelState.round+1,3)} of 3  •  You {duelState.myScores.reduce((a,b)=>a+b,0)} – {duelState.oppScores.reduce((a,b)=>a+b,0)} Opponent</Text>
+
+            {duelState.result!==null ? (
+              <View style={S.mysteryCard}>
+                <Text style={S.mysteryEmoji}>{duelState.result==="win"?"🏆":duelState.result==="lose"?"💀":"🤝"}</Text>
+                <Text style={[S.mysteryTitle,{color:duelState.result==="win"?"#2ecc71":duelState.result==="lose"?"#e74c3c":"#aaa"}]}>
+                  {duelState.result==="win"?"You Win!":duelState.result==="lose"?"You Lose!":"Tie!"}
+                </Text>
+                <Text style={S.mysteryDesc}>
+                  {duelState.result==="win"?"You swap positions with your opponent!":duelState.result==="lose"?"Your opponent takes your spot!":"No position swap."}
+                </Text>
+                <TouchableOpacity style={[S.rollBtn,{backgroundColor:"#3498db",marginTop:12}]} onPress={finishDuel}>
+                  <Text style={S.rollTxt}>Continue</Text>
+                </TouchableOpacity>
+              </View>
+            ) : duelState.question ? (
+              <View style={S.qCard}>
+                <Text style={[S.qTxt,{fontSize:22}]}>{duelState.question.question}</Text>
+                <View style={S.aGrid}>
+                  {(duelState.question.type==="multipleChoice"?duelState.question.answers:["True","False"]).map((ans,i)=>(
+                    <TouchableOpacity key={i}
+                      style={[S.aBtn,{backgroundColor:duelState.answered?(duelState.question.correctAnswers?.[i]===true?"#003d1a":"#3d0000"):"#1c1c1c",borderColor:duelState.answered?(duelState.question.correctAnswers?.[i]===true?"#00c781":"#e74c3c"):"#383838"}]}
+                      onPress={()=>handleDuelAnswer(i)} disabled={duelState.answered} activeOpacity={0.75}>
+                      <Text style={S.aTxt}>{ans}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                {duelState.answered && duelState.round<3 && (
+                  <TouchableOpacity style={[S.rollBtn,{backgroundColor:"#3498db",marginTop:12}]} onPress={advanceDuel}>
+                    <Text style={S.rollTxt}>Next Round →</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            ) : <View style={S.waitBox}><ActivityIndicator color="#3498db"/></View>}
+          </ScrollView>
         )}
 
       </View>
 
-      {/* Space event modal */}
-      <Modal visible={phase === "space_event" && !!spaceEvent} transparent animationType="fade">
-        <View style={S.overlay}>
-          <View style={S.modal}>
-            {spaceEvent?.type === "lava" && (<>
-              <Text style={[S.mTtl, { color: "#e74c3c" }]}>Lava Space</Text>
-              <Text style={S.mDesc}>You'll be pushed back a few spaces.</Text>
-              <TouchableOpacity style={[S.mBtn, { backgroundColor: "#e74c3c" }]} onPress={() => resolveEvent()}>
-                <Text style={S.mBtnTxt}>OK</Text>
-              </TouchableOpacity>
-            </>)}
-            {spaceEvent?.type === "cannon" && (<>
-              <Text style={[S.mTtl, { color: "#3498db" }]}>Cannon Space</Text>
-              <Text style={S.mDesc}>You're being launched forward!</Text>
-              <TouchableOpacity style={[S.mBtn, { backgroundColor: "#3498db" }]} onPress={() => resolveEvent()}>
-                <Text style={S.mBtnTxt}>Launch!</Text>
-              </TouchableOpacity>
-            </>)}
-            {spaceEvent?.type === "mystery" && (<>
-              <Text style={[S.mTtl, { color: "#9b59b6" }]}>Mystery Space</Text>
-              <Text style={S.mDesc}>+2 bonus spaces!</Text>
-              <TouchableOpacity style={[S.mBtn, { backgroundColor: "#9b59b6" }]} onPress={() => resolveEvent()}>
-                <Text style={S.mBtnTxt}>Collect</Text>
-              </TouchableOpacity>
-            </>)}
-            {spaceEvent?.type === "trap" && spaceEvent.question && (<>
-              <Text style={[S.mTtl, { color: "#f39c12" }]}>Trap — Answer Fast!</Text>
-              <Text style={[S.trapSecs, trapTimer <= 3 && { color: "#e74c3c" }]}>{trapTimer}s</Text>
-              <Text style={S.mDesc}>{spaceEvent.question.question}</Text>
-              <View style={S.aGrid}>
-                {(spaceEvent.question.type === "multipleChoice"
-                  ? spaceEvent.question.answers : ["True", "False"]
-                ).map((ans, i) => (
-                  <TouchableOpacity key={i} style={[S.aBtn, { borderColor: "#444" }]}
-                    disabled={trapAnswered}
-                    onPress={() => {
-                      clearInterval(trapRef.current);
-                      setTrapAnswered(true);
-                      resolveEvent({ correct: spaceEvent.question.correctAnswers?.[i] === true });
-                    }}>
-                    <Text style={S.aTxt}>{ans}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </>)}
-          </View>
-        </View>
+      {/* Full-screen flash */}
+      {flashData && (
+        <Animated.View style={[S.flashOverlay,{backgroundColor:flashData.isCorrect?"#27ae60":"#c0392b",opacity:flashOpacity}]}>
+          <Text style={S.flashTtl}>{flashData.isCorrect?"CORRECT":"INCORRECT"}</Text>
+          {!flashData.isCorrect&&showCorrectAnswer&&flashData.correctAnswerText?(
+            <><Text style={S.flashSubLbl}>Correct answer</Text><Text style={S.flashSubTxt}>"{flashData.correctAnswerText}"</Text></>
+          ):null}
+        </Animated.View>
+      )}
+
+      {/* Trap modal */}
+      <Modal visible={phase==="space_event"&&spaceEvent?.type==="trap"} transparent animationType="fade">
+        <View style={S.overlay}><View style={S.modal}>
+          <Text style={[S.mTtl,{color:"#d68910"}]}>Trap — Answer Fast!</Text>
+          <Text style={[S.trapSecs,trapTimer<=3&&{color:"#e74c3c"}]}>{trapTimer}s</Text>
+          {spaceEvent?.question&&(<>
+            <Text style={S.mDesc}>{spaceEvent.question.question}</Text>
+            <View style={S.aGrid}>
+              {(spaceEvent.question.type==="multipleChoice"?spaceEvent.question.answers:["True","False"]).map((ans,i)=>(
+                <TouchableOpacity key={i} style={[S.aBtn,{borderColor:"#555"}]} disabled={trapAnswered}
+                  onPress={()=>{clearInterval(trapRef.current);setTrapAnswered(true);resolveEvent({correct:spaceEvent.question.correctAnswers?.[i]===true});}}>
+                  <Text style={S.aTxt}>{ans}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </>)}
+        </View></View>
       </Modal>
 
       {/* Game over */}
-      {session?.status === "ended" && !gameOverDismissed && (
-        <GameOverModal session={session} myPos={myPos} boardEnd={boardEnd}
-          onExit={() => { setGameOverDismissed(true); exitGame(); }} />
+      {session?.status==="ended"&&!gameOverDismissed&&(
+        <GameOverModal session={session} myPos={myPos} boardEnd={boardEnd} onExit={()=>{setGameOverDismissed(true);exitGame();}}/>
       )}
 
       {/* Kicked */}
       <Modal visible={showKicked} transparent animationType="fade">
         <View style={S.overlay}><View style={S.modal}>
           <Text style={S.mTtl}>You've Been Kicked</Text>
-          <Text style={S.mDesc}>The host has removed you from this game.</Text>
-          <TouchableOpacity style={[S.mBtn, { backgroundColor: "#00c781" }]}
-            onPress={() => { setShowKicked(false); navigation.reset({ index: 0, routes: [{ name: "JoinGameScreen" }] }); }}>
+          <Text style={S.mDesc}>The host has removed you.</Text>
+          <TouchableOpacity style={[S.mBtn,{backgroundColor:"#00c781"}]} onPress={()=>{setShowKicked(false);navigation.reset({index:0,routes:[{name:"JoinGameScreen"}]});}}>
             <Text style={S.mBtnTxt}>Back to Menu</Text>
           </TouchableOpacity>
         </View></View>
       </Modal>
 
-      {/* Host abandoned */}
+      {/* Abandoned */}
       <Modal visible={showAbandoned} transparent animationType="fade">
         <View style={S.overlay}><View style={S.modal}>
           <Text style={S.mTtl}>Game Ended</Text>
           <Text style={S.mDesc}>The host has ended the game.</Text>
-          <TouchableOpacity style={[S.mBtn, { backgroundColor: "#00c781" }]}
-            onPress={() => { setShowAbandoned(false); navigation.reset({ index: 0, routes: [{ name: "JoinGameScreen" }] }); }}>
+          <TouchableOpacity style={[S.mBtn,{backgroundColor:"#00c781"}]} onPress={()=>{setShowAbandoned(false);navigation.reset({index:0,routes:[{name:"JoinGameScreen"}]});}}>
             <Text style={S.mBtnTxt}>Back to Menu</Text>
           </TouchableOpacity>
         </View></View>
       </Modal>
 
-      {/* Leave button */}
-      <TouchableOpacity style={S.leaveBtn} onPress={() => setShowLeave(true)}>
+      {/* Leave */}
+      <TouchableOpacity style={S.leaveBtn} onPress={()=>setShowLeave(true)}>
         <Text style={S.leaveBtnTxt}>Leave</Text>
       </TouchableOpacity>
-      <LeaveModal visible={showLeave} isHost={false}
-        onStay={() => setShowLeave(false)} onLeave={handleLeave} />
+      <LeaveModal visible={showLeave} isHost={false} onStay={()=>setShowLeave(false)} onLeave={handleLeave}/>
 
     </SafeAreaView>
   );
 }
 
-// ─── Leave Modal ──────────────────────────────────────────────────────────────
-function LeaveModal({ visible, isHost, onStay, onLeave }) {
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function Legend() {
+  return (
+    <View style={S.legend}>
+      {Object.entries(SPACE_CFG).map(([type,cfg])=>(
+        <View key={type} style={S.legendItem}>
+          <View style={[S.legendSwatch,{backgroundColor:cfg.bg,borderColor:cfg.border}]}/>
+          <Text style={[S.legendTxt,{color:cfg.border}]}>{type.charAt(0).toUpperCase()+type.slice(1)}</Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function LeaveModal({visible,isHost,onStay,onLeave}) {
   return (
     <Modal visible={visible} transparent animationType="fade">
       <View style={S.overlay}><View style={S.modal}>
-        <Text style={S.mTtl}>{isHost ? "End Game?" : "Leave Game?"}</Text>
-        <Text style={S.mDesc}>
-          {isHost ? "Leaving will end the game for all players." : "Are you sure you want to leave?"}
-        </Text>
-        <View style={{ flexDirection: "row", gap: 12, width: "100%" }}>
-          <TouchableOpacity style={[S.mBtn, { flex: 1, backgroundColor: "#2a2a2a" }]} onPress={onStay}>
-            <Text style={S.mBtnTxt}>Stay</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={[S.mBtn, { flex: 1, backgroundColor: "#c0392b" }]} onPress={onLeave}>
-            <Text style={S.mBtnTxt}>Leave</Text>
-          </TouchableOpacity>
+        <Text style={S.mTtl}>{isHost?"End Game?":"Leave Game?"}</Text>
+        <Text style={S.mDesc}>{isHost?"This will end the game for all players.":"Are you sure you want to leave?"}</Text>
+        <View style={{flexDirection:"row",gap:12,width:"100%"}}>
+          <TouchableOpacity style={[S.mBtn,{flex:1,backgroundColor:"#2a2a2a"}]} onPress={onStay}><Text style={S.mBtnTxt}>Stay</Text></TouchableOpacity>
+          <TouchableOpacity style={[S.mBtn,{flex:1,backgroundColor:"#c0392b"}]} onPress={onLeave}><Text style={S.mBtnTxt}>Leave</Text></TouchableOpacity>
         </View>
       </View></View>
     </Modal>
   );
 }
 
-// ─── Game Over Modal ──────────────────────────────────────────────────────────
-function GameOverModal({ session, myPos, boardEnd, onExit }) {
-  const sorted = [...(session?.players || [])].sort((a, b) => (b.position || 0) - (a.position || 0));
+function GameOverModal({session,myPos,boardEnd,onExit}) {
+  const sorted = [...(session?.players||[])].sort((a,b)=>(b.position||0)-(a.position||0));
   const winner = sorted[0];
   return (
     <Modal visible transparent animationType="fade">
       <View style={S.overlay}><View style={S.modal}>
-        <Text style={S.mTtl}>Game Over</Text>
-        {winner && (
-          <Text style={[S.mDesc, { fontSize: 18 }]}>
-            Winner: <Text style={{ color: winner.color || "#00c781", fontWeight: "bold" }}>{winner.name}</Text>
-            {" — Space "}{winner.position}
-          </Text>
-        )}
-        {myPos >= 0 && <Text style={[S.mDesc, { color: "#555" }]}>You reached space {myPos}/{boardEnd}</Text>}
-        <View style={{ width: "100%", marginVertical: 12 }}>
-          {sorted.slice(0, 10).map((p, i) => (
-            <View key={p.name || i} style={S.lbRow}>
-              <Text style={S.lbRank}>#{i + 1}</Text>
-              <View style={[S.lbDot, { backgroundColor: p.color || "#888" }]} />
-              <Text style={[S.lbName, { flex: 1 }]}>{p.name}</Text>
-              <Text style={S.lbPos}>{p.position || 0}/{boardEnd}</Text>
+        <Text style={S.mTtl}>Game Over!</Text>
+        {winner&&<Text style={[S.mDesc,{fontSize:20}]}>🏆 <Text style={{color:winner.color||"#00c781",fontWeight:"bold"}}>{winner.name}</Text> wins! Space {winner.position}</Text>}
+        {myPos>=0&&<Text style={[S.mDesc,{color:"#666"}]}>You reached space {myPos}/{boardEnd}</Text>}
+        <View style={{width:"100%",marginVertical:12}}>
+          {sorted.slice(0,10).map((p,i)=>(
+            <View key={p.name||i} style={S.lbRow}>
+              <Text style={S.lbRank}>#{i+1}</Text>
+              <View style={[S.lbDot,{backgroundColor:p.color||"#888"}]}/>
+              <Text style={[S.lbName,{flex:1}]}>{p.name}</Text>
+              <Text style={S.lbPos}>{p.position||0}/{boardEnd}</Text>
             </View>
           ))}
         </View>
-        <TouchableOpacity style={[S.mBtn, { backgroundColor: "#00c781" }]} onPress={onExit}>
-          <Text style={S.mBtnTxt}>Back to Menu</Text>
-        </TouchableOpacity>
+        <TouchableOpacity style={[S.mBtn,{backgroundColor:"#00c781"}]} onPress={onExit}><Text style={S.mBtnTxt}>Back to Menu</Text></TouchableOpacity>
       </View></View>
     </Modal>
   );
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
+// ── Styles ────────────────────────────────────────────────────────────────────
 const S = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#111" },
-  center:    { flex: 1, backgroundColor: "#111", justifyContent: "center", alignItems: "center" },
-  loadingText: { color: "#fff", marginTop: 16, fontSize: 18 },
+  container: { flex:1, backgroundColor:"#111" },
+  center:    { flex:1, backgroundColor:"#111", justifyContent:"center", alignItems:"center" },
 
-  // HUD
-  hud: { flexDirection: "row", alignItems: "center", backgroundColor: "#0a0a0a", borderBottomWidth: 2, borderBottomColor: "#222", paddingVertical: 14, paddingHorizontal: 10 },
-  hudCell: { flex: 1, alignItems: "center" },
-  hudLbl:  { color: "#444", fontSize: 10, letterSpacing: 1.2, fontWeight: "700" },
-  hudVal:  { color: "#fff", fontSize: 20, fontWeight: "bold", marginTop: 2 },
-  mapBtn:  { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10, backgroundColor: "#1a1a1a", borderWidth: 1, borderColor: "#333" },
-  mapBtnOn:{ backgroundColor: "#002a1a", borderColor: "#00c781" },
-  mapBtnTxt: { color: "#aaa", fontSize: 13, fontWeight: "700" },
+  hud:     { flexDirection:"row", alignItems:"center", backgroundColor:"#0a0a0a", borderBottomWidth:2, borderBottomColor:"#222", paddingVertical:12, paddingHorizontal:10 },
+  hudCell: { flex:1, alignItems:"center" },
+  hudLbl:  { color:"#444", fontSize:9, letterSpacing:1.5, fontWeight:"700" },
+  hudVal:  { color:"#fff", fontSize:17, fontWeight:"bold", marginTop:2 },
+  mapBtn:  { paddingHorizontal:12, paddingVertical:8, borderRadius:10, backgroundColor:"#1a1a1a", borderWidth:1, borderColor:"#333" },
+  mapBtnOn:{ backgroundColor:"#002a1a", borderColor:"#00c781" },
+  mapBtnTxt: { color:"#aaa", fontSize:12, fontWeight:"700" },
 
-  main: { flex: 1 },
+  timerBarTrack: { width:"100%", height:6, backgroundColor:"#1a1a1a" },
+  timerBarFill:  { height:6, backgroundColor:"#00c781", alignSelf:"flex-start" },
 
-  // Questions
-  qArea: { padding: 16, paddingBottom: 40 },
-  qCard: { gap: 16 },
-  stunnedBanner:  { backgroundColor: "#280000", borderRadius: 10, padding: 12, marginBottom: 4 },
-  stunnedTxt:     { color: "#ff6b6b", fontSize: 14, fontWeight: "bold", textAlign: "center" },
-  progDots: { flexDirection: "row", justifyContent: "center", gap: 12 },
-  dot:      { width: 18, height: 18, borderRadius: 9, backgroundColor: "#2a2a2a", borderWidth: 2, borderColor: "#444" },
-  dotOn:    { backgroundColor: "#00c781", borderColor: "#00c781" },
-  progTxt:  { color: "#555", fontSize: 13, textAlign: "center" },
-  qTimer:   { color: "#f39c12", fontSize: 22, fontWeight: "bold", textAlign: "center" },
-  qTxt:     { color: "#fff", fontSize: 20, fontWeight: "700", lineHeight: 28, textAlign: "center" },
-  aGrid:    { gap: 10 },
-  aBtn:     { backgroundColor: "#1e1e1e", borderRadius: 12, padding: 18, borderWidth: 2, alignItems: "center" },
-  aTxt:     { color: "#fff", fontSize: 17, fontWeight: "600" },
-  fb:       { textAlign: "center", fontSize: 20, fontWeight: "bold" },
-  waitBox:  { alignItems: "center", paddingVertical: 80, gap: 14 },
-  waitTxt:  { color: "#555", fontSize: 16 },
+  main: { flex:1 },
 
-  legend:      { flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: 12, paddingVertical: 10, paddingHorizontal: 8 },
-  legendItem:  { flexDirection: "row", alignItems: "center", gap: 5 },
-  legendSwatch:{ width: 14, height: 14, borderRadius: 3, borderWidth: 1.5 },
-  legendTxt:   { fontSize: 11, fontWeight: "600" },
+  qScroll:     { flexGrow:1, justifyContent:"center", padding:20, paddingBottom:60 },
+  qCard:       { gap:18 },
+  stunnedBanner: { backgroundColor:"#280000", borderRadius:12, padding:14, marginBottom:8 },
+  stunnedTxt:    { color:"#ff6b6b", fontSize:15, fontWeight:"bold", textAlign:"center" },
+  rollProgressBar: { flexDirection:"row", alignItems:"center", justifyContent:"center", gap:8, marginBottom:12 },
+  rollDot:         { width:14, height:14, borderRadius:7, backgroundColor:"#2a2a2a", borderWidth:2, borderColor:"#444" },
+  rollDotOn:       { backgroundColor:"#00c781", borderColor:"#00c781" },
+  rollProgressTxt: { color:"#555", fontSize:12, marginLeft:4 },
+  qTxt:    { color:"#fff", fontSize:28, fontWeight:"700", lineHeight:38, textAlign:"center" },
+  aGrid:   { gap:12 },
+  aBtn:    { borderRadius:14, padding:22, borderWidth:2.5, alignItems:"center" },
+  aTxt:    { color:"#fff", fontSize:20, fontWeight:"600" },
+  waitBox: { alignItems:"center", paddingVertical:80, gap:14 },
+  waitTxt: { color:"#555", fontSize:16 },
 
-  // Dice
-  diceBox:  { flex: 1, alignItems: "center", justifyContent: "center", gap: 20, backgroundColor: "#0d0d0d", padding: 24 },
-  diceTtl:  { color: "#fff", fontSize: 22, fontWeight: "bold" },
-  luckTxt:  { color: "#888", fontSize: 14 },
-  diceFace: { fontSize: 88 },
-  diceRes:  { color: "#00c781", fontSize: 22, fontWeight: "bold" },
-  rollBtn:  { backgroundColor: "#00c781", paddingVertical: 20, paddingHorizontal: 72, borderRadius: 18 },
-  rollTxt:  { color: "#000", fontSize: 24, fontWeight: "bold" },
+  legend:       { flexDirection:"row", flexWrap:"wrap", justifyContent:"center", gap:10, paddingVertical:10 },
+  legendItem:   { flexDirection:"row", alignItems:"center", gap:5 },
+  legendSwatch: { width:14, height:14, borderRadius:3, borderWidth:1.5 },
+  legendTxt:    { fontSize:11, fontWeight:"600" },
 
-  // Moving
-  movingBox: { flex: 1, alignItems: "center", justifyContent: "center", gap: 16, backgroundColor: "#0d0d0d" },
-  movingTxt: { color: "#aaa", fontSize: 18 },
+  diceBox:  { flex:1, alignItems:"center", justifyContent:"center", gap:18, backgroundColor:"#0d0d0d", padding:24 },
+  diceTtl:  { color:"#fff", fontSize:24, fontWeight:"bold", textAlign:"center" },
+  luckTxt:  { color:"#888", fontSize:14, textAlign:"center" },
+  diceFace: { fontSize:96 },
+  diceRes:  { color:"#00c781", fontSize:24, fontWeight:"bold" },
+  rollBtn:  { backgroundColor:"#00c781", paddingVertical:20, paddingHorizontal:72, borderRadius:18 },
+  rollTxt:  { color:"#000", fontSize:26, fontWeight:"bold" },
 
-  // Host
-  hostHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: 18, backgroundColor: "#0a0a0a", borderBottomWidth: 1, borderBottomColor: "#222" },
-  hostTitle:  { color: "#00c781", fontSize: 20, fontWeight: "bold" },
-  timerTxt:   { color: "#fff", fontSize: 18, fontWeight: "bold" },
-  endBtn:     { backgroundColor: "#c0392b", paddingVertical: 10, paddingHorizontal: 22, borderRadius: 12 },
-  endBtnTxt:  { color: "#fff", fontWeight: "bold", fontSize: 15 },
-  hostBody:   { flex: 1, flexDirection: "row" },
-  hostSide:   { width: 260, backgroundColor: "#0a0a0a", padding: 16, borderLeftWidth: 1, borderLeftColor: "#222" },
-  lbTitle:    { color: "#00c781", fontSize: 18, fontWeight: "bold", marginBottom: 14 },
-  lbRow:      { flexDirection: "row", alignItems: "center", paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: "#1a1a1a" },
-  lbRank:     { color: "#fff", width: 32, fontSize: 15 },
-  lbDot:      { width: 13, height: 13, borderRadius: 7, marginRight: 10 },
-  lbName:     { color: "#fff", fontSize: 14, fontWeight: "500" },
-  lbPos:      { color: "#aaa", fontSize: 13 },
+  movingBox: { flex:1, alignItems:"center", justifyContent:"center", gap:16, backgroundColor:"#0d0d0d" },
+  movingTxt: { color:"#aaa", fontSize:18 },
 
-  // Leave
-  leaveBtn:    { position: "absolute", bottom: 12, left: 16, backgroundColor: "#2a0000", paddingVertical: 10, paddingHorizontal: 20, borderRadius: 12 },
-  leaveBtnTxt: { color: "#ff6b6b", fontSize: 14, fontWeight: "bold" },
+  mysteryScroll: { flexGrow:1, justifyContent:"flex-start", padding:24, paddingBottom:60, alignItems:"center", gap:16 },
+  mysteryBigTtl: { color:"#8e44ad", fontSize:32, fontWeight:"900", textAlign:"center" },
+  mysteryCard:   { backgroundColor:"#1a0a2a", borderRadius:20, borderWidth:2, padding:24, alignItems:"center", gap:8, width:"90%", maxWidth:400 },
+  mysteryEmoji:  { fontSize:52 },
+  mysteryTitle:  { fontSize:26, fontWeight:"bold", textAlign:"center" },
+  mysteryDesc:   { color:"#ccc", fontSize:16, textAlign:"center", lineHeight:22 },
+  targetBtn:     { flexDirection:"row", alignItems:"center", backgroundColor:"#1a1a1a", borderRadius:14, borderWidth:2, paddingVertical:14, paddingHorizontal:18, width:"90%", maxWidth:400 },
+  targetName:    { flex:1, fontSize:18, fontWeight:"600" },
+  targetPos:     { color:"#555", fontSize:14 },
 
-  // Overlay / modals
-  overlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.92)", justifyContent: "center", alignItems: "center" },
-  modal: { backgroundColor: "#1a1a1a", borderRadius: 22, padding: 28, width: "90%", maxWidth: 440, alignItems: "center", borderWidth: 1, borderColor: "#2a2a2a", gap: 14 },
-  mTtl:    { color: "#fff", fontSize: 24, fontWeight: "bold", textAlign: "center" },
-  mDesc:   { color: "#bbb", fontSize: 16, textAlign: "center", lineHeight: 22 },
-  mBtn:    { paddingVertical: 16, paddingHorizontal: 48, borderRadius: 14, width: "100%", alignItems: "center" },
-  mBtnTxt: { color: "#fff", fontSize: 18, fontWeight: "bold" },
-  trapSecs:{ color: "#fff", fontSize: 36, fontWeight: "bold" },
+  flashOverlay: { position:"absolute", top:0, left:0, right:0, bottom:0, justifyContent:"center", alignItems:"center", zIndex:999 },
+  flashTtl:     { color:"#000", fontSize:64, fontWeight:"900", letterSpacing:2, textAlign:"center" },
+  flashSubLbl:  { color:"rgba(0,0,0,0.7)", fontSize:20, marginTop:20 },
+  flashSubTxt:  { color:"#000", fontSize:26, fontWeight:"bold", textAlign:"center", paddingHorizontal:32 },
+
+  hostHeader: { flexDirection:"row", justifyContent:"space-between", alignItems:"center", padding:18, backgroundColor:"#0a0a0a", borderBottomWidth:1, borderBottomColor:"#222" },
+  hostTitle:  { color:"#00c781", fontSize:20, fontWeight:"bold" },
+  timerTxt:   { color:"#fff", fontSize:18, fontWeight:"bold" },
+  endBtn:     { backgroundColor:"#c0392b", paddingVertical:10, paddingHorizontal:22, borderRadius:12 },
+  endBtnTxt:  { color:"#fff", fontWeight:"bold", fontSize:15 },
+  hostBody:   { flex:1, flexDirection:"row" },
+  hostSide:   { width:260, backgroundColor:"#0a0a0a", padding:16, borderLeftWidth:1, borderLeftColor:"#222" },
+  lbTitle:    { color:"#00c781", fontSize:18, fontWeight:"bold", marginBottom:14 },
+  lbRow:      { flexDirection:"row", alignItems:"center", paddingVertical:10, borderBottomWidth:1, borderBottomColor:"#1a1a1a" },
+  lbRank:     { color:"#fff", width:32, fontSize:15 },
+  lbDot:      { width:13, height:13, borderRadius:7, marginRight:10 },
+  lbName:     { color:"#fff", fontSize:14, fontWeight:"500" },
+  lbPos:      { color:"#aaa", fontSize:13 },
+
+  leaveBtn:    { position:"absolute", bottom:12, left:16, backgroundColor:"#2a0000", paddingVertical:10, paddingHorizontal:20, borderRadius:12 },
+  leaveBtnTxt: { color:"#ff6b6b", fontSize:14, fontWeight:"bold" },
+
+  overlay: { flex:1, backgroundColor:"rgba(0,0,0,0.92)", justifyContent:"center", alignItems:"center" },
+  modal:   { backgroundColor:"#1a1a1a", borderRadius:22, padding:28, width:"90%", maxWidth:440, alignItems:"center", borderWidth:1, borderColor:"#2a2a2a", gap:12 },
+  mTtl:    { color:"#fff", fontSize:24, fontWeight:"bold", textAlign:"center" },
+  mDesc:   { color:"#bbb", fontSize:16, textAlign:"center", lineHeight:22 },
+  mBtn:    { paddingVertical:16, borderRadius:14, width:"100%", alignItems:"center" },
+  mBtnTxt: { color:"#fff", fontSize:18, fontWeight:"bold" },
+  trapSecs:{ color:"#fff", fontSize:36, fontWeight:"bold" },
 });
