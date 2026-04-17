@@ -524,8 +524,10 @@ export default function BoardGameScreen({ route, navigation }) {
 
   // ── Open mystery box (Modal overlay on map) ───────────────────────────────
   const openMysteryBox = useCallback(() => {
-    // Save whatever phase we were in so we can restore it on close
-    savedPhaseRef.current = phaseRef.current;
+    const cur = phaseRef.current;
+    // "moving" means the animation loop already finished — restoring "moving" would stuck.
+    // Save "rolled" instead so user sees "Back to Questions" after closing the mystery box.
+    savedPhaseRef.current = cur === "moving" ? "rolled" : cur;
     setMBoxOpen(true); setMBoxStep("roll"); setMBoxKey(null); setMBoxDef(null); setMBoxRolling(false);
     setViewMode("map");
   }, []);
@@ -567,10 +569,12 @@ export default function BoardGameScreen({ route, navigation }) {
   // Apply effect that doesn't need a target (immunity, doubleroll, or inventory item)
   const claimMBoxNoTarget = useCallback(async () => {
     if (!mBoxDef) return;
+    // Peek at restore target BEFORE closeMBox clears savedPhaseRef
+    const willReturnToQ = !savedPhaseRef.current || savedPhaseRef.current === "questions";
     if (mBoxDef.inventoryType) {
       addToInventory(mBoxDef.inventoryType, "mystery box reward");
       closeMBox();
-      setQIdx(i => i+1);
+      if (willReturnToQ) setQIdx(i => i+1);
       return;
     }
     switch (mBoxKey) {
@@ -596,12 +600,15 @@ export default function BoardGameScreen({ route, navigation }) {
         break;
     }
     closeMBox();
-    setQIdx(i => i+1);
+    if (willReturnToQ) setQIdx(i => i+1);
   }, [mBoxDef, mBoxKey, addToInventory, closeMBox, playerName, playerUid, sessionId]);
 
   // Apply effect on a chosen target
   const claimMBoxTarget = useCallback(async (target) => {
     if (!mBoxKey) { closeMBox(); return; }
+
+    // Peek at restore target BEFORE closeMBox clears savedPhaseRef
+    const willReturnToQ = !savedPhaseRef.current || savedPhaseRef.current === "questions";
 
     // Fetch FRESH player data from Firestore so deflector/immunity checks are accurate
     let freshSess;
@@ -617,29 +624,26 @@ export default function BoardGameScreen({ route, navigation }) {
     const tDeflect = tPlayer?.deflectorExpires > Date.now();
 
     if (tDeflect) {
-      // Deflect: apply the effect back at the attacker (self)
       setNotif(`Your ${mBoxDef?.title} was deflected back at you by ${target.name}! 🪞`);
       setShowNotif(true);
       const n = {text:`You deflected ${playerName}'s ${mBoxDef?.title} back at them! 🪞`, id:Date.now()};
       const upd = (sess.players||[]).map(p => p.name===target.name ? {...p, notification:n} : p);
       updateDoc(doc(db,"gameSessions",sessionId), {players:upd}).catch(console.error);
-      // Also clear target's deflector
       const upd2 = (sess.players||[]).map(p => p.name===target.name ? {...p, deflectorExpires:0} : p);
       updateDoc(doc(db,"gameSessions",sessionId), {players:upd2}).catch(console.error);
       closeMBox();
-      setQIdx(i => i+1);
+      if (willReturnToQ) setQIdx(i => i+1);
       return;
     }
 
     if (tImmune && ["pushback","stun","badluck","duel"].includes(mBoxKey)) {
       setNotif(`${target.name} is immune! Your ${mBoxDef?.title} was blocked.`);
       setShowNotif(true);
-      // IMPORTANT: do NOT call closeMBox() here — just close the modal overlay.
-      // closeMBox() resets phase which can break movePlayer loops.
       setMBoxOpen(false); setMBoxKey(null); setMBoxDef(null);
       const restore = savedPhaseRef.current; savedPhaseRef.current = null;
       if (restore && restore !== "questions") { setPhaseSync(restore); setViewMode(["rolling","moving","space_roll"].includes(restore)?"map":"questions"); }
-      setQIdx(i => i+1);
+      // Only advance question if we're going back to questions
+      if (!restore || restore === "questions") setQIdx(i => i+1);
       return;
     }
 
@@ -691,7 +695,7 @@ export default function BoardGameScreen({ route, navigation }) {
       }
     }
     closeMBox();
-    setQIdx(i => i+1);
+    if (willReturnToQ) setQIdx(i => i+1);
   }, [mBoxKey, mBoxDef, playerName, playerUid, playerColor, sessionId, closeMBox, qList]);
 
   // ── 1v1 Duel answer ───────────────────────────────────────────────────────
