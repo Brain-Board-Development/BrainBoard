@@ -23,10 +23,9 @@ import {
   collection,
 } from 'firebase/firestore';
 import {
-  getStorage,
   ref as storageRef,
   uploadBytes,
-  getDownloadURL
+  getDownloadURL,
 } from 'firebase/storage';
 
 export default function CreateGameMenu({ navigation, route }) {
@@ -144,8 +143,8 @@ export default function CreateGameMenu({ navigation, route }) {
       const ext = file.name.split('.').pop() || 'jpg';
       const fileName = `${isCover ? 'cover' : 'question'}-${Date.now()}.${ext}`;
       const storagePath = `games/${user.uid}/${fileName}`;
-      const storageInstance = getStorage();
-      const storageRefPath = storageRef(storageInstance, storagePath);
+      // Use the already-initialized storage instance from firebaseConfig
+      const storageRefPath = storageRef(storage, storagePath);
       const snapshot = await uploadBytes(storageRefPath, file);
       const url = await getDownloadURL(snapshot.ref);
       if (isCover) { setCoverImage(url); } else { updateCurrentQuestion({ imageUrl: url }); }

@@ -6,7 +6,7 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
   View, Text, StyleSheet, TouchableOpacity, ActivityIndicator,
-  SafeAreaView, Modal, ScrollView, Animated, Dimensions,
+  SafeAreaView, Modal, ScrollView, Animated, Dimensions, TextInput,
 } from "react-native";
 import { db } from "../firebaseConfig";
 import { doc, onSnapshot, updateDoc, getDoc } from "firebase/firestore";
@@ -150,6 +150,12 @@ export default function Lobby({ route, navigation }) {
   const [starting,   setStarting]   = useState(false);
   const [writeError, setWriteError] = useState(null);
 
+  // Host-plays: name & color chosen in lobby before start
+  const [hostName,   setHostName]   = useState("");
+  const [hostColor,  setHostColor]  = useState("#00c781");
+  const [hostNameErr,setHostNameErr]= useState(false);
+  const hostUid = useRef("host_" + Date.now()).current;
+
   const sessionRef = useRef(null);
   const pinPulse   = useRef(new Animated.Value(1)).current;
 
@@ -201,10 +207,17 @@ export default function Lobby({ route, navigation }) {
   };
 
   const handleStartGame = async () => {
-    if (players.length === 0) { setWriteError("Wait for at least one player."); return; }
+    const hostPlays = session?.settings?.hostPlays;
+
+    // If hostPlays is on, the host must have entered a name
+    if (hostPlays) {
+      if (!hostName.trim()) { setHostNameErr(true); setWriteError("Enter your name before starting."); return; }
+    }
+    if (players.length === 0 && !hostPlays) { setWriteError("Wait for at least one player."); return; }
     if (starting) return;
     setStarting(true);
     setWriteError(null);
+    setHostNameErr(false);
 
     try {
       const sd = sessionRef.current;
@@ -275,6 +288,22 @@ export default function Lobby({ route, navigation }) {
       }
 
       const durSecs = ((sd.settings && sd.settings.gameDuration) || 10) * 60;
+      const hostPlays = !!(sd.settings && sd.settings.hostPlays);
+
+      // If hostPlays is on, inject the host as the first player
+      if (hostPlays) {
+        const hName  = hostName.trim() || "Host";
+        const hColor = hostColor;
+        const hostPlayer = {
+          uid: hostUid, name: hName, color: hColor,
+          joinedAt: new Date().toISOString(),
+          score: 0, position: 0, correctStreak: 0, totalCorrect: 0,
+          luck: 0, stunned: false, isHostPlayer: true,
+        };
+        if (!finalPlayers.some(p => p.uid === hostUid)) {
+          finalPlayers = [hostPlayer, ...finalPlayers];
+        }
+      }
 
       await updateDoc(doc(db, "gameSessions", sessionId), {
         status:               "playing",
@@ -286,13 +315,25 @@ export default function Lobby({ route, navigation }) {
         settings:             { ...(sd.settings || {}), boardSize: boardEnd },
       });
 
-      navigation.replace("BoardGameScreen", {
-        sessionId,
-        gameId: gid,
-        playerName:  route.params.hostName || "Host",
-        playerColor: "#00c781",
-        isHost:      true,
-      });
+      if (hostPlays) {
+        navigation.replace("BoardGameScreen", {
+          sessionId,
+          gameId:        gid,
+          playerName:    hostName.trim() || "Host",
+          playerColor:   hostColor,
+          playerUid:     hostUid,
+          isHost:        true,
+          hostIsPlaying: true,
+        });
+      } else {
+        navigation.replace("BoardGameScreen", {
+          sessionId,
+          gameId:     gid,
+          playerName: "Host",
+          playerColor:"#00c781",
+          isHost:     true,
+        });
+      }
     } catch (err) {
       console.error("Start:", err);
       setWriteError("Failed to start — " + err.message + ". Check Firestore rules.");
@@ -368,6 +409,40 @@ export default function Lobby({ route, navigation }) {
             <Text style={[S.badge, { color: "#e74c3c" }]}>❌ Correct answer hidden</Text>
           ) : null}
         </View>
+
+        {/* Host-plays name & color picker — only shown when setting is on */}
+        {isHost && session?.settings?.hostPlays ? (
+          <View style={S.hostPickerBox}>
+            <Text style={S.hostPickerTitle}>🎮 You're playing! Enter your name</Text>
+            <TextInput
+              style={[S.hostNameInput, hostNameErr && S.hostNameInputErr]}
+              placeholder="Your name…"
+              placeholderTextColor="#444"
+              value={hostName}
+              onChangeText={t => { setHostName(t); setHostNameErr(false); setWriteError(null); }}
+              maxLength={20}
+              autoCapitalize="words"
+            />
+            <Text style={S.hostPickerSubtitle}>Pick your colour</Text>
+            <View style={S.hostColorRow}>
+              {["#00c781","#e74c3c","#e67e22","#f1c40f","#3498db","#9b59b6","#e91e63","#1abc9c","#ff5722","#00bcd4"].map(c => {
+                const taken  = players.some(p => p.color === c);
+                const active = hostColor === c;
+                return (
+                  <TouchableOpacity
+                    key={c}
+                    onPress={() => !taken && setHostColor(c)}
+                    disabled={taken}
+                    style={[S.hostSwatch, { backgroundColor: c }, active && S.hostSwatchActive, taken && S.hostSwatchTaken]}
+                  >
+                    {active && <Text style={S.hostSwatchCheck}>✓</Text>}
+                    {taken  && <Text style={S.hostSwatchCheck}>✕</Text>}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+        ) : null}
 
         {players.length === 0 ? (
           <View style={S.emptyArea}>
@@ -471,6 +546,17 @@ const S = StyleSheet.create({
   badge:        { color: "#00c781", fontSize: 12, marginTop: 4 },
   emptyArea:  { alignItems: "center", paddingVertical: 36 },
   emptyTxt:   { color: "#555", fontSize: 17 },
+
+  hostPickerBox:     { backgroundColor: "#0d1a12", borderRadius: 14, padding: 16, marginBottom: 14, borderWidth: 1.5, borderColor: "#00c781" },
+  hostPickerTitle:   { color: "#00c781", fontSize: 15, fontWeight: "bold", marginBottom: 10 },
+  hostPickerSubtitle:{ color: "#888", fontSize: 12, marginTop: 12, marginBottom: 8 },
+  hostNameInput:     { backgroundColor: "#1e1e1e", color: "#fff", fontSize: 18, padding: 14, borderRadius: 12, borderWidth: 1.5, borderColor: "#333" },
+  hostNameInputErr:  { borderColor: "#e74c3c" },
+  hostColorRow:      { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  hostSwatch:        { width: 36, height: 36, borderRadius: 18, justifyContent: "center", alignItems: "center", borderWidth: 2.5, borderColor: "transparent" },
+  hostSwatchActive:  { borderColor: "#fff", transform: [{ scale: 1.2 }] },
+  hostSwatchTaken:   { opacity: 0.25 },
+  hostSwatchCheck:   { color: "#fff", fontSize: 14, fontWeight: "bold" },
   playerGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginBottom: 8 },
   playerCard: { flexDirection: "row", alignItems: "center", backgroundColor: "#1e1e1e", borderRadius: 12, paddingVertical: 12, paddingHorizontal: 14, borderWidth: 1, borderColor: "#2a2a2a", minWidth: 120, flex: 1 },
   playerDot:  { width: 14, height: 14, borderRadius: 7, marginRight: 10 },
