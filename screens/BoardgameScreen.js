@@ -17,7 +17,7 @@ import {
   Animated, Dimensions, ActivityIndicator, SafeAreaView, Modal, Image,
 } from "react-native";
 import { db, auth } from "../firebaseConfig";
-import { doc, onSnapshot, updateDoc, runTransaction } from "firebase/firestore";
+import { doc, onSnapshot, updateDoc, runTransaction, getDoc } from "firebase/firestore";
 
 const { width: SCREEN_W } = Dimensions.get("window");
 const BOARD_COLS = 10;
@@ -120,7 +120,7 @@ const bS = StyleSheet.create({
   tile:     {borderRadius:9,margin:2,alignItems:"center",justifyContent:"center",position:"relative"},
   tokenRow: {position:"absolute",bottom:3,flexDirection:"row",flexWrap:"wrap",justifyContent:"center"},
   token:    {margin:1,borderWidth:1.5,borderColor:"rgba(255,255,255,0.4)"},
-  outline:  {textShadowColor:"rgba(255,255,255,0.95)",textShadowOffset:{width:0,height:0},textShadowRadius:6},
+  outline:  {textShadowColor:"#ffffff",textShadowOffset:{width:0,height:0},textShadowRadius:4},
 });
 
 function CloseBtn({ onPress }) {
@@ -146,7 +146,7 @@ function Legend() {
 
 function DiceFace({ value, style }) {
   return (
-    <Text style={[style, {textShadowColor:"rgba(255,255,255,0.6)",textShadowOffset:{width:0,height:0},textShadowRadius:8}]}>
+    <Text style={[style, {textShadowColor:"#ffffff",textShadowOffset:{width:0,height:0},textShadowRadius:4}]}>
       {value ? getDiceFace(Math.min(6, value)) : "?"}
     </Text>
   );
@@ -202,6 +202,7 @@ export default function BoardGameScreen({ route, navigation }) {
   const [mBoxKey,     setMBoxKey]     = useState(null);
   const [mBoxDef,     setMBoxDef]     = useState(null);
   const [mBoxRolling, setMBoxRolling] = useState(false);
+  const savedPhaseRef = useRef(null); // phase to restore after mystery box closes
   const mBoxAnim = useRef(new Animated.Value(0)).current;
 
   // Inventory — only mystery_box and deflector
@@ -216,17 +217,22 @@ export default function BoardGameScreen({ route, navigation }) {
   // Active bonuses
   const [doubleRollsLeft, setDoubleRollsLeft] = useState(0);
   const [immunityLeft,    setImmunityLeft]    = useState(0);
+  const [immunitySecsLeft,setImmunitySecsLeft]= useState(0);
   const immunityTimerRef  = useRef(null);
+  const immunitySecsRef   = useRef(null);
   const [deflectorActive, setDeflectorActive] = useState(false);
+  const [deflectorSecsLeft,setDeflectorSecsLeft]=useState(0);
   const deflectorTimerRef = useRef(null);
+  const deflectorSecsRef  = useRef(null);
 
   // Stun recovery
   const [stunRecovery, setStunRecovery] = useState(0);
   const prevStunnedRef = useRef(false);
 
   // Notifications (from opponents' effects)
-  const [notif,     setNotif]     = useState("");
-  const [showNotif, setShowNotif] = useState(false);
+  const [notif,          setNotif]          = useState("");
+  const [showNotif,      setShowNotif]       = useState(false);
+  const [interruptedPhase,setInterruptedPhase]=useState(null); // phase to restore after dismissing notif
   const lastNotifId = useRef(0);
 
   // Duel
@@ -272,6 +278,14 @@ export default function BoardGameScreen({ route, navigation }) {
           lastNotifId.current = me.notification.id;
           setNotif(me.notification.text || "");
           setShowNotif(true);
+          // Pause whatever the player was doing so they see the notification immediately
+          setInterruptedPhase(prev => prev); // keep existing interrupted phase if already interrupted
+          setPhase(curr => {
+            if (curr !== "questions" && curr !== "duel") {
+              setInterruptedPhase(curr);
+            }
+            return curr;
+          });
         }
         if (me.stunned && !prevStunnedRef.current) setStunRecovery(0);
         prevStunnedRef.current = !!me.stunned;
@@ -313,7 +327,7 @@ export default function BoardGameScreen({ route, navigation }) {
 
   // ── Auto map ──────────────────────────────────────────────────────────────
   useEffect(() => {
-    if (["rolling","moving","space_roll"].includes(phase)) setViewMode("map");
+    if (["rolling","moving","space_roll","rolled"].includes(phase)) setViewMode("map");
     if (["questions","duel"].includes(phase))               setViewMode("questions");
   }, [phase]);
 
@@ -386,27 +400,29 @@ export default function BoardGameScreen({ route, navigation }) {
     clearInterval(trapRef.current); setTrapEvent(null); setTrapAnswered(false);
   }, []);
 
-  const exitMoving = () => { setPhase("questions"); setDiceValue(null); setQIdx(i => i+1); };
+  // exitMoving: show "Back to Questions" prompt instead of auto-returning
+  const exitMoving = () => { setPhase("rolled"); setDiceValue(null); };
 
   // ── Item toast ────────────────────────────────────────────────────────────
-  const showItemToast = useCallback((type) => {
+  const showItemToast = useCallback((type, reason) => {
     const def = INVENTORY_DEFS[type];
     if (!def) return;
-    setItemToast({emoji:def.emoji, text:`${def.label} added to inventory!`});
+    const reasonLine = reason ? ` — ${reason}` : "";
+    setItemToast({emoji:def.emoji, text:`${def.label} added to inventory!${reasonLine}`});
     toastAnim.setValue(0);
     Animated.sequence([
       Animated.timing(toastAnim, {toValue:1, duration:300, useNativeDriver:false}),
-      Animated.delay(2200),
+      Animated.delay(2800),
       Animated.timing(toastAnim, {toValue:0, duration:300, useNativeDriver:false}),
     ]).start(() => setItemToast(null));
   }, []);
 
   // ── Inventory ─────────────────────────────────────────────────────────────
-  const addToInventory = useCallback((type) => {
+  const addToInventory = useCallback((type, reason) => {
     setInventory(prev => {
-      if (prev.length >= 3) { setInvFullItem({type}); return prev; }
+      if (prev.length >= 3) { setInvFullItem({type, reason}); return prev; }
       const item = {type, id:Date.now()};
-      showItemToast(type);
+      showItemToast(type, reason);
       return [...prev, item];
     });
   }, [showItemToast]);
@@ -418,8 +434,11 @@ export default function BoardGameScreen({ route, navigation }) {
     if (item.type === "mystery_box") openMysteryBox();
     else if (item.type === "deflector") {
       setDeflectorActive(true);
+      setDeflectorSecsLeft(30);
       clearTimeout(deflectorTimerRef.current);
-      deflectorTimerRef.current = setTimeout(() => setDeflectorActive(false), 30000);
+      clearInterval(deflectorSecsRef.current);
+      deflectorTimerRef.current = setTimeout(() => { setDeflectorActive(false); setDeflectorSecsLeft(0); }, 30000);
+      deflectorSecsRef.current  = setInterval(() => setDeflectorSecsLeft(s => { if(s<=1){ clearInterval(deflectorSecsRef.current); return 0; } return s-1; }), 1000);
       const sess = sessionRef.current;
       if (sess) {
         const exp = Date.now() + 30000;
@@ -433,6 +452,8 @@ export default function BoardGameScreen({ route, navigation }) {
 
   // ── Open mystery box (Modal overlay on map) ───────────────────────────────
   const openMysteryBox = useCallback(() => {
+    // Save whatever phase we were in so we can restore it on close
+    setPhase(curr => { savedPhaseRef.current = curr; return curr; });
     setMBoxOpen(true); setMBoxStep("roll"); setMBoxKey(null); setMBoxDef(null); setMBoxRolling(false);
     setViewMode("map");
   }, []);
@@ -457,17 +478,25 @@ export default function BoardGameScreen({ route, navigation }) {
     else setMBoxStep("apply");
   }, [mBoxRolling]);
 
-  // closeMBox ALWAYS returns to questions so player is never stuck
+  // closeMBox: restore the phase that was active before opening (so roll isn't skipped)
   const closeMBox = useCallback(() => {
     setMBoxOpen(false); setMBoxKey(null); setMBoxDef(null);
-    setPhase("questions"); setDiceValue(null); setViewMode("questions");
+    const restore = savedPhaseRef.current;
+    savedPhaseRef.current = null;
+    if (restore && restore !== "questions") {
+      setPhase(restore);
+      if (["rolling","moving","space_roll"].includes(restore)) setViewMode("map");
+      else setViewMode("questions");
+    } else {
+      setPhase("questions"); setDiceValue(null); setViewMode("questions");
+    }
   }, []);
 
   // Apply effect that doesn't need a target (immunity, doubleroll, or inventory item)
   const claimMBoxNoTarget = useCallback(async () => {
     if (!mBoxDef) return;
     if (mBoxDef.inventoryType) {
-      addToInventory(mBoxDef.inventoryType);
+      addToInventory(mBoxDef.inventoryType, "mystery box reward");
       closeMBox();
       setQIdx(i => i+1);
       return;
@@ -475,8 +504,11 @@ export default function BoardGameScreen({ route, navigation }) {
     switch (mBoxKey) {
       case "immunity": {
         setImmunityLeft(2);
+        setImmunitySecsLeft(45);
         clearTimeout(immunityTimerRef.current);
-        immunityTimerRef.current = setTimeout(() => setImmunityLeft(0), 45000);
+        clearInterval(immunitySecsRef.current);
+        immunityTimerRef.current = setTimeout(() => { setImmunityLeft(0); setImmunitySecsLeft(0); }, 45000);
+        immunitySecsRef.current  = setInterval(() => setImmunitySecsLeft(s => { if(s<=1){ clearInterval(immunitySecsRef.current); return 0; } return s-1; }), 1000);
         const exp = Date.now() + 45000;
         const sess = sessionRef.current;
         if (sess) {
@@ -497,28 +529,44 @@ export default function BoardGameScreen({ route, navigation }) {
 
   // Apply effect on a chosen target
   const claimMBoxTarget = useCallback(async (target) => {
-    const sess = sessionRef.current;
-    if (!sess || !mBoxKey) { closeMBox(); return; }
+    if (!mBoxKey) { closeMBox(); return; }
+
+    // Fetch FRESH player data from Firestore so deflector/immunity checks are accurate
+    let freshSess;
+    try {
+      const snap = await getDoc(doc(db,"gameSessions",sessionId));
+      freshSess = snap.data();
+    } catch(e) { console.error(e); closeMBox(); return; }
+
+    const sess = freshSess || sessionRef.current;
 
     const tPlayer = (sess.players||[]).find(p => p.name === target.name);
     const tImmune = tPlayer?.immunityExpires > Date.now();
     const tDeflect = tPlayer?.deflectorExpires > Date.now();
 
     if (tDeflect) {
-      setNotif(`Your ${mBoxDef.title} was deflected back at you by ${target.name}! 🪞`);
+      // Deflect: apply the effect back at the attacker (self)
+      setNotif(`Your ${mBoxDef?.title} was deflected back at you by ${target.name}! 🪞`);
       setShowNotif(true);
-      const n = {text:`You deflected ${playerName}'s ${mBoxDef.title} back at them! 🪞`, id:Date.now()};
+      const n = {text:`You deflected ${playerName}'s ${mBoxDef?.title} back at them! 🪞`, id:Date.now()};
       const upd = (sess.players||[]).map(p => p.name===target.name ? {...p, notification:n} : p);
       updateDoc(doc(db,"gameSessions",sessionId), {players:upd}).catch(console.error);
+      // Also clear target's deflector
+      const upd2 = (sess.players||[]).map(p => p.name===target.name ? {...p, deflectorExpires:0} : p);
+      updateDoc(doc(db,"gameSessions",sessionId), {players:upd2}).catch(console.error);
       closeMBox();
       setQIdx(i => i+1);
       return;
     }
 
     if (tImmune && ["pushback","stun","badluck","duel"].includes(mBoxKey)) {
-      setNotif(`${target.name} is immune! Your ${mBoxDef.title} was blocked.`);
+      setNotif(`${target.name} is immune! Your ${mBoxDef?.title} was blocked.`);
       setShowNotif(true);
-      closeMBox();
+      // IMPORTANT: do NOT call closeMBox() here — just close the modal overlay.
+      // closeMBox() resets phase which can break movePlayer loops.
+      setMBoxOpen(false); setMBoxKey(null); setMBoxDef(null);
+      const restore = savedPhaseRef.current; savedPhaseRef.current = null;
+      if (restore && restore !== "questions") { setPhase(restore); setViewMode(["rolling","moving","space_roll"].includes(restore)?"map":"questions"); }
       setQIdx(i => i+1);
       return;
     }
@@ -687,7 +735,7 @@ export default function BoardGameScreen({ route, navigation }) {
     if (correct) {
       const ns = streak+1, nc = cc+1;
       setStreak(ns); setLuck(Math.min(40, ns>=2 ? luck+5 : luck));
-      setTotal(prev => { const next=prev+1; if(next%6===0) addToInventory("mystery_box"); return next; });
+      setTotal(prev => { const next=prev+1; if(next%6===0) addToInventory("mystery_box","6 correct answers in a row"); return next; });
       if (nc >= ROLL_AT) { setCc(0); setTimeout(() => { setPhase("rolling"); setDiceValue(null); }, 1400); }
       else { setCc(nc); setTimeout(() => setQIdx(i => i+1), 1400); }
     } else {
@@ -714,11 +762,10 @@ export default function BoardGameScreen({ route, navigation }) {
     setDiceValue(roll); setDiceRolling(false);
 
     if (roll === 1 && doubleRollsLeft === 0) {
-      // Roll 1: no movement, mystery_box to inventory, show popup
-      addToInventory("mystery_box");
-      setRoll1Notif(true);
-      // Auto-dismiss after 3s if player doesn't close it
-      setTimeout(() => { setRoll1Notif(false); setPhase("questions"); setDiceValue(null); setQIdx(i=>i+1); }, 3000);
+      // Roll 1: no movement, mystery_box to inventory — toast shows via addToInventory
+      addToInventory("mystery_box", "you rolled a 1! 🎲");
+      // Return to rolled phase so user taps "Back to Questions"
+      setPhase("rolled");
       return;
     }
     setTimeout(() => movePlayer(roll), 800);
@@ -809,17 +856,17 @@ export default function BoardGameScreen({ route, navigation }) {
       const upd = (sess.players||[]).map(p => (playerUid&&p.uid===playerUid)||p.name===playerName ? {...p,stunned:true} : p);
       await updateDoc(doc(db,"gameSessions",sessionId),{players:upd}).catch(console.error);
     }
-    setTrapEvent(null); setPhase("questions"); setDiceValue(null);
+    setTrapEvent(null); setPhase("questions"); setDiceValue(null); setQIdx(i=>i+1);
   };
 
   const resolveEvent = async (opts={}) => {
     clearInterval(trapRef.current);
     const sess = sessionRef.current;
-    if (!sess) { setTrapEvent(null); exitMoving(); return; }
+    if (!sess) { setTrapEvent(null); setPhase("questions"); setDiceValue(null); setQIdx(i=>i+1); return; }
     const stun = trapEvent?.question && !opts.correct;
     const upd = (sess.players||[]).map(p => (playerUid&&p.uid===playerUid)||p.name===playerName ? {...p,stunned:stun} : p);
     await updateDoc(doc(db,"gameSessions",sessionId),{players:upd}).catch(console.error);
-    setTrapEvent(null); exitMoving();
+    setTrapEvent(null); setPhase("questions"); setDiceValue(null); setQIdx(i=>i+1);
   };
 
   // ── Leave ─────────────────────────────────────────────────────────────────
@@ -857,6 +904,8 @@ export default function BoardGameScreen({ route, navigation }) {
   const showCA   = session?.settings?.showAnswersAfter !== false;
   const badLuck  = myState?.badLuckExpires && myState.badLuckExpires > Date.now();
   const effLuck  = badLuck ? Math.max(0, luck-30) : luck;
+  // Display luck at ×2.5 so 40% real luck shows as 100% — cosmetic only, math unchanged
+  const dispLuck = Math.min(100, Math.round(effLuck * 2.5));
   const otherPs  = players.filter(p => !((playerUid&&p.uid===playerUid)||p.name===playerName));
   const activeDuel = session?.activeDuel;
 
@@ -906,10 +955,10 @@ export default function BoardGameScreen({ route, navigation }) {
       {/* ─ HUD ─ */}
       <View style={[S.hud, stunned&&S.hudStunned]}>
         <View style={S.hudCell}><Text style={S.hudLbl}>STREAK</Text><Text style={[S.hudVal,streak>0&&{color:"#f39c12"}]}>{streak>0?`🔥${streak}`:streak}</Text></View>
-        <View style={S.hudCell}><Text style={S.hudLbl}>LUCK</Text><Text style={[S.hudVal,badLuck&&{color:"#e74c3c"}]}>{effLuck}%</Text></View>
+        <View style={S.hudCell}><Text style={S.hudLbl}>LUCK</Text><Text style={[S.hudVal,badLuck&&{color:"#e74c3c"}]}>{dispLuck}%</Text></View>
         <View style={S.hudCell}><Text style={S.hudLbl}>SPACE</Text><Text style={[S.hudVal,{color:playerColor}]}>{myPos}/{boardEnd}</Text></View>
-        {immunityLeft>0&&<View style={S.hudCell}><Text style={S.hudLbl}>SHIELD</Text><Text style={[S.hudVal,{color:"#2ecc71"}]}>🛡️{immunityLeft}</Text></View>}
-        {deflectorActive&&<View style={S.hudCell}><Text style={S.hudLbl}>REFLECT</Text><Text style={[S.hudVal,{color:"#00bcd4"}]}>🪞</Text></View>}
+        {immunityLeft>0&&<View style={S.hudCell}><Text style={S.hudLbl}>SHIELD</Text><Text style={[S.hudVal,{color:"#2ecc71"}]}>🛡️{immunityLeft} · {immunitySecsLeft}s</Text></View>}
+        {deflectorActive&&<View style={S.hudCell}><Text style={S.hudLbl}>REFLECT</Text><Text style={[S.hudVal,{color:"#00bcd4"}]}>🪞{deflectorSecsLeft}s</Text></View>}
         {doubleRollsLeft>0&&<View style={S.hudCell}><Text style={S.hudLbl}>2×ROLL</Text><Text style={[S.hudVal,{color:"#9b59b6"}]}>×{doubleRollsLeft}</Text></View>}
         {gameLeft!=null&&<View style={S.hudCell}><Text style={S.hudLbl}>TIME</Text><Text style={[S.hudVal,gameLeft<=30&&{color:"#e74c3c"}]}>{formatTime(gameLeft)}</Text></View>}
         {/* Questions panic button — always visible */}
@@ -972,7 +1021,7 @@ export default function BoardGameScreen({ route, navigation }) {
           <View style={S.diceBox}>
             <Text style={S.diceTtl}>Roll the Dice!</Text>
             {doubleRollsLeft>0&&<Text style={[S.luckTxt,{color:"#9b59b6"}]}>🎯 Double Roll active!</Text>}
-            {effLuck>0&&doubleRollsLeft===0&&<Text style={S.luckTxt}>🍀 Luck {effLuck}%</Text>}
+            {effLuck>0&&doubleRollsLeft===0&&<Text style={S.luckTxt}>🍀 Luck {dispLuck}%</Text>}
             <Animated.View style={{transform:[{translateX:diceAnim}]}}><DiceFace value={diceValue} style={S.diceFace}/></Animated.View>
             {diceValue ? <Text style={S.diceRes}>Rolled {diceValue}!</Text>
             : <TouchableOpacity style={S.rollBtn} onPress={handleRoll}><Text style={S.rollTxtBig}>Roll!</Text></TouchableOpacity>}
@@ -992,6 +1041,17 @@ export default function BoardGameScreen({ route, navigation }) {
 
         {/* MOVING */}
         {phase==="moving" && <View style={S.movingBox}><ActivityIndicator color="#00c781" size="large"/><Text style={S.movingTxt}>Moving…</Text></View>}
+
+        {/* ROLLED — prompt to return to questions */}
+        {phase==="rolled" && (
+          <View style={S.rolledBox}>
+            <Text style={S.rolledEmoji}>✅</Text>
+            <Text style={S.rolledTtl}>Move done!</Text>
+            <TouchableOpacity style={[S.rollBtn,{backgroundColor:"#00c781",marginTop:8}]} onPress={()=>{ setPhase("questions"); setQIdx(i=>i+1); }}>
+              <Text style={S.rollTxtBig}>Back to Questions</Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
         {/* 1v1 DUEL */}
         {phase==="duel" && activeDuel && (
@@ -1136,7 +1196,7 @@ export default function BoardGameScreen({ route, navigation }) {
           {inventory.map(item=>{
             const def=INVENTORY_DEFS[item.type];
             return (
-              <TouchableOpacity key={item.id} style={[S.targetBtn,{width:"100%",marginVertical:4}]} onPress={()=>{removeFromInventory(item.id);setInventory(p=>[...p,{type:invFullItem.type,id:Date.now()}]);showItemToast(invFullItem.type);setInvFullItem(null);}}>
+              <TouchableOpacity key={item.id} style={[S.targetBtn,{width:"100%",marginVertical:4}]} onPress={()=>{removeFromInventory(item.id);setInventory(p=>[...p,{type:invFullItem.type,id:Date.now()}]);showItemToast(invFullItem.type, invFullItem.reason);setInvFullItem(null);}}>
                 <Text style={{fontSize:22,marginRight:8}}>{def?.emoji}</Text>
                 <Text style={{color:"#fff",flex:1}}>{def?.label}</Text>
                 <Text style={{color:"#e74c3c"}}>Discard</Text>
@@ -1148,23 +1208,15 @@ export default function BoardGameScreen({ route, navigation }) {
       </Modal>
 
       {/* Roll-1 notification */}
-      <Modal visible={roll1Notif} transparent animationType="fade">
-        <View style={S.overlay}><View style={[S.modal,{borderColor:"#f39c12",borderWidth:2}]}>
-          <CloseBtn onPress={()=>{ setRoll1Notif(false); setPhase("questions"); setDiceValue(null); setQIdx(i=>i+1); }}/>
-          <Text style={{fontSize:52}}>🎁</Text>
-          <Text style={[S.mTtl,{color:"#f39c12"}]}>Mystery Box Awarded!</Text>
-          <Text style={S.mDesc}>You rolled a 1! A Mystery Box has been added to your inventory — tap it any time to open it.</Text>
-        </View></View>
-      </Modal>
 
       {/* Effect notification */}
       <Modal visible={showNotif} transparent animationType="fade">
         <View style={S.overlay}><View style={[S.modal,{borderColor:"#e67e22",borderWidth:2}]}>
-          <CloseBtn onPress={()=>setShowNotif(false)}/>
+          <CloseBtn onPress={()=>{ setShowNotif(false); if(interruptedPhase){setPhase(interruptedPhase);setInterruptedPhase(null);} }}/>
           <Text style={{fontSize:52}}>⚡</Text>
           <Text style={[S.mTtl,{color:"#e67e22"}]}>Effect Applied!</Text>
           <Text style={[S.mDesc,{fontSize:18,lineHeight:26}]}>{notif}</Text>
-          <TouchableOpacity style={[S.rollBtn,{backgroundColor:"#e67e22",marginTop:8}]} onPress={()=>setShowNotif(false)}><Text style={S.rollTxtBig}>Got it</Text></TouchableOpacity>
+          <TouchableOpacity style={[S.rollBtn,{backgroundColor:"#e67e22",marginTop:8}]} onPress={()=>{ setShowNotif(false); if(interruptedPhase){setPhase(interruptedPhase);setInterruptedPhase(null);} }}><Text style={S.rollTxtBig}>Got it</Text></TouchableOpacity>
         </View></View>
       </Modal>
 
@@ -1202,11 +1254,19 @@ export default function BoardGameScreen({ route, navigation }) {
         <View style={S.overlay}><View style={S.modal}><Text style={S.mTtl}>Game Ended</Text><Text style={S.mDesc}>The host ended the game.</Text><TouchableOpacity style={[S.rollBtn,{backgroundColor:"#00c781"}]} onPress={()=>navigation.reset({index:0,routes:[{name:"JoinGameScreen"}]})}><Text style={S.rollTxtBig}>Back</Text></TouchableOpacity></View></View>
       </Modal>
 
-      {/* Flash */}
+      {/* Flash — fully opaque bg, text never fades */}
       {flashData && (
-        <Animated.View style={[S.flashOverlay,{backgroundColor:flashData.isCorrect?"#27ae60":"#c0392b",opacity:flashOpacity}]}>
-          <Text style={S.flashTtl}>{flashData.isCorrect?"CORRECT":"INCORRECT"}</Text>
-          {!flashData.isCorrect&&showCA&&flashData.text?(<><Text style={S.flashSubLbl}>Correct answer</Text><Text style={S.flashSubTxt}>"{flashData.text}"</Text></>):null}
+        <Animated.View style={[S.flashOverlay, {opacity: flashOpacity}]}>
+          <View style={[S.flashBg, {backgroundColor: flashData.isCorrect ? "#27ae60" : "#c0392b"}]}/>
+          <View style={S.flashContent}>
+            <Text style={S.flashTtl}>{flashData.isCorrect ? "CORRECT" : "INCORRECT"}</Text>
+            {!flashData.isCorrect && showCA && flashData.text ? (
+              <>
+                <Text style={S.flashSubLbl}>Correct answer</Text>
+                <Text style={S.flashSubTxt}>"{flashData.text}"</Text>
+              </>
+            ) : null}
+          </View>
         </Animated.View>
       )}
 
@@ -1254,22 +1314,22 @@ const S = StyleSheet.create({
   containerStunned: { backgroundColor:"#2e200a" },
   center:           { flex:1, backgroundColor:"#111", justifyContent:"center", alignItems:"center" },
 
-  hud:        { flexDirection:"row", alignItems:"center", backgroundColor:"#0a0a0a", borderBottomWidth:2, borderBottomColor:"#222", paddingVertical:14, paddingHorizontal:10, flexWrap:"wrap", gap:4 },
+  hud:        { flexDirection:"row", alignItems:"center", backgroundColor:"#0a0a0a", borderBottomWidth:2, borderBottomColor:"#222", paddingVertical:22, paddingHorizontal:12, flexWrap:"wrap", gap:6 },
   hudStunned: { backgroundColor:"#3d2806" },
-  hudCell:    { alignItems:"center", paddingHorizontal:8, minWidth:48 },
-  hudLbl:     { color:"#555", fontSize:10, letterSpacing:1.2, fontWeight:"700" },
-  hudVal:     { color:"#fff", fontSize:20, fontWeight:"bold", marginTop:2 },
+  hudCell:    { alignItems:"center", paddingHorizontal:14, minWidth:72 },
+  hudLbl:     { color:"#555", fontSize:13, letterSpacing:1.2, fontWeight:"700" },
+  hudVal:     { color:"#fff", fontSize:30, fontWeight:"bold", marginTop:4 },
 
   // Questions panic button
-  qBtn:       { paddingHorizontal:12, paddingVertical:8, borderRadius:10, backgroundColor:"#1a1a1a", borderWidth:1, borderColor:"#555" },
+  qBtn:       { paddingHorizontal:18, paddingVertical:14, borderRadius:14, backgroundColor:"#1a1a1a", borderWidth:1.5, borderColor:"#555" },
   qBtnActive: { backgroundColor:"#002200", borderColor:"#00c781" },
-  qBtnTxt:    { fontSize:16 },
+  qBtnTxt:    { fontSize:22 },
 
-  mapBtn:     { paddingHorizontal:12, paddingVertical:8, borderRadius:10, backgroundColor:"#1a1a1a", borderWidth:1, borderColor:"#333" },
+  mapBtn:     { paddingHorizontal:18, paddingVertical:14, borderRadius:14, backgroundColor:"#1a1a1a", borderWidth:1.5, borderColor:"#333" },
   mapBtnOn:   { backgroundColor:"#002a1a", borderColor:"#00c781" },
-  mapBtnTxt:  { color:"#aaa", fontSize:12, fontWeight:"700" },
-  hudEndBtn:  { paddingHorizontal:10, paddingVertical:8, borderRadius:10, backgroundColor:"#3a0000", borderWidth:1, borderColor:"#c0392b" },
-  hudEndBtnTxt:{ color:"#ff6b6b", fontSize:12, fontWeight:"700" },
+  mapBtnTxt:  { color:"#aaa", fontSize:16, fontWeight:"700" },
+  hudEndBtn:  { paddingHorizontal:16, paddingVertical:14, borderRadius:14, backgroundColor:"#3a0000", borderWidth:1.5, borderColor:"#c0392b" },
+  hudEndBtnTxt:{ color:"#ff6b6b", fontSize:16, fontWeight:"700" },
 
   timerTrack: { width:"100%", height:7, backgroundColor:"#1a1a1a" },
   timerFill:  { height:7, backgroundColor:"#00c781", alignSelf:"flex-start" },
@@ -1300,13 +1360,17 @@ const S = StyleSheet.create({
   diceBox:   { flex:1, alignItems:"center", justifyContent:"center", gap:18, backgroundColor:"#0d0d0d", padding:24, paddingRight:100 },
   diceTtl:   { color:"#fff", fontSize:26, fontWeight:"bold", textAlign:"center" },
   luckTxt:   { color:"#888", fontSize:15, textAlign:"center" },
-  diceFace:  { fontSize:96, textShadowColor:"rgba(255,255,255,0.6)", textShadowOffset:{width:0,height:0}, textShadowRadius:8 },
+  diceFace:  { fontSize:96, textShadowColor:"#ffffff", textShadowOffset:{width:0,height:0}, textShadowRadius:4 },
   diceRes:   { color:"#00c781", fontSize:24, fontWeight:"bold" },
   rollBtn:   { backgroundColor:"#00c781", paddingVertical:20, paddingHorizontal:60, borderRadius:18 },
   rollTxtBig:{ color:"#000", fontSize:24, fontWeight:"bold" },
 
   movingBox: { flex:1, alignItems:"center", justifyContent:"center", gap:16, backgroundColor:"#0d0d0d" },
   movingTxt: { color:"#aaa", fontSize:18 },
+
+  rolledBox:  { flex:1, alignItems:"center", justifyContent:"center", gap:16, backgroundColor:"#0d0d0d" },
+  rolledEmoji:{ fontSize:64 },
+  rolledTtl:  { color:"#fff", fontSize:26, fontWeight:"bold" },
 
   // Hotbar
   hotbar:      { position:"absolute", right:0, top:"35%", flexDirection:"column", alignItems:"center", gap:6, paddingVertical:12, paddingHorizontal:6, backgroundColor:"rgba(0,0,0,0.85)", borderTopLeftRadius:16, borderBottomLeftRadius:16 },
@@ -1336,13 +1400,15 @@ const S = StyleSheet.create({
   closeBtnTxt: { color:"#aaa", fontSize:16, fontWeight:"bold" },
 
   // Toast
-  toast:    { position:"absolute", top:0, left:0, right:0, backgroundColor:"#f39c12", paddingVertical:12, paddingHorizontal:20, zIndex:998 },
-  toastTxt: { color:"#000", fontSize:15, fontWeight:"bold", textAlign:"center" },
+  toast:    { position:"absolute", bottom:24, right:100, backgroundColor:"#1a1a00", borderWidth:1.5, borderColor:"#f39c12", borderRadius:14, paddingVertical:10, paddingHorizontal:16, zIndex:998, maxWidth:260 },
+  toastTxt: { color:"#f39c12", fontSize:13, fontWeight:"bold", lineHeight:18 },
 
-  flashOverlay: { position:"absolute", top:0, left:0, right:0, bottom:0, justifyContent:"center", alignItems:"center", zIndex:999 },
-  flashTtl:     { color:"#000", fontSize:72, fontWeight:"900", letterSpacing:2, textAlign:"center" },
-  flashSubLbl:  { color:"rgba(0,0,0,0.7)", fontSize:22, marginTop:20 },
-  flashSubTxt:  { color:"#000", fontSize:28, fontWeight:"bold", textAlign:"center", paddingHorizontal:32 },
+  flashOverlay: { position:"absolute", top:0, left:0, right:0, bottom:0, zIndex:999 },
+  flashBg:      { position:"absolute", top:0, left:0, right:0, bottom:0 },
+  flashContent: { flex:1, justifyContent:"center", alignItems:"center" },
+  flashTtl:     { color:"#fff", fontSize:72, fontWeight:"900", letterSpacing:2, textAlign:"center" },
+  flashSubLbl:  { color:"rgba(255,255,255,0.85)", fontSize:22, marginTop:20 },
+  flashSubTxt:  { color:"#fff", fontSize:28, fontWeight:"bold", textAlign:"center", paddingHorizontal:32 },
 
   hostHeader: { flexDirection:"row", justifyContent:"space-between", alignItems:"center", padding:18, backgroundColor:"#0a0a0a", borderBottomWidth:1, borderBottomColor:"#222" },
   hostTitle:  { color:"#00c781", fontSize:20, fontWeight:"bold" },
