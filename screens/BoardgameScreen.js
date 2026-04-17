@@ -99,7 +99,11 @@ function SnakeBoard({ board, players, myPosition, highlightPos, boardEnd, tileSi
               <View key={i} style={[bS.tile, {width:sz,height:sz}, tileStyle(i)]}>
                 {i===boardEnd ? <Text style={{fontSize:sz*0.46}}>🐍</Text>
                  : i===0     ? <Text style={{fontSize:sz*0.38}}>🏁</Text>
-                 : type!=="normal" ? <Text style={[{fontSize:sz*0.36,fontWeight:"bold",color:cfg.border}, type==="mystery"&&bS.outline]}>{cfg.label}</Text>
+                 : type!=="normal" ? (
+                    type==="mystery"
+                      ? <View style={[bS.mysteryBadge,{width:sz*0.52,height:sz*0.52}]}><Text style={[bS.mysteryBadgeTxt,{fontSize:sz*0.34}]}>?</Text></View>
+                      : <Text style={{fontSize:sz*0.36,fontWeight:"bold",color:cfg.border}}>{cfg.label}</Text>
+                  )
                  : <Text style={{fontSize:sz*0.26,color:"#4a6a4a",fontWeight:"bold"}}>{i}</Text>}
                 <View style={bS.tokenRow}>
                   {here.slice(0,3).map((p,pi) => (
@@ -120,7 +124,8 @@ const bS = StyleSheet.create({
   tile:     {borderRadius:9,margin:2,alignItems:"center",justifyContent:"center",position:"relative"},
   tokenRow: {position:"absolute",bottom:3,flexDirection:"row",flexWrap:"wrap",justifyContent:"center"},
   token:    {margin:1,borderWidth:1.5,borderColor:"rgba(255,255,255,0.4)"},
-  outline:  {textShadowColor:"#ffffff",textShadowOffset:{width:0,height:0},textShadowRadius:4},
+  mysteryBadge:   {backgroundColor:"#8e44ad",borderRadius:6,alignItems:"center",justifyContent:"center"},
+  mysteryBadgeTxt:{color:"#fff",fontWeight:"900"},
 });
 
 function CloseBtn({ onPress }) {
@@ -146,7 +151,7 @@ function Legend() {
 
 function DiceFace({ value, style }) {
   return (
-    <Text style={[style, {textShadowColor:"#ffffff",textShadowOffset:{width:0,height:0},textShadowRadius:4}]}>
+    <Text style={style}>
       {value ? getDiceFace(Math.min(6, value)) : "?"}
     </Text>
   );
@@ -179,6 +184,12 @@ export default function BoardGameScreen({ route, navigation }) {
 
   // Phase
   const [phase,        setPhase]        = useState("questions");
+  const phaseRef = useRef("questions"); // always mirrors phase — safe to read in async code & onSnapshot
+  const setPhaseSync = useCallback((next) => {
+    const val = typeof next === "function" ? next(phaseRef.current) : next;
+    phaseRef.current = val;
+    setPhase(val);
+  }, []);
   const [diceValue,    setDiceValue]    = useState(null);
   const [diceRolling,  setDiceRolling]  = useState(false);
   const [highlightPos, setHighlightPos] = useState(null);
@@ -230,10 +241,19 @@ export default function BoardGameScreen({ route, navigation }) {
   const prevStunnedRef = useRef(false);
 
   // Notifications (from opponents' effects)
-  const [notif,          setNotif]          = useState("");
-  const [showNotif,      setShowNotif]       = useState(false);
-  const [interruptedPhase,setInterruptedPhase]=useState(null); // phase to restore after dismissing notif
+  const [notif,          setNotif]           = useState("");
+  const [showNotif,      setShowNotif]        = useState(false);
+  const [interruptedPhase,setInterruptedPhase]= useState(null);
   const lastNotifId = useRef(0);
+
+  // Stun interrupt — forces questions, restores phase after unstun
+  const [stunInterruptedPhase, setStunInterruptedPhase] = useState(null);
+  const stunInterruptedPhaseRef = useRef(null); // mirrors stunInterruptedPhase for sync reads
+
+  // 1v1 duel countdown (shown to both players before duel starts)
+  const [duelCountdown,    setDuelCountdown]    = useState(null); // 3|2|1|null
+  const duelCountdownRef   = useRef(null);
+  const duelSeenRef        = useRef(false); // tracks if we've already started countdown for current duel
 
   // Duel
   const [duelAnswered, setDuelAnswered] = useState(false);
@@ -274,20 +294,42 @@ export default function BoardGameScreen({ route, navigation }) {
       if (me) {
         myStateRef.current = me;
         setMyState(me);
+
+        // Notification interrupt — save current phase so we can restore it
         if (me.notification?.id > lastNotifId.current) {
           lastNotifId.current = me.notification.id;
           setNotif(me.notification.text || "");
           setShowNotif(true);
-          // Pause whatever the player was doing so they see the notification immediately
-          setInterruptedPhase(prev => prev); // keep existing interrupted phase if already interrupted
-          setPhase(curr => {
-            if (curr !== "questions" && curr !== "duel") {
-              setInterruptedPhase(curr);
-            }
-            return curr;
-          });
+          const cur = phaseRef.current;
+          if (cur !== "questions" && cur !== "duel" && cur !== "stun_interrupt") {
+            setInterruptedPhase(cur);
+          }
         }
-        if (me.stunned && !prevStunnedRef.current) setStunRecovery(0);
+
+        // Stun interrupt — force to stun_interrupt immediately when newly stunned
+        const wasStunned = prevStunnedRef.current;
+        if (me.stunned && !wasStunned) {
+          setStunRecovery(0);
+          const cur = phaseRef.current;
+          // Don't save "moving" as the restore target — movement is already done/cancelled.
+          // Map "moving" → "rolled" so player sees "Back to Questions" after unstun.
+          const restoreTo = cur === "moving" ? "rolled"
+            : cur === "stun_interrupt" ? (stunInterruptedPhaseRef.current || "questions")
+            : cur;
+          stunInterruptedPhaseRef.current = restoreTo;
+          setStunInterruptedPhase(restoreTo);
+          setPhaseSync("stun_interrupt");
+          setViewMode("questions");
+        }
+        // Stun cleared — restore the saved phase
+        if (!me.stunned && wasStunned) {
+          const restoreTo = stunInterruptedPhaseRef.current || "questions";
+          stunInterruptedPhaseRef.current = null;
+          setStunInterruptedPhase(null);
+          const mapPhases = ["rolling","moved","rolled","space_roll","moving"];
+          setPhaseSync(restoreTo);
+          setViewMode(mapPhases.includes(restoreTo) ? "map" : "questions");
+        }
         prevStunnedRef.current = !!me.stunned;
       }
 
@@ -299,7 +341,7 @@ export default function BoardGameScreen({ route, navigation }) {
         if ((data.kickedPlayers||[]).includes(playerName)) return;
       }
 
-      // Duel phase detection
+      // Duel detection
       const ad = data.activeDuel;
       if (ad) {
         const involved = ad.challengerUid===playerUid || ad.opponentUid===playerUid
@@ -310,10 +352,34 @@ export default function BoardGameScreen({ route, navigation }) {
               lastDuelRound.current = ad.currentRound;
               setDuelAnswered(false);
             }
-            setPhase("duel");
+            // First time seeing this duel → 3-2-1 countdown
+            if (!duelSeenRef.current) {
+              duelSeenRef.current = true;
+              setDuelCountdown(3);
+              clearInterval(duelCountdownRef.current);
+              let count = 3;
+              duelCountdownRef.current = setInterval(() => {
+                count--;
+                if (count <= 0) {
+                  clearInterval(duelCountdownRef.current);
+                  setDuelCountdown(null);
+                  setPhaseSync("duel");
+                } else {
+                  setDuelCountdown(count);
+                }
+              }, 1000);
+            }
           }
-          if (ad.status === "done") setPhase("duel");
+          if (ad.status === "done") {
+            clearInterval(duelCountdownRef.current);
+            setDuelCountdown(null);
+            setPhaseSync("duel");
+          }
         }
+      } else {
+        duelSeenRef.current = false;
+        clearInterval(duelCountdownRef.current);
+        setDuelCountdown(null);
       }
     });
   }, [sessionId, playerName, playerUid, isHost, hostIsPlaying]);
@@ -328,7 +394,7 @@ export default function BoardGameScreen({ route, navigation }) {
   // ── Auto map ──────────────────────────────────────────────────────────────
   useEffect(() => {
     if (["rolling","moving","space_roll","rolled"].includes(phase)) setViewMode("map");
-    if (["questions","duel"].includes(phase))               setViewMode("questions");
+    if (["questions","duel","stun_interrupt"].includes(phase))               setViewMode("questions");
   }, [phase]);
 
   // ── Game timer ────────────────────────────────────────────────────────────
@@ -396,12 +462,18 @@ export default function BoardGameScreen({ route, navigation }) {
   const forceQuestions = useCallback(() => {
     setMBoxOpen(false); setMBoxKey(null); setMBoxDef(null); setMBoxRolling(false);
     setRoll1Notif(false); setShowNotif(false);
-    setPhase("questions"); setViewMode("questions"); setDiceValue(null);
+    setInterruptedPhase(null);
+    stunInterruptedPhaseRef.current = null;
+    setStunInterruptedPhase(null);
+    setPhaseSync("questions"); setViewMode("questions"); setDiceValue(null);
     clearInterval(trapRef.current); setTrapEvent(null); setTrapAnswered(false);
-  }, []);
+  }, [setPhaseSync]);
 
   // exitMoving: show "Back to Questions" prompt instead of auto-returning
-  const exitMoving = () => { setPhase("rolled"); setDiceValue(null); };
+  const exitMoving = () => {
+    if (phaseRef.current === "stun_interrupt") return; // don't overwrite stun
+    setPhaseSync("rolled"); setDiceValue(null);
+  };
 
   // ── Item toast ────────────────────────────────────────────────────────────
   const showItemToast = useCallback((type, reason) => {
@@ -453,7 +525,7 @@ export default function BoardGameScreen({ route, navigation }) {
   // ── Open mystery box (Modal overlay on map) ───────────────────────────────
   const openMysteryBox = useCallback(() => {
     // Save whatever phase we were in so we can restore it on close
-    setPhase(curr => { savedPhaseRef.current = curr; return curr; });
+    savedPhaseRef.current = phaseRef.current;
     setMBoxOpen(true); setMBoxStep("roll"); setMBoxKey(null); setMBoxDef(null); setMBoxRolling(false);
     setViewMode("map");
   }, []);
@@ -484,11 +556,11 @@ export default function BoardGameScreen({ route, navigation }) {
     const restore = savedPhaseRef.current;
     savedPhaseRef.current = null;
     if (restore && restore !== "questions") {
-      setPhase(restore);
+      setPhaseSync(restore);
       if (["rolling","moving","space_roll"].includes(restore)) setViewMode("map");
       else setViewMode("questions");
     } else {
-      setPhase("questions"); setDiceValue(null); setViewMode("questions");
+      setPhaseSync("questions"); setDiceValue(null); setViewMode("questions");
     }
   }, []);
 
@@ -566,7 +638,7 @@ export default function BoardGameScreen({ route, navigation }) {
       // closeMBox() resets phase which can break movePlayer loops.
       setMBoxOpen(false); setMBoxKey(null); setMBoxDef(null);
       const restore = savedPhaseRef.current; savedPhaseRef.current = null;
-      if (restore && restore !== "questions") { setPhase(restore); setViewMode(["rolling","moving","space_roll"].includes(restore)?"map":"questions"); }
+      if (restore && restore !== "questions") { setPhaseSync(restore); setViewMode(["rolling","moving","space_roll"].includes(restore)?"map":"questions"); }
       setQIdx(i => i+1);
       return;
     }
@@ -614,7 +686,7 @@ export default function BoardGameScreen({ route, navigation }) {
           notify(`${playerName} has challenged you to a 1v1! ⚔️`);
         }
         setMBoxOpen(false); setMBoxKey(null); setMBoxDef(null);
-        setPhase("questions"); setDiceValue(null);
+        setPhaseSync("questions"); setDiceValue(null);
         return;
       }
     }
@@ -676,7 +748,7 @@ export default function BoardGameScreen({ route, navigation }) {
   const dismissDuel = useCallback(async () => {
     const ad = sessionRef.current?.activeDuel;
     const me = myStateRef.current;
-    if (!ad) { setPhase("questions"); setQIdx(i=>i+1); return; }
+    if (!ad) { setPhaseSync("questions"); setQIdx(i=>i+1); return; }
     const isChallenger = ad.challengerName===playerName || ad.challengerUid===playerUid;
     const myKey  = isChallenger ? "challengerDismissed" : "opponentDismissed";
     const othKey = isChallenger ? "opponentDismissed" : "challengerDismissed";
@@ -701,13 +773,13 @@ export default function BoardGameScreen({ route, navigation }) {
     } else {
       await updateDoc(doc(db,"gameSessions",sessionId), {[`activeDuel.${myKey}`]:true}).catch(console.error);
     }
-    setPhase("questions");
+    setPhaseSync("questions");
     setQIdx(i => i+1);
   }, [playerName, playerUid, sessionId]);
 
   // ── Answer handler ────────────────────────────────────────────────────────
   const handleAnswer = useCallback((ansIdx) => {
-    if (selAns !== null || phase !== "questions") return;
+    if (selAns !== null || (phase !== "questions" && phase !== "stun_interrupt")) return;
     clearInterval(qTimerRef.current);
     timerBar.stopAnimation();
     const correct = curQ?.correctAnswers?.[ansIdx] === true;
@@ -736,7 +808,7 @@ export default function BoardGameScreen({ route, navigation }) {
       const ns = streak+1, nc = cc+1;
       setStreak(ns); setLuck(Math.min(40, ns>=2 ? luck+5 : luck));
       setTotal(prev => { const next=prev+1; if(next%6===0) addToInventory("mystery_box","6 correct answers in a row"); return next; });
-      if (nc >= ROLL_AT) { setCc(0); setTimeout(() => { setPhase("rolling"); setDiceValue(null); }, 1400); }
+      if (nc >= ROLL_AT) { setCc(0); setTimeout(() => { setPhaseSync("rolling"); setDiceValue(null); }, 1400); }
       else { setCc(nc); setTimeout(() => setQIdx(i => i+1), 1400); }
     } else {
       setStreak(0); setLuck(0);
@@ -765,7 +837,7 @@ export default function BoardGameScreen({ route, navigation }) {
       // Roll 1: no movement, mystery_box to inventory — toast shows via addToInventory
       addToInventory("mystery_box", "you rolled a 1! 🎲");
       // Return to rolled phase so user taps "Back to Questions"
-      setPhase("rolled");
+      setPhaseSync("rolled");
       return;
     }
     setTimeout(() => movePlayer(roll), 800);
@@ -792,7 +864,10 @@ export default function BoardGameScreen({ route, navigation }) {
     if (!me||!sess) { setSrType(null); exitMoving(); return; }
     const be=sess.settings?.boardSize||25, cur=me.position||0;
     const np = type==="lava" ? Math.max(0,cur-roll) : Math.min(be,cur+roll);
-    setPhase("moving");
+    setPhaseSync("moving");
+    const srSafetyTimer = setTimeout(() => {
+      if (phaseRef.current === "moving") setPhaseSync("rolled");
+    }, 8000);
     const step = type==="lava" ? -1 : 1;
     for (let p=cur; step>0?p<=np:p>=np; p+=step) { setHighlightPos(p); scrollToPos(p,be); await new Promise(r=>setTimeout(r,280)); }
     setHighlightPos(np);
@@ -801,17 +876,26 @@ export default function BoardGameScreen({ route, navigation }) {
         (playerUid&&p.uid===playerUid)||p.name===playerName ? {...p,position:np,color:playerColor} : p
       );
       await updateDoc(doc(db,"gameSessions",sessionId), {players:upd});
+      clearTimeout(srSafetyTimer);
       if (np>=be) { await updateDoc(doc(db,"gameSessions",sessionId),{status:"ended",winner:playerName}); return; }
-    } catch(e) { console.error(e); }
-    setSrType(null); setSrValue(null); exitMoving();
+    } catch(e) { clearTimeout(srSafetyTimer); console.error(e); }
+    // Only proceed to exitMoving if phase wasn't externally interrupted (e.g. stun)
+    if (phaseRef.current !== "stun_interrupt") {
+      setSrType(null); setSrValue(null); exitMoving();
+    }
   }, [playerName,playerColor,playerUid,sessionId,scrollToPos]);
 
   // ── Move player ───────────────────────────────────────────────────────────
   const movePlayer = useCallback(async (spaces) => {
     const me=myStateRef.current, sess=sessionRef.current;
-    if (!me||!sess) { setPhase("questions"); setDiceValue(null); return; }
+    if (!me||!sess) { setPhaseSync("questions"); setDiceValue(null); return; }
     const be=sess.settings?.boardSize||25, op=me.position||0, np=Math.min(op+spaces,be);
-    setPhase("moving");
+    setPhaseSync("moving");
+
+    // Safety net: if we're still in "moving" after 8s, force to rolled
+    const safetyTimer = setTimeout(() => {
+      if (phaseRef.current === "moving") setPhaseSync("rolled");
+    }, 8000);
     for (let c=op; c<=np; c++) { setHighlightPos(c); scrollToPos(c,be); await new Promise(r=>setTimeout(r,280)); }
     setHighlightPos(np);
     try {
@@ -820,10 +904,14 @@ export default function BoardGameScreen({ route, navigation }) {
         (playerUid&&p.uid===playerUid)||p.name===playerName ? {...p,position:np,color:playerColor} : p
       );
       await updateDoc(doc(db,"gameSessions",sessionId), {players:upd});
+      clearTimeout(safetyTimer);
       if (np>=be) { await updateDoc(doc(db,"gameSessions",sessionId),{status:"ended",winner:playerName}); return; }
+      // CRITICAL: if phase was externally changed during the await (e.g. stun arrived),
+      // do NOT call handleLanding — that would overwrite the interrupt.
+      if (phaseRef.current === "stun_interrupt") return;
       const space = (() => { const b=ls?.board||[]; const d=b[np]; if(d?.type) return d; return (Array.isArray(b)&&b.find(s=>s?.index===np))||null; })();
       handleLanding(space, np, be, ls?.questions||[]);
-    } catch(e) { console.error("movePlayer:",e); exitMoving(); }
+    } catch(e) { clearTimeout(safetyTimer); console.error("movePlayer:",e); exitMoving(); }
   }, [playerName,playerColor,playerUid,sessionId,scrollToPos]);
 
   // ── Space landing ─────────────────────────────────────────────────────────
@@ -833,12 +921,12 @@ export default function BoardGameScreen({ route, navigation }) {
     if (immunityLeft>0 && type!=="normal") setImmunityLeft(n=>Math.max(0,n-1));
     if (type==="normal") { exitMoving(); return; }
     if (type==="mystery") { openMysteryBox(); return; }
-    if (type==="lava"||type==="cannon") { setSrType(type); setSrValue(null); setSrRolling(false); setPhase("space_roll"); return; }
+    if (type==="lava"||type==="cannon") { setSrType(type); setSrValue(null); setSrRolling(false); setPhaseSync("space_roll"); return; }
     if (type==="trap") {
       const pool = qs?.length ? qs : [];
       if (pool.length) {
         const trapQ = pool[Math.floor(Math.random()*pool.length)];
-        setTrapEvent({question:trapQ}); setTrapTimer(10); setTrapAnswered(false); setPhase("space_event");
+        setTrapEvent({question:trapQ}); setTrapTimer(10); setTrapAnswered(false); setPhaseSync("space_event");
         clearInterval(trapRef.current);
         trapRef.current = setInterval(() => {
           setTrapTimer(t => { if(t<=1){ clearInterval(trapRef.current); handleTrapFail(); return 0; } return t-1; });
@@ -856,17 +944,17 @@ export default function BoardGameScreen({ route, navigation }) {
       const upd = (sess.players||[]).map(p => (playerUid&&p.uid===playerUid)||p.name===playerName ? {...p,stunned:true} : p);
       await updateDoc(doc(db,"gameSessions",sessionId),{players:upd}).catch(console.error);
     }
-    setTrapEvent(null); setPhase("questions"); setDiceValue(null); setQIdx(i=>i+1);
+    setTrapEvent(null); setPhaseSync("questions"); setDiceValue(null); setQIdx(i=>i+1);
   };
 
   const resolveEvent = async (opts={}) => {
     clearInterval(trapRef.current);
     const sess = sessionRef.current;
-    if (!sess) { setTrapEvent(null); setPhase("questions"); setDiceValue(null); setQIdx(i=>i+1); return; }
+    if (!sess) { setTrapEvent(null); setPhaseSync("questions"); setDiceValue(null); setQIdx(i=>i+1); return; }
     const stun = trapEvent?.question && !opts.correct;
     const upd = (sess.players||[]).map(p => (playerUid&&p.uid===playerUid)||p.name===playerName ? {...p,stunned:stun} : p);
     await updateDoc(doc(db,"gameSessions",sessionId),{players:upd}).catch(console.error);
-    setTrapEvent(null); setPhase("questions"); setDiceValue(null); setQIdx(i=>i+1);
+    setTrapEvent(null); setPhaseSync("questions"); setDiceValue(null); setQIdx(i=>i+1);
   };
 
   // ── Leave ─────────────────────────────────────────────────────────────────
@@ -950,10 +1038,10 @@ export default function BoardGameScreen({ route, navigation }) {
   const showMap = viewMode === "map";
 
   return (
-    <SafeAreaView style={[S.container, stunned&&S.containerStunned]}>
+    <SafeAreaView style={[S.container, (stunned||phase==="stun_interrupt")&&S.containerStunned]}>
 
       {/* ─ HUD ─ */}
-      <View style={[S.hud, stunned&&S.hudStunned]}>
+      <View style={[S.hud, (stunned||phase==="stun_interrupt")&&S.hudStunned]}>
         <View style={S.hudCell}><Text style={S.hudLbl}>STREAK</Text><Text style={[S.hudVal,streak>0&&{color:"#f39c12"}]}>{streak>0?`🔥${streak}`:streak}</Text></View>
         <View style={S.hudCell}><Text style={S.hudLbl}>LUCK</Text><Text style={[S.hudVal,badLuck&&{color:"#e74c3c"}]}>{dispLuck}%</Text></View>
         <View style={S.hudCell}><Text style={S.hudLbl}>SPACE</Text><Text style={[S.hudVal,{color:playerColor}]}>{myPos}/{boardEnd}</Text></View>
@@ -972,7 +1060,7 @@ export default function BoardGameScreen({ route, navigation }) {
       </View>
 
       {/* Timer bar */}
-      {!!(curQ?.timeLimit||session?.settings?.timePerQuestion) && phase==="questions" && !showMap && (
+      {!!(curQ?.timeLimit||session?.settings?.timePerQuestion) && (phase==="questions"||phase==="stun_interrupt") && !showMap && (
         <View style={S.timerTrack}>
           <Animated.View style={[S.timerFill, {width:timerBar.interpolate({inputRange:[0,1],outputRange:["0%","100%"]})}]}/>
         </View>
@@ -989,10 +1077,17 @@ export default function BoardGameScreen({ route, navigation }) {
         )}
 
         {/* QUESTIONS */}
-        {!showMap && phase==="questions" && (
+        {!showMap && (phase==="questions" || phase==="stun_interrupt") && (
           <ScrollView contentContainerStyle={S.qScroll}>
-            {stunned && <View style={S.stunnedBanner}><Text style={S.stunnedTxt}>😵 STUNNED — answer {ROLL_AT} in a row to recover ({stunRecovery}/{ROLL_AT})</Text></View>}
-            {!stunned && (
+            {(stunned || phase==="stun_interrupt") && (
+              <View style={S.stunnedBanner}>
+                <Text style={S.stunnedTxt}>😵 STUNNED — answer {ROLL_AT} in a row to recover ({stunRecovery}/{ROLL_AT})</Text>
+                {phase==="stun_interrupt" && stunInterruptedPhase && stunInterruptedPhase!=="questions" && (
+                  <Text style={[S.stunnedTxt,{fontSize:13,marginTop:4,opacity:0.75}]}>You'll return to what you were doing after</Text>
+                )}
+              </View>
+            )}
+            {!stunned && phase==="questions" && (
               <View style={S.rollBar}>
                 {[0,1,2].map(i=><View key={i} style={[S.rollDot,i<cc&&S.rollDotOn]}/>)}
                 <Text style={S.rollTxt2}>{ROLL_AT-cc} more correct to roll</Text>
@@ -1047,7 +1142,7 @@ export default function BoardGameScreen({ route, navigation }) {
           <View style={S.rolledBox}>
             <Text style={S.rolledEmoji}>✅</Text>
             <Text style={S.rolledTtl}>Move done!</Text>
-            <TouchableOpacity style={[S.rollBtn,{backgroundColor:"#00c781",marginTop:8}]} onPress={()=>{ setPhase("questions"); setQIdx(i=>i+1); }}>
+            <TouchableOpacity style={[S.rollBtn,{backgroundColor:"#00c781",marginTop:8}]} onPress={()=>{ setPhaseSync("questions"); setQIdx(i=>i+1); }}>
               <Text style={S.rollTxtBig}>Back to Questions</Text>
             </TouchableOpacity>
           </View>
@@ -1209,21 +1304,31 @@ export default function BoardGameScreen({ route, navigation }) {
 
       {/* Roll-1 notification */}
 
+      {/* Duel countdown (3-2-1 before duel starts) */}
+      <Modal visible={duelCountdown !== null} transparent animationType="fade">
+        <View style={S.overlay}><View style={[S.modal,{borderColor:"#3498db",borderWidth:2}]}>
+          <Text style={{fontSize:52}}>⚔️</Text>
+          <Text style={[S.mTtl,{color:"#3498db"}]}>1v1 Starting!</Text>
+          <Text style={{color:"#fff",fontSize:88,fontWeight:"900",textAlign:"center",lineHeight:96}}>{duelCountdown}</Text>
+          <Text style={S.mDesc}>Get ready…</Text>
+        </View></View>
+      </Modal>
+
       {/* Effect notification */}
       <Modal visible={showNotif} transparent animationType="fade">
         <View style={S.overlay}><View style={[S.modal,{borderColor:"#e67e22",borderWidth:2}]}>
-          <CloseBtn onPress={()=>{ setShowNotif(false); if(interruptedPhase){setPhase(interruptedPhase);setInterruptedPhase(null);} }}/>
+          <CloseBtn onPress={()=>{ setShowNotif(false); if(interruptedPhase){setPhaseSync(interruptedPhase);setInterruptedPhase(null);} }}/>
           <Text style={{fontSize:52}}>⚡</Text>
           <Text style={[S.mTtl,{color:"#e67e22"}]}>Effect Applied!</Text>
           <Text style={[S.mDesc,{fontSize:18,lineHeight:26}]}>{notif}</Text>
-          <TouchableOpacity style={[S.rollBtn,{backgroundColor:"#e67e22",marginTop:8}]} onPress={()=>{ setShowNotif(false); if(interruptedPhase){setPhase(interruptedPhase);setInterruptedPhase(null);} }}><Text style={S.rollTxtBig}>Got it</Text></TouchableOpacity>
+          <TouchableOpacity style={[S.rollBtn,{backgroundColor:"#e67e22",marginTop:8}]} onPress={()=>{ setShowNotif(false); if(interruptedPhase){setPhaseSync(interruptedPhase);setInterruptedPhase(null);} }}><Text style={S.rollTxtBig}>Got it</Text></TouchableOpacity>
         </View></View>
       </Modal>
 
       {/* Trap */}
       <Modal visible={phase==="space_event" && !!trapEvent} transparent animationType="fade">
         <View style={S.overlay}><View style={S.modal}>
-          <CloseBtn onPress={()=>{ clearInterval(trapRef.current); setTrapEvent(null); setPhase("questions"); setDiceValue(null); }}/>
+          <CloseBtn onPress={()=>{ clearInterval(trapRef.current); setTrapEvent(null); setPhaseSync("questions"); setDiceValue(null); }}/>
           <Text style={[S.mTtl,{color:"#d68910"}]}>Trap — Answer Fast!</Text>
           <Text style={[{color:"#fff",fontSize:40,fontWeight:"bold",textAlign:"center"},trapTimer<=3&&{color:"#e74c3c"}]}>{trapTimer}s</Text>
           {trapEvent?.question && (
@@ -1360,7 +1465,7 @@ const S = StyleSheet.create({
   diceBox:   { flex:1, alignItems:"center", justifyContent:"center", gap:18, backgroundColor:"#0d0d0d", padding:24, paddingRight:100 },
   diceTtl:   { color:"#fff", fontSize:26, fontWeight:"bold", textAlign:"center" },
   luckTxt:   { color:"#888", fontSize:15, textAlign:"center" },
-  diceFace:  { fontSize:96, textShadowColor:"#ffffff", textShadowOffset:{width:0,height:0}, textShadowRadius:4 },
+  diceFace:  { fontSize:96, color:"#fff" },
   diceRes:   { color:"#00c781", fontSize:24, fontWeight:"bold" },
   rollBtn:   { backgroundColor:"#00c781", paddingVertical:20, paddingHorizontal:60, borderRadius:18 },
   rollTxtBig:{ color:"#000", fontSize:24, fontWeight:"bold" },
