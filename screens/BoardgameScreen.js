@@ -172,7 +172,8 @@ export default function BoardGameScreen({ route, navigation }) {
   const [qIdx,    setQIdx]    = useState(0);
   const qList = questions || [];
   const curQ  = qList.length ? qList[qIdx % qList.length] : null;
-  const [selAns, setSelAns] = useState(null);
+  const [selAns, setSelAns] = useState(null);        // single-select / sentinel
+  const [multiSelAnswers, setMultiSelAnswers] = useState([]); // for multiSelect questions
   const [ansFB,  setAnsFB]  = useState(null);
 
   // Progress
@@ -257,6 +258,7 @@ export default function BoardGameScreen({ route, navigation }) {
 
   // Duel
   const [duelAnswered, setDuelAnswered] = useState(false);
+  const [duelView,    setDuelView]    = useState("active"); // "active" | "done" — drives JSX exclusively
   const lastDuelRound  = useRef(-1);
 
   // Timers
@@ -379,6 +381,7 @@ export default function BoardGameScreen({ route, navigation }) {
           if (ad.status === "done") {
             clearInterval(duelCountdownRef.current);
             setDuelCountdown(null);
+            setDuelView("done");
             setPhaseSync("duel");
           }
         }
@@ -386,6 +389,7 @@ export default function BoardGameScreen({ route, navigation }) {
         duelSeenRef.current = false;
         clearInterval(duelCountdownRef.current);
         setDuelCountdown(null);
+        setDuelView("active");
       }
     });
   }, [sessionId, playerName, playerUid, isHost, hostIsPlaying]);
@@ -395,6 +399,7 @@ export default function BoardGameScreen({ route, navigation }) {
     if (!qList.length) return;
     setSelAns(null);
     setAnsFB(null);
+    setMultiSelAnswers([]);
   }, [qIdx]);
 
   // ── Auto map ──────────────────────────────────────────────────────────────
@@ -506,9 +511,13 @@ export default function BoardGameScreen({ route, navigation }) {
   const removeFromInventory = useCallback((id) => setInventory(prev => prev.filter(i => i.id !== id)), []);
 
   const useInventoryItem = useCallback((item) => {
-    removeFromInventory(item.id);
-    if (item.type === "mystery_box") openMysteryBox();
-    else if (item.type === "deflector") {
+    // NOTE: we do NOT remove from inventory here — removal happens after the item is consumed.
+    // For mystery_box: removed when closeMBox finalises (claim or target chosen).
+    // For deflector: removed immediately since activating it IS consuming it.
+    if (item.type === "mystery_box") {
+      // Pass the item id so closeMBox can remove it after use
+      openMysteryBox(item.id);
+    } else if (item.type === "deflector") {
       setDeflectorActive(true);
       setDeflectorSecsLeft(30);
       clearTimeout(deflectorTimerRef.current);
@@ -527,10 +536,13 @@ export default function BoardGameScreen({ route, navigation }) {
   }, [removeFromInventory, playerName, playerUid, sessionId]);
 
   // ── Open mystery box (Modal overlay on map) ───────────────────────────────
-  const openMysteryBox = useCallback(() => {
+  // mBoxInventoryItemId: if box was opened FROM inventory, hold the item id so
+  // X (close without claiming) puts it BACK into inventory rather than consuming it.
+  const mBoxInventoryItemId = useRef(null);
+
+  const openMysteryBox = useCallback((inventoryItemId = null) => {
+    mBoxInventoryItemId.current = inventoryItemId;
     const cur = phaseRef.current;
-    // "moving" means the animation loop already finished — restoring "moving" would stuck.
-    // Save "rolled" instead so user sees "Back to Questions" after closing the mystery box.
     savedPhaseRef.current = cur === "moving" ? "rolled" : cur;
     setMBoxOpen(true); setMBoxStep("roll"); setMBoxKey(null); setMBoxDef(null); setMBoxRolling(false);
     setViewMode("map");
@@ -556,9 +568,18 @@ export default function BoardGameScreen({ route, navigation }) {
     else setMBoxStep("apply");
   }, [mBoxRolling]);
 
-  // closeMBox: restore the phase that was active before opening (so roll isn't skipped)
+  // closeMBox: called by X button — item NOT consumed, restore to inventory if applicable
   const closeMBox = useCallback(() => {
     setMBoxOpen(false); setMBoxKey(null); setMBoxDef(null);
+    // If opened from inventory and user pressed X without claiming, put item back
+    const itemId = mBoxInventoryItemId.current;
+    mBoxInventoryItemId.current = null;
+    if (itemId) {
+      setInventory(prev => {
+        if (prev.find(i => i.id === itemId)) return prev; // already there
+        return [...prev, { type: "mystery_box", id: itemId }];
+      });
+    }
     const restore = savedPhaseRef.current;
     savedPhaseRef.current = null;
     if (restore && restore !== "questions") {
@@ -568,13 +589,14 @@ export default function BoardGameScreen({ route, navigation }) {
     } else {
       setPhaseSync("questions"); setDiceValue(null); setViewMode("questions");
     }
-  }, []);
+  }, [setPhaseSync]);
 
   // Apply effect that doesn't need a target (immunity, doubleroll, or inventory item)
   const claimMBoxNoTarget = useCallback(async () => {
     if (!mBoxDef) return;
     // Peek at restore target BEFORE closeMBox clears savedPhaseRef
     const willReturnToQ = !savedPhaseRef.current || savedPhaseRef.current === "questions";
+    const itemId = mBoxInventoryItemId.current; mBoxInventoryItemId.current = null; if (itemId) removeFromInventory(itemId);
     if (mBoxDef.inventoryType) {
       addToInventory(mBoxDef.inventoryType, "mystery box reward");
       closeMBox();
@@ -613,6 +635,7 @@ export default function BoardGameScreen({ route, navigation }) {
 
     // Peek at restore target BEFORE closeMBox clears savedPhaseRef
     const willReturnToQ = !savedPhaseRef.current || savedPhaseRef.current === "questions";
+    const itemId2 = mBoxInventoryItemId.current; mBoxInventoryItemId.current = null; if (itemId2) removeFromInventory(itemId2);
 
     // Fetch FRESH player data from Firestore so deflector/immunity checks are accurate
     let freshSess;
@@ -786,14 +809,15 @@ export default function BoardGameScreen({ route, navigation }) {
   }, [playerName, playerUid, sessionId]);
 
   // ── Answer handler (normal questions — stun questions are in the stun Modal) ──
-  const handleAnswer = useCallback((ansIdx) => {
+  // Toggle a multi-select answer choice (doesn't submit — user taps Confirm)
+  const handleMultiToggle = useCallback((ansIdx) => {
     if (selAns !== null || phase !== "questions") return;
-    clearInterval(qTimerRef.current);
-    timerBar.stopAnimation();
-    const correct = curQ?.correctAnswers?.[ansIdx] === true;
-    setSelAns(ansIdx);
-    setAnsFB(correct ? "correct" : "wrong");
-    triggerFlash(correct, getCorrectText(curQ));
+    setMultiSelAnswers(prev =>
+      prev.includes(ansIdx) ? prev.filter(i => i !== ansIdx) : [...prev, ansIdx]
+    );
+  }, [selAns, phase]);
+
+  const scoreAndAdvance = useCallback((correct) => {
     if (correct) {
       const ns = streak+1, nc = cc+1;
       setStreak(ns); setLuck(Math.min(40, ns>=2 ? luck+5 : luck));
@@ -804,7 +828,31 @@ export default function BoardGameScreen({ route, navigation }) {
       setStreak(0); setLuck(0);
       setTimeout(() => setQIdx(i => i+1), 1400);
     }
-  }, [selAns, phase, curQ, cc, streak, luck, playerName, playerUid, sessionId, triggerFlash, addToInventory]);
+  }, [streak, cc, luck, addToInventory, setPhaseSync]);
+
+  // Confirm multi-select submission
+  const handleMultiConfirm = useCallback(() => {
+    if (selAns !== null || phase !== "questions" || !curQ) return;
+    clearInterval(qTimerRef.current); timerBar.stopAnimation();
+    const correctIdxs = (curQ.correctAnswers||[]).map((v,i)=>v?i:null).filter(i=>i!==null);
+    const selected = [...multiSelAnswers].sort();
+    const correct = selected.length === correctIdxs.length &&
+      selected.every((v,i) => v === correctIdxs[i]);
+    setSelAns(-2); // -2 = multiselect submitted
+    setAnsFB(correct ? "correct" : "wrong");
+    triggerFlash(correct, getCorrectText(curQ));
+    scoreAndAdvance(correct);
+  }, [selAns, phase, curQ, multiSelAnswers, triggerFlash, scoreAndAdvance]);
+
+  const handleAnswer = useCallback((ansIdx) => {
+    if (selAns !== null || phase !== "questions") return;
+    clearInterval(qTimerRef.current); timerBar.stopAnimation();
+    const correct = curQ?.correctAnswers?.[ansIdx] === true;
+    setSelAns(ansIdx);
+    setAnsFB(correct ? "correct" : "wrong");
+    triggerFlash(correct, getCorrectText(curQ));
+    scoreAndAdvance(correct);
+  }, [selAns, phase, curQ, triggerFlash, scoreAndAdvance]);
 
   // ── Stun Modal answer handler ─────────────────────────────────────────────
   const handleStunAnswer = useCallback((ansIdx) => {
@@ -1098,15 +1146,42 @@ export default function BoardGameScreen({ route, navigation }) {
               <View style={S.qCard}>
                 {curQ.imageUrl ? <Image source={{uri:curQ.imageUrl}} style={S.qImage} resizeMode="contain"/> : null}
                 <Text style={S.qTxt}>{curQ.question}</Text>
-                <View style={S.aGrid}>
-                  {(curQ.type==="multipleChoice"?curQ.answers:["True","False"]).map((ans,i)=>{
-                    const isSel=selAns===i, isCorr=curQ.correctAnswers?.[i]===true;
-                    let bg="#1c1c1c",bc="#383838";
-                    if(isSel){bg=ansFB==="correct"?"#003d1a":"#3d0000";bc=ansFB==="correct"?"#00c781":"#e74c3c";}
-                    else if(selAns!==null&&isCorr&&showCA){bg="#003d1a";bc="#00c781";}
-                    return (<TouchableOpacity key={i} style={[S.aBtn,{backgroundColor:bg,borderColor:bc}]} onPress={()=>handleAnswer(i)} disabled={selAns!==null} activeOpacity={0.75}><Text style={S.aTxt}>{ans}</Text></TouchableOpacity>);
-                  })}
-                </View>
+                {curQ.type==="multiSelect" ? (
+                  <>
+                    <Text style={{color:"#888",fontSize:13,marginBottom:4,textAlign:"center"}}>Select ALL correct answers, then tap Confirm</Text>
+                    <View style={S.aGrid}>
+                      {(curQ.answers||[]).map((ans,i) => {
+                        const isSel=multiSelAnswers.includes(i);
+                        const isCorr=curQ.correctAnswers?.[i]===true;
+                        let bg=isSel?"#001d33":"#1c1c1c", bc=isSel?"#3498db":"#383838";
+                        if(selAns!=null&&isCorr&&showCA){bg="#003d1a";bc="#00c781";}
+                        if(selAns!=null&&isSel&&!isCorr){bg="#3d0000";bc="#e74c3c";}
+                        return (
+                          <TouchableOpacity key={i} style={[S.aBtn,{backgroundColor:bg,borderColor:bc,flexDirection:"row",gap:12,justifyContent:"flex-start"}]}
+                            onPress={()=>handleMultiToggle(i)} disabled={selAns!==null} activeOpacity={0.75}>
+                            <Text style={{fontSize:20,color:isSel?"#3498db":"#444",marginTop:1}}>{isSel?"☑":"☐"}</Text>
+                            <Text style={S.aTxt}>{ans}</Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                    {selAns===null && multiSelAnswers.length>0 && (
+                      <TouchableOpacity style={[S.rollBtn,{backgroundColor:"#3498db",marginTop:8,alignSelf:"center"}]} onPress={handleMultiConfirm}>
+                        <Text style={S.rollTxtBig}>Confirm</Text>
+                      </TouchableOpacity>
+                    )}
+                  </>
+                ) : (
+                  <View style={S.aGrid}>
+                    {(curQ.type==="multipleChoice"?curQ.answers:["True","False"]).map((ans,i)=>{
+                      const isSel=selAns===i, isCorr=curQ.correctAnswers?.[i]===true;
+                      let bg="#1c1c1c",bc="#383838";
+                      if(isSel){bg=ansFB==="correct"?"#003d1a":"#3d0000";bc=ansFB==="correct"?"#00c781":"#e74c3c";}
+                      else if(selAns!==null&&isCorr&&showCA){bg="#003d1a";bc="#00c781";}
+                      return (<TouchableOpacity key={i} style={[S.aBtn,{backgroundColor:bg,borderColor:bc}]} onPress={()=>handleAnswer(i)} disabled={selAns!==null} activeOpacity={0.75}><Text style={S.aTxt}>{ans}</Text></TouchableOpacity>);
+                    })}
+                  </View>
+                )}
               </View>
             ) : <View style={S.waitBox}><ActivityIndicator color="#00c781"/><Text style={S.waitTxt}>Loading…</Text></View>}
           </ScrollView>
@@ -1158,7 +1233,7 @@ export default function BoardGameScreen({ route, navigation }) {
               {" vs "}
               <Text style={{color:activeDuel.opponentColor||"#fff"}}>{activeDuel.opponentName}</Text>
             </Text>
-            {activeDuel.status==="active" && (() => {
+            {duelView==="active" && (() => {
               const r = activeDuel.currentRound;
               const isChallenger = activeDuel.challengerUid===playerUid||activeDuel.challengerName===playerName;
               const myKey = isChallenger?`c_${r}`:`o_${r}`;
@@ -1185,7 +1260,7 @@ export default function BoardGameScreen({ route, navigation }) {
                 </>
               );
             })()}
-            {activeDuel.status==="done" && (() => {
+            {duelView==="done" && (() => {
               const iWon=activeDuel.winnerName===playerName, isTie=activeDuel.winnerName==="tie";
               const isChallenger=activeDuel.challengerName===playerName||activeDuel.challengerUid===playerUid;
               const otherName=isChallenger?activeDuel.opponentName:activeDuel.challengerName;

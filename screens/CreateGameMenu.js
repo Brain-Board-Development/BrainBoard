@@ -287,6 +287,26 @@ export default function CreateGameMenu({ navigation, route }) {
         {/* Center: Question Editor */}
         <View style={styles.centerEditor}>
           <Text style={styles.editorLabel}>Question {selectedQuestionIndex + 1}</Text>
+
+          {/* Question type picker */}
+          <View style={styles.typeRow}>
+            {[
+              {val:'multipleChoice', label:'Single Choice'},
+              {val:'multiSelect',    label:'Multi-Select'},
+              {val:'trueFalse',      label:'True / False'},
+            ].map(t=>(
+              <TouchableOpacity key={t.val}
+                style={[styles.typeBtn, currentQuestion.type===t.val && styles.typeBtnActive]}
+                onPress={()=>updateCurrentQuestion({
+                  type: t.val,
+                  answers: t.val==='trueFalse' ? ['True','False'] : currentQuestion.answers,
+                  correctAnswers: t.val==='trueFalse' ? [false,false] : (t.val==='multipleChoice' ? currentQuestion.correctAnswers.map(()=>false) : currentQuestion.correctAnswers),
+                })}>
+                <Text style={[styles.typeBtnTxt, currentQuestion.type===t.val && styles.typeBtnTxtActive]}>{t.label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
           <TextInput
             style={styles.questionInput}
             value={currentQuestion.question}
@@ -299,39 +319,19 @@ export default function CreateGameMenu({ navigation, route }) {
             {currentQuestion.imageUrl ? (
               <Image source={{ uri: currentQuestion.imageUrl }} style={styles.questionImage} />
             ) : (
-              <Text style={styles.imageUploadText}>+ Add Image</Text>
+              <Text style={styles.imageUploadText}>+ Add Image (optional)</Text>
             )}
             <View style={styles.imageOverlay}>
               <Text style={styles.imageOverlayText}>{currentQuestion.imageUrl ? 'Change Image' : 'Upload'}</Text>
             </View>
           </TouchableOpacity>
+          {currentQuestion.imageUrl ? (
+            <TouchableOpacity style={{marginBottom:12}} onPress={()=>updateCurrentQuestion({imageUrl:null})}>
+              <Text style={{color:'#e74c3c',fontSize:13}}>✕ Remove image</Text>
+            </TouchableOpacity>
+          ) : null}
 
-          {currentQuestion.type === 'multipleChoice' ? (
-            currentQuestion.answers.map((ans, i) => (
-              <View key={i} style={styles.answerRow}>
-                <TextInput
-                  style={styles.answerInput}
-                  value={ans}
-                  onChangeText={(t) => {
-                    const newAnswers = [...currentQuestion.answers];
-                    newAnswers[i] = t;
-                    updateCurrentQuestion({ answers: newAnswers });
-                  }}
-                  placeholder={`Answer ${i + 1}`}
-                />
-                <TouchableOpacity
-                  style={[styles.correctToggle, currentQuestion.correctAnswers[i] && styles.correctToggleActive]}
-                  onPress={() => {
-                    const newCorrect = [...currentQuestion.correctAnswers];
-                    newCorrect[i] = !newCorrect[i];
-                    updateCurrentQuestion({ correctAnswers: newCorrect });
-                  }}
-                >
-                  <Text style={styles.toggleIcon}>✓</Text>
-                </TouchableOpacity>
-              </View>
-            ))
-          ) : (
+          {currentQuestion.type === 'trueFalse' ? (
             <View style={styles.trueFalseRow}>
               {['True', 'False'].map((label, i) => (
                 <TouchableOpacity
@@ -343,6 +343,44 @@ export default function CreateGameMenu({ navigation, route }) {
                 </TouchableOpacity>
               ))}
             </View>
+          ) : (
+            /* Single Choice OR Multi-Select — same UI, but multi-select allows multiple ✓ */
+            <>
+              {currentQuestion.type==='multiSelect' && (
+                <Text style={{color:'#3498db',fontSize:13,marginBottom:8}}>☑ Mark ALL correct answers below</Text>
+              )}
+              {currentQuestion.answers.map((ans, i) => (
+                <View key={i} style={styles.answerRow}>
+                  <TextInput
+                    style={styles.answerInput}
+                    value={ans}
+                    onChangeText={(t) => {
+                      const newAnswers = [...currentQuestion.answers];
+                      newAnswers[i] = t;
+                      updateCurrentQuestion({ answers: newAnswers });
+                    }}
+                    placeholder={`Answer ${i + 1}`}
+                  />
+                  <TouchableOpacity
+                    style={[styles.correctToggle, currentQuestion.correctAnswers[i] && styles.correctToggleActive]}
+                    onPress={() => {
+                      const newCorrect = [...currentQuestion.correctAnswers];
+                      if (currentQuestion.type==='multipleChoice') {
+                        // Single choice — only one can be correct
+                        newCorrect.fill(false);
+                        newCorrect[i] = true;
+                      } else {
+                        // Multi-select — toggle freely
+                        newCorrect[i] = !newCorrect[i];
+                      }
+                      updateCurrentQuestion({ correctAnswers: newCorrect });
+                    }}
+                  >
+                    <Text style={styles.toggleIcon}>✓</Text>
+                  </TouchableOpacity>
+                </View>
+              ))}
+            </>
           )}
 
           <View style={styles.timeSetting}>
@@ -413,7 +451,12 @@ const styles = StyleSheet.create({
   reorderText: { color: '#00c781', fontSize: 18, fontWeight: 'bold' },
   disabledReorder: { opacity: 0.3 },
   centerEditor: { flex: 1, padding: 40, backgroundColor: '#111' },
-  editorLabel: { fontSize: 18, color: '#aaa', marginBottom: 20 },
+  editorLabel: { fontSize: 18, color: '#aaa', marginBottom: 12 },
+  typeRow:       { flexDirection: 'row', gap: 8, marginBottom: 16 },
+  typeBtn:       { flex: 1, backgroundColor: '#1e1e1e', padding: 10, borderRadius: 10, alignItems: 'center', borderWidth: 2, borderColor: '#333' },
+  typeBtnActive: { backgroundColor: '#003322', borderColor: '#00c781' },
+  typeBtnTxt:    { color: '#888', fontSize: 13, fontWeight: '600' },
+  typeBtnTxtActive: { color: '#00c781' },
   questionInput: { fontSize: 28, color: '#fff', backgroundColor: '#1e1e1e', padding: 20, borderRadius: 16, minHeight: 120, marginBottom: 20 },
   imageUpload: { height: 200, backgroundColor: '#1e1e1e', borderRadius: 16, justifyContent: 'center', alignItems: 'center', marginBottom: 20, position: 'relative' },
   imageUploadText: { color: '#666', fontSize: 16 },
