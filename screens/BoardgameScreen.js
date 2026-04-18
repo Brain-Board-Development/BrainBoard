@@ -57,6 +57,10 @@ const formatTime  = (s) => s == null ? "--:--" : `${Math.floor(s/60)}:${(s%60).t
 
 function getCorrectText(q) {
   if (!q) return "";
+  if (q.type === "multiSelect") {
+    const corrects = (q.correctAnswers||[]).map((v,i) => v ? q.answers?.[i] : null).filter(Boolean);
+    return corrects.length ? corrects.join(", ") : "";
+  }
   if (q.type === "multipleChoice") {
     const i = (q.correctAnswers||[]).indexOf(true);
     return i >= 0 ? (q.answers?.[i] || "") : "";

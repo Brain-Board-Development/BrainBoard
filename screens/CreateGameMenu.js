@@ -294,17 +294,31 @@ export default function CreateGameMenu({ navigation, route }) {
               {val:'multipleChoice', label:'Single Choice'},
               {val:'multiSelect',    label:'Multi-Select'},
               {val:'trueFalse',      label:'True / False'},
-            ].map(t=>(
-              <TouchableOpacity key={t.val}
-                style={[styles.typeBtn, currentQuestion.type===t.val && styles.typeBtnActive]}
-                onPress={()=>updateCurrentQuestion({
-                  type: t.val,
-                  answers: t.val==='trueFalse' ? ['True','False'] : currentQuestion.answers,
-                  correctAnswers: t.val==='trueFalse' ? [false,false] : (t.val==='multipleChoice' ? currentQuestion.correctAnswers.map(()=>false) : currentQuestion.correctAnswers),
-                })}>
-                <Text style={[styles.typeBtnTxt, currentQuestion.type===t.val && styles.typeBtnTxtActive]}>{t.label}</Text>
-              </TouchableOpacity>
-            ))}
+            ].map(t=>{
+              const isCurrent = currentQuestion.type===t.val;
+              const comingFromTF = currentQuestion.type==='trueFalse';
+              return (
+                <TouchableOpacity key={t.val}
+                  style={[styles.typeBtn, isCurrent && styles.typeBtnActive]}
+                  onPress={()=>{
+                    if (isCurrent) return;
+                    if (t.val==='trueFalse') {
+                      updateCurrentQuestion({ type:'trueFalse', answers:['True','False'], correctAnswers:[false,false] });
+                    } else if (comingFromTF) {
+                      // Coming FROM trueFalse — always reset to 4 blank answers
+                      updateCurrentQuestion({ type:t.val, answers:['','','',''], correctAnswers:[false,false,false,false] });
+                    } else {
+                      // Choice ↔ MultiSelect — keep existing answers, just clear correct for single
+                      const newCorrect = t.val==='multipleChoice'
+                        ? currentQuestion.correctAnswers.map(()=>false)
+                        : [...currentQuestion.correctAnswers];
+                      updateCurrentQuestion({ type:t.val, correctAnswers:newCorrect });
+                    }
+                  }}>
+                  <Text style={[styles.typeBtnTxt, isCurrent && styles.typeBtnTxtActive]}>{t.label}</Text>
+                </TouchableOpacity>
+              );
+            })}
           </View>
 
           <TextInput
@@ -366,11 +380,9 @@ export default function CreateGameMenu({ navigation, route }) {
                     onPress={() => {
                       const newCorrect = [...currentQuestion.correctAnswers];
                       if (currentQuestion.type==='multipleChoice') {
-                        // Single choice — only one can be correct
                         newCorrect.fill(false);
                         newCorrect[i] = true;
                       } else {
-                        // Multi-select — toggle freely
                         newCorrect[i] = !newCorrect[i];
                       }
                       updateCurrentQuestion({ correctAnswers: newCorrect });
@@ -380,6 +392,29 @@ export default function CreateGameMenu({ navigation, route }) {
                   </TouchableOpacity>
                 </View>
               ))}
+              {/* Add / Remove answer buttons — min 2, max 5 */}
+              <View style={styles.answerCountRow}>
+                <TouchableOpacity
+                  style={[styles.answerCountBtn, currentQuestion.answers.length <= 2 && styles.answerCountBtnDisabled]}
+                  disabled={currentQuestion.answers.length <= 2}
+                  onPress={() => {
+                    const newAnswers = currentQuestion.answers.slice(0, -1);
+                    const newCorrect = currentQuestion.correctAnswers.slice(0, -1);
+                    updateCurrentQuestion({ answers: newAnswers, correctAnswers: newCorrect });
+                  }}>
+                  <Text style={styles.answerCountBtnTxt}>− Remove Answer</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.answerCountBtn, currentQuestion.answers.length >= 5 && styles.answerCountBtnDisabled]}
+                  disabled={currentQuestion.answers.length >= 5}
+                  onPress={() => {
+                    const newAnswers = [...currentQuestion.answers, ''];
+                    const newCorrect = [...currentQuestion.correctAnswers, false];
+                    updateCurrentQuestion({ answers: newAnswers, correctAnswers: newCorrect });
+                  }}>
+                  <Text style={styles.answerCountBtnTxt}>+ Add Answer</Text>
+                </TouchableOpacity>
+              </View>
             </>
           )}
 
@@ -468,7 +503,10 @@ const styles = StyleSheet.create({
   correctToggle: { width: 50, height: 50, backgroundColor: '#333', borderRadius: 25, marginLeft: 12, justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: 'transparent' },
   correctToggleActive: { backgroundColor: '#00c781', borderColor: '#fff' },
   toggleIcon: { color: '#fff', fontSize: 28, fontWeight: 'bold' },
-  trueFalseRow: { flexDirection: 'row', gap: 20, marginBottom: 20 },
+  answerCountRow:          { flexDirection:'row', gap:10, marginTop:8, marginBottom:4 },
+  answerCountBtn:          { flex:1, backgroundColor:'#1e1e1e', borderWidth:1.5, borderColor:'#444', borderRadius:10, paddingVertical:10, alignItems:'center' },
+  answerCountBtnDisabled:  { opacity:0.35 },
+  answerCountBtnTxt:       { color:'#aaa', fontSize:13, fontWeight:'600' },
   tfBtn: { flex: 1, backgroundColor: '#1e1e1e', padding: 20, borderRadius: 16, alignItems: 'center' },
   tfBtnCorrect: { backgroundColor: '#00c781' },
   tfText: { color: '#fff', fontSize: 20, fontWeight: 'bold' },
