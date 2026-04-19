@@ -14,7 +14,7 @@ import {
   Image,
   ActivityIndicator,
 } from 'react-native';
-import { db, auth, storage } from '../firebaseConfig';
+import { db, auth } from '../firebaseConfig';
 import {
   doc,
   getDoc,
@@ -22,11 +22,7 @@ import {
   updateDoc,
   collection,
 } from 'firebase/firestore';
-import {
-  ref as storageRef,
-  uploadBytes,
-  getDownloadURL,
-} from 'firebase/storage';
+
 
 export default function CreateGameMenu({ navigation, route }) {
   const gameId = route.params?.gameId;
@@ -42,76 +38,75 @@ export default function CreateGameMenu({ navigation, route }) {
 
   const coverInputRef = useRef(null);
   const questionInputRef = useRef(null);
+  const initializedRef = useRef(false);
 
-  useEffect(() => {
-    if (questions.length === 0 && !isLoading) {
-      const initialQuestion = {
-        type: 'multipleChoice',
-        question: '',
-        answers: ['', '', '', ''],
-        correctAnswers: [false, false, false, false],
-        imageUrl: null,
-        timeLimit: 20,
-      };
-      setQuestions([initialQuestion]);
-      setSelectedQuestionIndex(0);
-    }
-  }, [questions.length, isLoading]);
-
-  useEffect(() => {
-    if (gameId) {
-      const loadGame = async () => {
-        setIsLoading(true);
-        const docSnap = await getDoc(doc(db, 'games', gameId));
-        if (docSnap.exists()) {
-          const data = docSnap.data();
-          setGameTitle(data.title || '');
-          setTags(data.tags?.join(', ') || '');
-          setQuestions(data.questions || []);
-          setCoverImage(data.coverImage || null);
-          setIsEditing(true);
-        }
-        setIsLoading(false);
-      };
-      loadGame();
-    }
-  }, [gameId]);
-
-  const currentQuestion = questions[selectedQuestionIndex] || {
+  const blankQuestion = () => ({
     type: 'multipleChoice',
     question: '',
     answers: ['', '', '', ''],
     correctAnswers: [false, false, false, false],
     imageUrl: null,
     timeLimit: 20,
-  };
+  });
+
+  // Fires exactly once on mount
+  useEffect(() => {
+    if (initializedRef.current) return;
+    if (gameId) {
+      // Loading a saved game
+      const loadGame = async () => {
+        setIsLoading(true);
+        try {
+          const docSnap = await getDoc(doc(db, 'games', gameId));
+          if (docSnap.exists()) {
+            const data = docSnap.data();
+            setGameTitle(data.title || '');
+            setTags(data.tags?.join(', ') || '');
+            const qs = data.questions?.length ? data.questions : [blankQuestion()];
+            setQuestions(qs);
+            setCoverImage(data.coverImage || null);
+            setIsEditing(true);
+            setSelectedQuestionIndex(0);
+          }
+        } catch (err) { console.error('Load failed:', err); alert('Failed to load game.'); }
+        setIsLoading(false);
+      };
+      loadGame();
+    } else {
+      // New game — start with one blank question
+      setQuestions([blankQuestion()]);
+      setSelectedQuestionIndex(0);
+    }
+    initializedRef.current = true;
+  }, []); // eslint-disable-line
+
+  const safeIdx = Math.min(selectedQuestionIndex, Math.max(0, questions.length - 1));
+  const currentQuestion = questions[safeIdx] || blankQuestion();
 
   const updateCurrentQuestion = (updates) => {
     setQuestions(prev => {
       const updated = [...prev];
-      updated[selectedQuestionIndex] = { ...updated[selectedQuestionIndex], ...updates };
+      const idx = Math.min(selectedQuestionIndex, updated.length - 1);
+      updated[idx] = { ...updated[idx], ...updates };
       return updated;
     });
   };
 
   const addQuestion = () => {
-    const newQ = {
-      type: 'multipleChoice',
-      question: '',
-      answers: ['', '', '', ''],
-      correctAnswers: [false, false, false, false],
-      imageUrl: null,
-      timeLimit: 20,
-    };
-    setQuestions(prev => [...prev, newQ]);
-    setSelectedQuestionIndex(questions.length);
+    setQuestions(prev => {
+      const next = [...prev, blankQuestion()];
+      setSelectedQuestionIndex(next.length - 1);
+      return next;
+    });
   };
 
   const deleteQuestion = (index) => {
-    setQuestions(prev => prev.filter((_, i) => i !== index));
-    if (selectedQuestionIndex >= questions.length - 1) {
-      setSelectedQuestionIndex(Math.max(0, questions.length - 2));
-    }
+    setQuestions(prev => {
+      if (prev.length <= 1) return prev; // always keep at least 1
+      const next = prev.filter((_, i) => i !== index);
+      setSelectedQuestionIndex(Math.min(index, next.length - 1));
+      return next;
+    });
   };
 
   const moveQuestionUp = (index) => {
@@ -134,24 +129,35 @@ export default function CreateGameMenu({ navigation, route }) {
     setSelectedQuestionIndex(index + 1);
   };
 
+  const [imageUploading, setImageUploading] = useState(false);
+
+  // Read image file as base64 data URL — stored directly in Firestore, no Firebase Storage needed.
+  // Uses plain FileReader so it works in Expo web without conflicting with RN's Image component.
+  const readAsBase64 = (file) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Failed to read file'));
+    reader.onload = (e) => resolve(e.target.result); // data:image/...;base64,...
+    reader.readAsDataURL(file);
+  });
+
   const handleImageUpload = async (e, isCover = false) => {
-    const file = e.target.files[0];
+    const file = e.target.files?.[0];
     if (!file) return;
+    if (file.size > 2 * 1024 * 1024) {
+      alert('Please choose an image under 2 MB. Tip: use a compressed JPG or PNG.');
+      e.target.value = '';
+      return;
+    }
+    setImageUploading(true);
     try {
-      const user = auth.currentUser;
-      if (!user) { alert('User not authenticated'); return; }
-      const ext = file.name.split('.').pop() || 'jpg';
-      const fileName = `${isCover ? 'cover' : 'question'}-${Date.now()}.${ext}`;
-      const storagePath = `games/${user.uid}/${fileName}`;
-      // Use the already-initialized storage instance from firebaseConfig
-      const storageRefPath = storageRef(storage, storagePath);
-      const snapshot = await uploadBytes(storageRefPath, file);
-      const url = await getDownloadURL(snapshot.ref);
-      if (isCover) { setCoverImage(url); } else { updateCurrentQuestion({ imageUrl: url }); }
+      const base64 = await readAsBase64(file);
+      if (isCover) { setCoverImage(base64); } else { updateCurrentQuestion({ imageUrl: base64 }); }
       e.target.value = '';
     } catch (err) {
-      console.error('Upload failed:', err);
-      alert('Failed to upload image: ' + err.message);
+      console.error('Image read failed:', err);
+      alert('Could not load image: ' + (err?.message || String(err)));
+    } finally {
+      setImageUploading(false);
     }
   };
 
@@ -329,15 +335,19 @@ export default function CreateGameMenu({ navigation, route }) {
             multiline
           />
 
-          <TouchableOpacity style={styles.imageUpload} onPress={() => questionInputRef.current?.click()}>
-            {currentQuestion.imageUrl ? (
+          <TouchableOpacity style={styles.imageUpload} onPress={() => !imageUploading && questionInputRef.current?.click()}>
+            {imageUploading ? (
+              <ActivityIndicator color="#00c781" size="large"/>
+            ) : currentQuestion.imageUrl ? (
               <Image source={{ uri: currentQuestion.imageUrl }} style={styles.questionImage} />
             ) : (
               <Text style={styles.imageUploadText}>+ Add Image (optional)</Text>
             )}
-            <View style={styles.imageOverlay}>
-              <Text style={styles.imageOverlayText}>{currentQuestion.imageUrl ? 'Change Image' : 'Upload'}</Text>
-            </View>
+            {!imageUploading && (
+              <View style={styles.imageOverlay}>
+                <Text style={styles.imageOverlayText}>{currentQuestion.imageUrl ? 'Change Image' : 'Upload'}</Text>
+              </View>
+            )}
           </TouchableOpacity>
           {currentQuestion.imageUrl ? (
             <TouchableOpacity style={{marginBottom:12}} onPress={()=>updateCurrentQuestion({imageUrl:null})}>

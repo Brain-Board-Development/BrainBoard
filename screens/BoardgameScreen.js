@@ -275,6 +275,7 @@ export default function BoardGameScreen({ route, navigation }) {
   // Flash
   const flashOpacity = useRef(new Animated.Value(0)).current;
   const [flashData, setFlashData] = useState(null);
+  const [zoomImage, setZoomImage] = useState(null); // base64/url of image to show fullscreen
 
   const [gameOverDone, setGameOverDone] = useState(false);
   const boardRef = useRef(null);
@@ -808,6 +809,7 @@ export default function BoardGameScreen({ route, navigation }) {
     } else {
       await updateDoc(doc(db,"gameSessions",sessionId), {[`activeDuel.${myKey}`]:true}).catch(console.error);
     }
+    setDuelView("active"); // reset for next duel
     setPhaseSync("questions");
     setQIdx(i => i+1);
   }, [playerName, playerUid, sessionId]);
@@ -1148,11 +1150,16 @@ export default function BoardGameScreen({ route, navigation }) {
             </View>
             {curQ ? (
               <View style={S.qCard}>
-                {curQ.imageUrl ? <Image source={{uri:curQ.imageUrl}} style={S.qImage} resizeMode="contain"/> : null}
+                {curQ.imageUrl ? (
+                  <TouchableOpacity onPress={()=>setZoomImage(curQ.imageUrl)} activeOpacity={0.85}>
+                    <Image source={{uri:curQ.imageUrl}} style={S.qImage} resizeMode="contain"/>
+                    <Text style={S.zoomHint}>Tap to zoom</Text>
+                  </TouchableOpacity>
+                ) : null}
                 <Text style={S.qTxt}>{curQ.question}</Text>
                 {curQ.type==="multiSelect" ? (
                   <>
-                    <Text style={{color:"#888",fontSize:13,marginBottom:4,textAlign:"center"}}>Select ALL correct answers, then tap Confirm</Text>
+                    <Text style={{color:"#888",fontSize:13,marginBottom:8,textAlign:"center"}}>Select ALL correct answers, then tap Confirm</Text>
                     <View style={S.aGrid}>
                       {(curQ.answers||[]).map((ans,i) => {
                         const isSel=multiSelAnswers.includes(i);
@@ -1161,19 +1168,25 @@ export default function BoardGameScreen({ route, navigation }) {
                         if(selAns!=null&&isCorr&&showCA){bg="#003d1a";bc="#00c781";}
                         if(selAns!=null&&isSel&&!isCorr){bg="#3d0000";bc="#e74c3c";}
                         return (
-                          <TouchableOpacity key={i} style={[S.aBtn,{backgroundColor:bg,borderColor:bc,flexDirection:"row",gap:12,justifyContent:"flex-start"}]}
+                          <TouchableOpacity key={i}
+                            style={[S.aBtn,{backgroundColor:bg,borderColor:bc,flexDirection:"row",alignItems:"center"}]}
                             onPress={()=>handleMultiToggle(i)} disabled={selAns!==null} activeOpacity={0.75}>
-                            <Text style={{fontSize:20,color:isSel?"#3498db":"#444",marginTop:1}}>{isSel?"☑":"☐"}</Text>
-                            <Text style={S.aTxt}>{ans}</Text>
+                            {/* Fixed 32px checkbox column so layout never shifts */}
+                            <View style={{width:32,alignItems:"center"}}>
+                              <Text style={{fontSize:20,color:isSel?"#3498db":"#444"}}>{isSel?"☑":"☐"}</Text>
+                            </View>
+                            <Text style={[S.aTxt,{flex:1,textAlign:"left"}]}>{ans}</Text>
                           </TouchableOpacity>
                         );
                       })}
                     </View>
-                    {selAns===null && multiSelAnswers.length>0 && (
-                      <TouchableOpacity style={[S.rollBtn,{backgroundColor:"#3498db",marginTop:8,alignSelf:"center"}]} onPress={handleMultiConfirm}>
-                        <Text style={S.rollTxtBig}>Confirm</Text>
-                      </TouchableOpacity>
-                    )}
+                    {/* Always reserve space for Confirm — opacity 0 when nothing selected so layout is stable */}
+                    <TouchableOpacity
+                      style={[S.rollBtn,{backgroundColor:"#3498db",marginTop:12,alignSelf:"center",opacity:selAns===null&&multiSelAnswers.length>0?1:0}]}
+                      onPress={handleMultiConfirm}
+                      disabled={selAns!==null||multiSelAnswers.length===0}>
+                      <Text style={S.rollTxtBig}>Confirm</Text>
+                    </TouchableOpacity>
                   </>
                 ) : (
                   <View style={S.aGrid}>
@@ -1252,10 +1265,15 @@ export default function BoardGameScreen({ route, navigation }) {
                     <View style={S.waitBox}><ActivityIndicator color="#3498db"/><Text style={S.waitTxt}>Waiting for opponent…</Text></View>
                   ) : q ? (
                     <View style={S.qCard}>
-                      {q.imageUrl?<Image source={{uri:q.imageUrl}} style={S.qImage} resizeMode="contain"/>:null}
+                      {q.imageUrl ? (
+                        <TouchableOpacity onPress={()=>setZoomImage(q.imageUrl)} activeOpacity={0.85}>
+                          <Image source={{uri:q.imageUrl}} style={S.qImage} resizeMode="contain"/>
+                          <Text style={S.zoomHint}>Tap to zoom</Text>
+                        </TouchableOpacity>
+                      ) : null}
                       <Text style={[S.qTxt,{fontSize:22}]}>{q.question}</Text>
                       <View style={S.aGrid}>
-                        {(q.type==="multipleChoice"?q.answers:["True","False"]).map((ans,i)=>(
+                        {(q.type==="multipleChoice"?q.answers:q.type==="multiSelect"?q.answers:["True","False"]).map((ans,i)=>(
                           <TouchableOpacity key={i} style={[S.aBtn,{backgroundColor:"#1c1c1c",borderColor:"#383838"}]} onPress={()=>handleDuelAnswer(i)} activeOpacity={0.75}><Text style={S.aTxt}>{ans}</Text></TouchableOpacity>
                         ))}
                       </View>
@@ -1406,9 +1424,14 @@ export default function BoardGameScreen({ route, navigation }) {
               if (!sq) return <ActivityIndicator color="#f39c12"/>;
               return (
                 <View style={{width:"100%",gap:12}}>
-                  {sq.imageUrl ? <Image source={{uri:sq.imageUrl}} style={[S.qImage,{height:140}]} resizeMode="contain"/> : null}
+                  {sq.imageUrl ? (
+                    <TouchableOpacity onPress={()=>setZoomImage(sq.imageUrl)} activeOpacity={0.85}>
+                      <Image source={{uri:sq.imageUrl}} style={[S.qImage,{height:140}]} resizeMode="contain"/>
+                      <Text style={S.zoomHint}>Tap to zoom</Text>
+                    </TouchableOpacity>
+                  ) : null}
                   <Text style={[S.qTxt,{fontSize:22,color:"#fff",marginBottom:4}]}>{sq.question}</Text>
-                  {(sq.type==="multipleChoice" ? sq.answers : ["True","False"]).map((ans,i) => {
+                  {(sq.type==="multipleChoice" ? sq.answers : sq.type==="multiSelect" ? sq.answers : ["True","False"]).map((ans,i) => {
                     const isSel = stunSelAns===i;
                     const isCorr = sq.correctAnswers?.[i]===true;
                     let bg="#3d2000", bc="#6b3a00";
@@ -1457,10 +1480,15 @@ export default function BoardGameScreen({ route, navigation }) {
           <Text style={[{color:"#fff",fontSize:40,fontWeight:"bold",textAlign:"center"},trapTimer<=3&&{color:"#e74c3c"}]}>{trapTimer}s</Text>
           {trapEvent?.question && (
             <>
-              {trapEvent.question.imageUrl?<Image source={{uri:trapEvent.question.imageUrl}} style={[S.qImage,{height:120}]} resizeMode="contain"/>:null}
+              {trapEvent.question.imageUrl ? (
+                <TouchableOpacity onPress={()=>setZoomImage(trapEvent.question.imageUrl)} activeOpacity={0.85}>
+                  <Image source={{uri:trapEvent.question.imageUrl}} style={[S.qImage,{height:120}]} resizeMode="contain"/>
+                  <Text style={S.zoomHint}>Tap to zoom</Text>
+                </TouchableOpacity>
+              ) : null}
               <Text style={S.mDesc}>{trapEvent.question.question}</Text>
               <View style={S.aGrid}>
-                {(trapEvent.question.type==="multipleChoice"?trapEvent.question.answers:["True","False"]).map((ans,i)=>(
+                {(trapEvent.question.type==="multipleChoice"?trapEvent.question.answers:trapEvent.question.type==="multiSelect"?trapEvent.question.answers:["True","False"]).map((ans,i)=>(
                   <TouchableOpacity key={i} style={[S.aBtn,{borderColor:"#555"}]} disabled={trapAnswered}
                     onPress={()=>{ clearInterval(trapRef.current); setTrapAnswered(true); resolveEvent({correct:trapEvent.question.correctAnswers?.[i]===true}); }}>
                     <Text style={S.aTxt}>{ans}</Text>
@@ -1481,6 +1509,14 @@ export default function BoardGameScreen({ route, navigation }) {
       </Modal>
       <Modal visible={session?.status==="abandoned" && (!isHost||hostIsPlaying)} transparent animationType="fade">
         <View style={S.overlay}><View style={S.modal}><Text style={S.mTtl}>Game Ended</Text><Text style={S.mDesc}>The host ended the game.</Text><TouchableOpacity style={[S.rollBtn,{backgroundColor:"#00c781"}]} onPress={()=>navigation.reset({index:0,routes:[{name:"JoinGameScreen"}]})}><Text style={S.rollTxtBig}>Back</Text></TouchableOpacity></View></View>
+      </Modal>
+
+      {/* Image zoom modal — tap any question image to see it fullscreen */}
+      <Modal visible={!!zoomImage} transparent animationType="fade">
+        <TouchableOpacity style={S.zoomOverlay} activeOpacity={1} onPress={()=>setZoomImage(null)}>
+          <Image source={{uri:zoomImage||""}} style={S.zoomImg} resizeMode="contain"/>
+          <Text style={S.zoomClose}>Tap anywhere to close</Text>
+        </TouchableOpacity>
       </Modal>
 
       {/* Flash — fully opaque bg, text never fades */}
@@ -1573,7 +1609,11 @@ const S = StyleSheet.create({
   rollDot:      { width:16, height:16, borderRadius:8, backgroundColor:"#2a2a2a", borderWidth:2, borderColor:"#444" },
   rollDotOn:    { backgroundColor:"#00c781", borderColor:"#00c781" },
   rollTxt2:     { color:"#555", fontSize:13, marginLeft:4 },
-  qImage:       { width:"100%", height:200, borderRadius:12, marginBottom:12, backgroundColor:"#1e1e1e" },
+  qImage:       { width:"100%", height:200, borderRadius:12, marginBottom:4, backgroundColor:"#1e1e1e" },
+  zoomHint:     { color:"#555", fontSize:11, textAlign:"center", marginBottom:12 },
+  zoomOverlay:  { flex:1, backgroundColor:"rgba(0,0,0,0.95)", justifyContent:"center", alignItems:"center" },
+  zoomImg:      { width:"100%", height:"80%", borderRadius:8 },
+  zoomClose:    { color:"#666", fontSize:14, marginTop:16 },
   qTxt:         { color:"#fff", fontSize:28, fontWeight:"700", lineHeight:38, textAlign:"center" },
   aGrid:        { gap:12 },
   aBtn:         { borderRadius:14, padding:22, borderWidth:2.5, alignItems:"center" },
@@ -1645,13 +1685,13 @@ const S = StyleSheet.create({
   endBtn:     { backgroundColor:"#c0392b", paddingVertical:10, paddingHorizontal:22, borderRadius:12 },
   endBtnTxt:  { color:"#fff", fontWeight:"bold", fontSize:15 },
   hostBody:   { flex:1, flexDirection:"row" },
-  hostSide:   { width:260, backgroundColor:"#0a0a0a", padding:16, borderLeftWidth:1, borderLeftColor:"#222" },
-  lbTitle:    { color:"#00c781", fontSize:18, fontWeight:"bold", marginBottom:14 },
-  lbRow:      { flexDirection:"row", alignItems:"center", paddingVertical:10, borderBottomWidth:1, borderBottomColor:"#1a1a1a" },
-  lbRank:     { color:"#fff", width:32, fontSize:15 },
-  lbDot:      { width:13, height:13, borderRadius:7, marginRight:10 },
-  lbName:     { color:"#fff", fontSize:14, fontWeight:"500" },
-  lbPos:      { color:"#aaa", fontSize:13 },
+  hostSide:   { width:380, backgroundColor:"#0a0a0a", padding:24, borderLeftWidth:1, borderLeftColor:"#222" },
+  lbTitle:    { color:"#00c781", fontSize:32, fontWeight:"bold", marginBottom:24 },
+  lbRow:      { flexDirection:"row", alignItems:"center", paddingVertical:18, borderBottomWidth:1, borderBottomColor:"#1a1a1a" },
+  lbRank:     { color:"#fff", width:60, fontSize:28, fontWeight:"bold" },
+  lbDot:      { width:26, height:26, borderRadius:13, marginRight:16 },
+  lbName:     { color:"#fff", fontSize:26, fontWeight:"500", flex:1 },
+  lbPos:      { color:"#aaa", fontSize:24 },
 
   leaveBtn:    { position:"absolute", bottom:12, left:16, backgroundColor:"#2a0000", paddingVertical:12, paddingHorizontal:22, borderRadius:12 },
   leaveBtnTxt: { color:"#ff6b6b", fontSize:15, fontWeight:"bold" },
