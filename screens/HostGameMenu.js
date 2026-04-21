@@ -30,8 +30,8 @@ export default function HostGameMenu({ navigation, route }) {
   const [showAnswersAfter, setShowAnswersAfter]     = useState(true);
   const [nicknameGenerator, setNicknameGenerator]   = useState(false);
   const [hostPlays, setHostPlays]                   = useState(false);
-  const [randomizeQuestions, setRandomizeQuestions] = useState(false);
-  const [randomizeAnswers, setRandomizeAnswers]     = useState(false);
+  const [randomizeQuestions, setRandomizeQuestions] = useState(true);
+  const [randomizeAnswers, setRandomizeAnswers]     = useState(true);
 
   useEffect(() => {
     const fetchGame = async () => {

@@ -1,536 +1,563 @@
 /**
- * CreateGameMenu.js
- * Fix: saveGame now validates that every question has at least one correct answer marked.
+ * Lobby.js
+ * Space distribution: 60% mystery, 10% normal, 10% lava, 10% cannon, 10% trap
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  TextInput,
-  ScrollView,
-  Image,
-  ActivityIndicator,
-} from 'react-native';
-import { db, auth } from '../firebaseConfig';
-import {
-  doc,
-  getDoc,
-  addDoc,
-  updateDoc,
-  collection,
-} from 'firebase/firestore';
+  View, Text, StyleSheet, TouchableOpacity, ActivityIndicator,
+  SafeAreaView, Modal, ScrollView, Animated, Dimensions, TextInput,
+} from "react-native";
+import { db } from "../firebaseConfig";
+import { doc, onSnapshot, updateDoc, getDoc } from "firebase/firestore";
 
+const BOARD_COLS = 10;
+const { width: SCREEN_W } = Dimensions.get("window");
+const TILE_SIZE = Math.min(48, Math.floor((SCREEN_W - 64) / BOARD_COLS));
 
-export default function CreateGameMenu({ navigation, route }) {
-  const gameId = route.params?.gameId;
-  const initialTitle = route.params?.initialTitle || '';
+const SPACE_CFG = {
+  normal:  { bg: "#1a3d1a", border: "#27ae60", label: ""  },
+  lava:    { bg: "#3d1200", border: "#e74c3c", label: "L" },
+  cannon:  { bg: "#00213d", border: "#2980b9", label: "C" },
+  trap:    { bg: "#3d2d00", border: "#d68910", label: "T" },
+  mystery: { bg: "#2a0a3d", border: "#8e44ad", label: "?" },
+};
 
-  const [gameTitle, setGameTitle] = useState(initialTitle);
-  const [coverImage, setCoverImage] = useState(null);
-  const [tags, setTags] = useState('');
-  const [questions, setQuestions] = useState([]);
-  const [selectedQuestionIndex, setSelectedQuestionIndex] = useState(0);
-  const [isLoading, setIsLoading] = useState(false);
-  const [isEditing, setIsEditing] = useState(false);
+// Distribution: 60% mystery, 10% normal, 10% lava, 10% cannon, 10% trap (pool of 10)
+const SPACE_POOL = [
+  "mystery", "mystery", "mystery", "mystery", "mystery", "mystery",
+  "normal",
+  "lava",
+  "cannon",
+  "trap",
+];
 
-  const coverInputRef = useRef(null);
-  const questionInputRef = useRef(null);
-  const initializedRef = useRef(false);
+const calcBoardSize = (n) =>
+  Math.min(150, Math.round(9.14 * Math.pow(Math.max(1, n - 1), 0.714) + 25));
 
-  const blankQuestion = () => ({
-    type: 'multipleChoice',
-    question: '',
-    answers: ['', '', '', ''],
-    correctAnswers: [false, false, false, false],
-    imageUrl: null,
-    timeLimit: 20,
-  });
-
-  // Fires exactly once on mount
-  useEffect(() => {
-    if (initializedRef.current) return;
-    if (gameId) {
-      // Loading a saved game
-      const loadGame = async () => {
-        setIsLoading(true);
-        try {
-          const docSnap = await getDoc(doc(db, 'games', gameId));
-          if (docSnap.exists()) {
-            const data = docSnap.data();
-            setGameTitle(data.title || '');
-            setTags(data.tags?.join(', ') || '');
-            const qs = data.questions?.length ? data.questions : [blankQuestion()];
-            setQuestions(qs);
-            setCoverImage(data.coverImage || null);
-            setIsEditing(true);
-            setSelectedQuestionIndex(0);
-          }
-        } catch (err) { console.error('Load failed:', err); alert('Failed to load game.'); }
-        setIsLoading(false);
-      };
-      loadGame();
-    } else {
-      // New game — start with one blank question
-      setQuestions([blankQuestion()]);
-      setSelectedQuestionIndex(0);
-    }
-    initializedRef.current = true;
-  }, []); // eslint-disable-line
-
-  const safeIdx = Math.min(selectedQuestionIndex, Math.max(0, questions.length - 1));
-  const currentQuestion = questions[safeIdx] || blankQuestion();
-
-  const updateCurrentQuestion = (updates) => {
-    setQuestions(prev => {
-      const updated = [...prev];
-      const idx = Math.min(selectedQuestionIndex, updated.length - 1);
-      updated[idx] = { ...updated[idx], ...updates };
-      return updated;
-    });
-  };
-
-  const addQuestion = () => {
-    setQuestions(prev => {
-      const next = [...prev, blankQuestion()];
-      setSelectedQuestionIndex(next.length - 1);
-      return next;
-    });
-  };
-
-  const deleteQuestion = (index) => {
-    setQuestions(prev => {
-      if (prev.length <= 1) return prev; // always keep at least 1
-      const next = prev.filter((_, i) => i !== index);
-      setSelectedQuestionIndex(Math.min(index, next.length - 1));
-      return next;
-    });
-  };
-
-  const moveQuestionUp = (index) => {
-    if (index === 0) return;
-    setQuestions(prev => {
-      const newQuestions = [...prev];
-      [newQuestions[index - 1], newQuestions[index]] = [newQuestions[index], newQuestions[index - 1]];
-      return newQuestions;
-    });
-    setSelectedQuestionIndex(index - 1);
-  };
-
-  const moveQuestionDown = (index) => {
-    if (index === questions.length - 1) return;
-    setQuestions(prev => {
-      const newQuestions = [...prev];
-      [newQuestions[index], newQuestions[index + 1]] = [newQuestions[index + 1], newQuestions[index]];
-      return newQuestions;
-    });
-    setSelectedQuestionIndex(index + 1);
-  };
-
-  const [imageUploading, setImageUploading] = useState(false);
-
-  // Read image file as base64 data URL — stored directly in Firestore, no Firebase Storage needed.
-  // Uses plain FileReader so it works in Expo web without conflicting with RN's Image component.
-  const readAsBase64 = (file) => new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error('Failed to read file'));
-    reader.onload = (e) => resolve(e.target.result); // data:image/...;base64,...
-    reader.readAsDataURL(file);
-  });
-
-  const handleImageUpload = async (e, isCover = false) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (file.size > 2 * 1024 * 1024) {
-      alert('Please choose an image under 2 MB. Tip: use a compressed JPG or PNG.');
-      e.target.value = '';
-      return;
-    }
-    setImageUploading(true);
-    try {
-      const base64 = await readAsBase64(file);
-      if (isCover) { setCoverImage(base64); } else { updateCurrentQuestion({ imageUrl: base64 }); }
-      e.target.value = '';
-    } catch (err) {
-      console.error('Image read failed:', err);
-      alert('Could not load image: ' + (err?.message || String(err)));
-    } finally {
-      setImageUploading(false);
-    }
-  };
-
-  const saveGame = async (host = false) => {
-    if (!gameTitle.trim()) {
-      alert('Please enter a game title');
-      return;
-    }
-    if (questions.length === 0) {
-      alert('Please add at least one question');
-      return;
-    }
-
-    // Validate: every question must have at least one correct answer
-    for (let i = 0; i < questions.length; i++) {
-      const q = questions[i];
-      const hasCorrect = Array.isArray(q.correctAnswers) && q.correctAnswers.some(v => v === true);
-      if (!hasCorrect) {
-        alert(`Question ${i + 1} has no correct answer selected.\n\nPlease mark at least one answer as correct before saving.`);
-        setSelectedQuestionIndex(i);
-        return;
-      }
-    }
-
-    const gameData = {
-      title: gameTitle.trim(),
-      titleLower: gameTitle.trim().toLowerCase(),
-      tags: tags.split(',').map(t => t.trim().toLowerCase()).filter(t => t),
-      questions,
-      numQuestions: questions.length,
-      coverImage,
-      creatorId: auth.currentUser.uid,
-      updatedAt: new Date().toISOString(),
-      isPublished: false,
-    };
-
-    try {
-      let savedId = gameId;
-      if (isEditing && gameId) {
-        await updateDoc(doc(db, 'games', gameId), gameData);
-      } else {
-        const docRef = await addDoc(collection(db, 'games'), gameData);
-        savedId = docRef.id;
-      }
-      if (host) {
-        navigation.navigate('HostGameMenu', { gameId: savedId });
-      } else {
-        navigation.goBack();
-      }
-    } catch (err) {
-      console.error('Save failed', err);
-      alert('Failed to save game');
-    }
-  };
-
-  if (isLoading) {
-    return (
-      <View style={styles.loading}>
-        <ActivityIndicator size="large" color="#00c781" />
-      </View>
-    );
+function buildSnakeRows(total) {
+  const rows = [];
+  for (let r = 0; r <= total; r += BOARD_COLS) {
+    const row = [];
+    for (let s = r; s < r + BOARD_COLS && s <= total; s++) row.push(s);
+    if (Math.floor(r / BOARD_COLS) % 2 === 1) row.reverse();
+    rows.push(row);
   }
+  return rows.reverse();
+}
+
+const NICK_ADJ  = ["Swift","Brave","Clever","Bold","Quick","Bright","Sharp","Fierce","Calm","Wild","Sly","Wise","Daring","Lucky","Keen"];
+const NICK_NOUN = ["Fox","Wolf","Eagle","Bear","Lion","Tiger","Hawk","Shark","Raven","Dragon","Falcon","Puma","Cobra","Viper","Lynx"];
+const randomNick = () =>
+  NICK_ADJ[Math.floor(Math.random() * NICK_ADJ.length)] +
+  NICK_NOUN[Math.floor(Math.random() * NICK_NOUN.length)] +
+  Math.floor(Math.random() * 100);
+
+function BoardPreview({ players, boardSize }) {
+  const sz   = Math.min(TILE_SIZE, Math.floor((SCREEN_W - 64) / BOARD_COLS));
+  const rows = buildSnakeRows(boardSize);
+
+  const sampleBoard = useMemo(() => {
+    return Array.from({ length: boardSize + 1 }, (_, i) => {
+      if (i === 0 || i === boardSize) return { type: "normal" };
+      return { type: SPACE_POOL[Math.floor(Math.random() * SPACE_POOL.length)] };
+    });
+  }, [boardSize]);
+
+  const playersAt = (idx) => players.filter((p) => (p.position || 0) === idx);
 
   return (
-    <View style={styles.container}>
-      <input type="file" accept="image/*" ref={coverInputRef} style={{ display: 'none' }} onChange={(e) => handleImageUpload(e, true)} />
-      <input type="file" accept="image/*" ref={questionInputRef} style={{ display: 'none' }} onChange={(e) => handleImageUpload(e, false)} />
-
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()}>
-          <Text style={styles.backBtn}>← Back</Text>
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>{isEditing ? 'Edit Game' : 'Create Game'}</Text>
-        <View style={{ width: 60 }} />
-      </View>
-
-      <View style={styles.coverSection}>
-        <TouchableOpacity style={styles.coverUpload} onPress={() => coverInputRef.current?.click()}>
-          {coverImage ? (
-            <Image source={{ uri: coverImage }} style={styles.coverImage} />
-          ) : (
-            <Text style={styles.coverPlaceholder}>+ Add Cover Image</Text>
-          )}
-          <View style={styles.coverOverlay}><Text style={styles.coverOverlayText}>Upload</Text></View>
-        </TouchableOpacity>
-        <View style={styles.titleSection}>
-          <TextInput style={styles.gameTitleInput} value={gameTitle} onChangeText={setGameTitle} placeholder="Enter game title..." placeholderTextColor="#666" />
-          <TextInput style={styles.tagsInput} value={tags} onChangeText={setTags} placeholder="Tags (comma separated)" placeholderTextColor="#666" />
-        </View>
-      </View>
-
-      <View style={styles.mainLayout}>
-        {/* Left: Question Navigator */}
-        <View style={styles.leftSidebar}>
-          <TouchableOpacity style={styles.addQuestionBtn} onPress={addQuestion}>
-            <Text style={styles.addQuestionText}>+ Add Question</Text>
-          </TouchableOpacity>
-          <ScrollView style={styles.questionList}>
-            {questions.map((q, i) => {
-              const hasCorrect = Array.isArray(q.correctAnswers) && q.correctAnswers.some(v => v === true);
+    <View style={brd.wrapper}>
+      <Text style={brd.title}>Board Preview — {boardSize} tiles</Text>
+      <Text style={brd.sub}>(Sample — actual layout generated at start)</Text>
+      <ScrollView nestedScrollEnabled>
+        {rows.map((row, ri) => (
+          <View key={ri} style={brd.row}>
+            {row.map((idx) => {
+              const type    = sampleBoard[idx] ? sampleBoard[idx].type : "normal";
+              const cfg     = SPACE_CFG[type] || SPACE_CFG.normal;
+              const isEnd   = idx === boardSize;
+              const isStart = idx === 0;
+              const here    = playersAt(idx);
               return (
-                <TouchableOpacity
-                  key={i}
-                  style={[
-                    styles.questionThumb,
-                    selectedQuestionIndex === i && styles.questionThumbSelected,
-                    !hasCorrect && styles.questionThumbNoAnswer,
-                  ]}
-                  onPress={() => setSelectedQuestionIndex(i)}
-                >
-                  <Text style={styles.thumbNumber}>{i + 1}</Text>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.thumbText} numberOfLines={2}>{q.question || 'New Question'}</Text>
-                    {!hasCorrect && <Text style={styles.noAnswerWarning}>No correct answer!</Text>}
-                  </View>
-                  <View style={styles.reorderButtons}>
-                    <TouchableOpacity onPress={() => moveQuestionUp(i)} disabled={i === 0}>
-                      <Text style={[styles.reorderText, i === 0 && styles.disabledReorder]}>↑</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity onPress={() => moveQuestionDown(i)} disabled={i === questions.length - 1}>
-                      <Text style={[styles.reorderText, i === questions.length - 1 && styles.disabledReorder]}>↓</Text>
-                    </TouchableOpacity>
-                  </View>
-                  <TouchableOpacity style={styles.deleteThumbBtn} onPress={() => deleteQuestion(i)}>
-                    <Text style={styles.deleteThumbText}>×</Text>
-                  </TouchableOpacity>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
-        </View>
-
-        {/* Center: Question Editor */}
-        <View style={styles.centerEditor}>
-          <Text style={styles.editorLabel}>Question {selectedQuestionIndex + 1}</Text>
-
-          {/* Question type picker */}
-          <View style={styles.typeRow}>
-            {[
-              {val:'multipleChoice', label:'Single Choice'},
-              {val:'multiSelect',    label:'Multi-Select'},
-              {val:'trueFalse',      label:'True / False'},
-            ].map(t=>{
-              const isCurrent = currentQuestion.type===t.val;
-              const comingFromTF = currentQuestion.type==='trueFalse';
-              return (
-                <TouchableOpacity key={t.val}
-                  style={[styles.typeBtn, isCurrent && styles.typeBtnActive]}
-                  onPress={()=>{
-                    if (isCurrent) return;
-                    if (t.val==='trueFalse') {
-                      updateCurrentQuestion({ type:'trueFalse', answers:['True','False'], correctAnswers:[false,false] });
-                    } else if (comingFromTF) {
-                      // Coming FROM trueFalse — always reset to 4 blank answers
-                      updateCurrentQuestion({ type:t.val, answers:['','','',''], correctAnswers:[false,false,false,false] });
-                    } else {
-                      // Choice ↔ MultiSelect — keep existing answers, just clear correct for single
-                      const newCorrect = t.val==='multipleChoice'
-                        ? currentQuestion.correctAnswers.map(()=>false)
-                        : [...currentQuestion.correctAnswers];
-                      updateCurrentQuestion({ type:t.val, correctAnswers:newCorrect });
-                    }
-                  }}>
-                  <Text style={[styles.typeBtnTxt, isCurrent && styles.typeBtnTxtActive]}>{t.label}</Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-
-          <TextInput
-            style={styles.questionInput}
-            value={currentQuestion.question}
-            onChangeText={(t) => updateCurrentQuestion({ question: t })}
-            placeholder="Enter your question..."
-            multiline
-          />
-
-          <TouchableOpacity style={styles.imageUpload} onPress={() => !imageUploading && questionInputRef.current?.click()}>
-            {imageUploading ? (
-              <ActivityIndicator color="#00c781" size="large"/>
-            ) : currentQuestion.imageUrl ? (
-              <Image source={{ uri: currentQuestion.imageUrl }} style={styles.questionImage} />
-            ) : (
-              <Text style={styles.imageUploadText}>+ Add Image (optional)</Text>
-            )}
-            {!imageUploading && (
-              <View style={styles.imageOverlay}>
-                <Text style={styles.imageOverlayText}>{currentQuestion.imageUrl ? 'Change Image' : 'Upload'}</Text>
-              </View>
-            )}
-          </TouchableOpacity>
-          {currentQuestion.imageUrl ? (
-            <TouchableOpacity style={{marginBottom:12}} onPress={()=>updateCurrentQuestion({imageUrl:null})}>
-              <Text style={{color:'#e74c3c',fontSize:13}}>✕ Remove image</Text>
-            </TouchableOpacity>
-          ) : null}
-
-          {currentQuestion.type === 'trueFalse' ? (
-            <View style={styles.trueFalseRow}>
-              {['True', 'False'].map((label, i) => (
-                <TouchableOpacity
-                  key={i}
-                  style={[styles.tfBtn, currentQuestion.correctAnswers[i] && styles.tfBtnCorrect]}
-                  onPress={() => updateCurrentQuestion({ correctAnswers: i === 0 ? [true, false] : [false, true] })}
-                >
-                  <Text style={styles.tfText}>{label}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          ) : (
-            /* Single Choice OR Multi-Select — same UI, but multi-select allows multiple ✓ */
-            <>
-              {currentQuestion.type==='multiSelect' && (
-                <Text style={{color:'#3498db',fontSize:13,marginBottom:8}}>☑ Mark ALL correct answers below</Text>
-              )}
-              {currentQuestion.answers.map((ans, i) => (
-                <View key={i} style={styles.answerRow}>
-                  <TextInput
-                    style={styles.answerInput}
-                    value={ans}
-                    onChangeText={(t) => {
-                      const newAnswers = [...currentQuestion.answers];
-                      newAnswers[i] = t;
-                      updateCurrentQuestion({ answers: newAnswers });
-                    }}
-                    placeholder={`Answer ${i + 1}`}
-                  />
-                  <TouchableOpacity
-                    style={[styles.correctToggle, currentQuestion.correctAnswers[i] && styles.correctToggleActive]}
-                    onPress={() => {
-                      const newCorrect = [...currentQuestion.correctAnswers];
-                      if (currentQuestion.type==='multipleChoice') {
-                        newCorrect.fill(false);
-                        newCorrect[i] = true;
-                      } else {
-                        newCorrect[i] = !newCorrect[i];
-                      }
-                      updateCurrentQuestion({ correctAnswers: newCorrect });
-                    }}
-                  >
-                    <Text style={styles.toggleIcon}>✓</Text>
-                  </TouchableOpacity>
+                <View key={idx} style={[
+                  brd.tile,
+                  { width: sz, height: sz, backgroundColor: cfg.bg, borderColor: cfg.border },
+                  (isEnd || isStart) && brd.tileSpecial,
+                ]}>
+                  {isEnd ? (
+                    <Text style={[brd.lbl, { color: "#2980b9", fontSize: sz * 0.28 }]}>END</Text>
+                  ) : isStart ? (
+                    <Text style={[brd.lbl, { color: "#27ae60", fontSize: sz * 0.28 }]}>GO</Text>
+                  ) : type !== "normal" ? (
+                    <Text style={[brd.lbl, { color: cfg.border, fontSize: sz * 0.38 }]}>{cfg.label}</Text>
+                  ) : (
+                    <Text style={[brd.num, { fontSize: sz * 0.26 }]}>{idx}</Text>
+                  )}
+                  {here.length > 0 && (
+                    <View style={brd.tokens}>
+                      {here.slice(0, 4).map((p, i) => (
+                        <View key={i} style={[brd.token, { backgroundColor: p.color || "#888" }]} />
+                      ))}
+                    </View>
+                  )}
                 </View>
-              ))}
-              {/* Add / Remove answer buttons — min 2, max 5 */}
-              <View style={styles.answerCountRow}>
-                <TouchableOpacity
-                  style={[styles.answerCountBtn, currentQuestion.answers.length <= 2 && styles.answerCountBtnDisabled]}
-                  disabled={currentQuestion.answers.length <= 2}
-                  onPress={() => {
-                    const newAnswers = currentQuestion.answers.slice(0, -1);
-                    const newCorrect = currentQuestion.correctAnswers.slice(0, -1);
-                    updateCurrentQuestion({ answers: newAnswers, correctAnswers: newCorrect });
-                  }}>
-                  <Text style={styles.answerCountBtnTxt}>− Remove Answer</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.answerCountBtn, currentQuestion.answers.length >= 5 && styles.answerCountBtnDisabled]}
-                  disabled={currentQuestion.answers.length >= 5}
-                  onPress={() => {
-                    const newAnswers = [...currentQuestion.answers, ''];
-                    const newCorrect = [...currentQuestion.correctAnswers, false];
-                    updateCurrentQuestion({ answers: newAnswers, correctAnswers: newCorrect });
-                  }}>
-                  <Text style={styles.answerCountBtnTxt}>+ Add Answer</Text>
-                </TouchableOpacity>
-              </View>
-            </>
-          )}
-
-          <View style={styles.timeSetting}>
-            <Text style={styles.settingLabel}>Time Limit</Text>
-            <TextInput
-              style={styles.timeInput}
-              value={currentQuestion.timeLimit.toString()}
-              onChangeText={(t) => updateCurrentQuestion({ timeLimit: parseInt(t) || 20 })}
-              keyboardType="numeric"
-            />
-            <Text style={styles.seconds}>seconds</Text>
+              );
+            })}
           </View>
-        </View>
-
-        {/* Right: Summary & Actions */}
-        <View style={styles.rightSidebar}>
-          <View style={styles.summary}>
-            <Text style={styles.summaryTitle}>Game Summary</Text>
-            <Text style={styles.summaryText}>{questions.length} Question(s)</Text>
-            <Text style={styles.summaryText}>Tags: {tags || 'None'}</Text>
-            {questions.some(q => !q.correctAnswers?.some(v => v === true)) && (
-              <Text style={styles.warningText}>Some questions have no correct answer marked.</Text>
-            )}
+        ))}
+      </ScrollView>
+      <View style={brd.legend}>
+        {Object.entries(SPACE_CFG).map(([type, cfg]) => (
+          <View key={type} style={brd.legendRow}>
+            <View style={[brd.swatch, { backgroundColor: cfg.bg, borderColor: cfg.border }]} />
+            <Text style={[brd.legendTxt, { color: cfg.border }]}>
+              {type.charAt(0).toUpperCase() + type.slice(1)}
+            </Text>
           </View>
-          <View style={styles.actionButtons}>
-            <TouchableOpacity style={styles.saveExitBtn} onPress={() => saveGame(false)}>
-              <Text style={styles.actionBtnText}>Save & Exit</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.saveHostBtn} onPress={() => saveGame(true)}>
-              <Text style={styles.actionBtnText}>Save & Host</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
+        ))}
       </View>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#111' },
-  loading: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#111' },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 20, backgroundColor: '#0d0d0d', borderBottomWidth: 1, borderBottomColor: '#222' },
-  backBtn: { color: '#00c781', fontSize: 18, fontWeight: 'bold' },
-  headerTitle: { fontSize: 24, fontWeight: 'bold', color: '#fff' },
-  coverSection: { flexDirection: 'row', padding: 30, gap: 30, backgroundColor: '#0d0d0d' },
-  coverUpload: { width: 200, height: 200, backgroundColor: '#1e1e1e', borderRadius: 16, justifyContent: 'center', alignItems: 'center', position: 'relative' },
-  coverImage: { width: '100%', height: '100%', borderRadius: 16 },
-  coverPlaceholder: { color: '#666', fontSize: 16 },
-  coverOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', borderRadius: 16 },
-  coverOverlayText: { color: '#fff', fontWeight: 'bold' },
-  titleSection: { flex: 1, justifyContent: 'center' },
-  gameTitleInput: { fontSize: 36, fontWeight: 'bold', color: '#fff', backgroundColor: 'transparent', borderBottomWidth: 2, borderBottomColor: '#00c781', paddingBottom: 10, marginBottom: 20 },
-  tagsInput: { fontSize: 16, color: '#aaa', backgroundColor: '#222', padding: 12, borderRadius: 8 },
-  mainLayout: { flex: 1, flexDirection: 'row' },
-  leftSidebar: { width: 300, backgroundColor: '#0d0d0d', padding: 20, borderRightWidth: 1, borderRightColor: '#222' },
-  addQuestionBtn: { backgroundColor: '#00c781', padding: 16, borderRadius: 12, alignItems: 'center', marginBottom: 20 },
-  addQuestionText: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
-  questionList: { flex: 1, maxHeight: '100%' },
-  questionThumb: { backgroundColor: '#1e1e1e', borderRadius: 12, padding: 12, marginBottom: 12, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: 'transparent', position: 'relative' },
-  questionThumbSelected: { borderColor: '#00c781', backgroundColor: '#003322' },
-  questionThumbNoAnswer: { borderColor: '#e74c3c' },
-  thumbNumber: { color: '#00c781', fontWeight: 'bold', marginRight: 12, fontSize: 16 },
-  thumbText: { color: '#fff' },
-  noAnswerWarning: { color: '#e74c3c', fontSize: 11, marginTop: 2 },
-  deleteThumbBtn: { position: 'absolute', right: 8, top: 8, width: 24, height: 24, backgroundColor: '#c0392b', borderRadius: 12, justifyContent: 'center', alignItems: 'center' },
-  deleteThumbText: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
-  reorderButtons: { flexDirection: 'column', marginLeft: 8 },
-  reorderText: { color: '#00c781', fontSize: 18, fontWeight: 'bold' },
-  disabledReorder: { opacity: 0.3 },
-  centerEditor: { flex: 1, padding: 40, backgroundColor: '#111' },
-  editorLabel: { fontSize: 18, color: '#aaa', marginBottom: 12 },
-  typeRow:       { flexDirection: 'row', gap: 8, marginBottom: 16 },
-  typeBtn:       { flex: 1, backgroundColor: '#1e1e1e', padding: 10, borderRadius: 10, alignItems: 'center', borderWidth: 2, borderColor: '#333' },
-  typeBtnActive: { backgroundColor: '#003322', borderColor: '#00c781' },
-  typeBtnTxt:    { color: '#888', fontSize: 13, fontWeight: '600' },
-  typeBtnTxtActive: { color: '#00c781' },
-  questionInput: { fontSize: 28, color: '#fff', backgroundColor: '#1e1e1e', padding: 20, borderRadius: 16, minHeight: 120, marginBottom: 20 },
-  imageUpload: { height: 200, backgroundColor: '#1e1e1e', borderRadius: 16, justifyContent: 'center', alignItems: 'center', marginBottom: 20, position: 'relative' },
-  imageUploadText: { color: '#666', fontSize: 16 },
-  questionImage: { width: '100%', height: '100%', borderRadius: 16 },
-  imageOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', borderRadius: 16 },
-  imageOverlayText: { color: '#fff', fontWeight: 'bold' },
-  answerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
-  answerInput: { flex: 1, backgroundColor: '#1e1e1e', color: '#fff', padding: 16, borderRadius: 12, fontSize: 18 },
-  correctToggle: { width: 50, height: 50, backgroundColor: '#333', borderRadius: 25, marginLeft: 12, justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: 'transparent' },
-  correctToggleActive: { backgroundColor: '#00c781', borderColor: '#fff' },
-  toggleIcon: { color: '#fff', fontSize: 28, fontWeight: 'bold' },
-  answerCountRow:          { flexDirection:'row', gap:10, marginTop:8, marginBottom:4 },
-  answerCountBtn:          { flex:1, backgroundColor:'#1e1e1e', borderWidth:1.5, borderColor:'#444', borderRadius:10, paddingVertical:10, alignItems:'center' },
-  answerCountBtnDisabled:  { opacity:0.35 },
-  answerCountBtnTxt:       { color:'#aaa', fontSize:13, fontWeight:'600' },
-  tfBtn: { flex: 1, backgroundColor: '#1e1e1e', padding: 20, borderRadius: 16, alignItems: 'center' },
-  tfBtnCorrect: { backgroundColor: '#00c781' },
-  tfText: { color: '#fff', fontSize: 20, fontWeight: 'bold' },
-  timeSetting: { flexDirection: 'row', alignItems: 'center', marginTop: 30 },
-  settingLabel: { color: '#aaa', marginRight: 12 },
-  timeInput: { backgroundColor: '#1e1e1e', color: '#fff', width: 60, padding: 10, borderRadius: 8, textAlign: 'center' },
-  seconds: { color: '#aaa', marginLeft: 8 },
-  rightSidebar: { width: 400, backgroundColor: '#0d0d0d', padding: 30, borderLeftWidth: 1, borderLeftColor: '#222' },
-  summary: { flex: 1 },
-  summaryTitle: { fontSize: 20, fontWeight: 'bold', color: '#fff', marginBottom: 20 },
-  summaryText: { color: '#ccc', fontSize: 16, marginBottom: 12 },
-  warningText: { color: '#e74c3c', fontSize: 14, marginBottom: 12 },
-  actionButtons: { gap: 12 },
-  saveExitBtn: { backgroundColor: '#333', padding: 16, borderRadius: 12, alignItems: 'center' },
-  saveHostBtn: { backgroundColor: '#00c781', padding: 16, borderRadius: 12, alignItems: 'center' },
-  actionBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
+const brd = StyleSheet.create({
+  wrapper:     { backgroundColor: "#0d0d0d", borderRadius: 16, padding: 14, marginTop: 20, borderWidth: 1, borderColor: "#222" },
+  title:       { color: "#00c781", fontSize: 15, fontWeight: "bold", marginBottom: 4, textAlign: "center" },
+  sub:         { color: "#444", fontSize: 11, textAlign: "center", marginBottom: 10 },
+  row:         { flexDirection: "row", justifyContent: "center", marginBottom: 3 },
+  tile:        { borderRadius: 7, margin: 2, alignItems: "center", justifyContent: "center", borderWidth: 1 },
+  tileSpecial: { borderWidth: 2 },
+  lbl:         { fontWeight: "bold" },
+  num:         { color: "#3a5a3a", fontWeight: "bold" },
+  tokens:      { position: "absolute", bottom: 2, flexDirection: "row", flexWrap: "wrap", justifyContent: "center" },
+  token:       { width: 7, height: 7, borderRadius: 4, margin: 1 },
+  legend:      { flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: 10, marginTop: 12, paddingTop: 10, borderTopWidth: 1, borderTopColor: "#222" },
+  legendRow:   { flexDirection: "row", alignItems: "center", gap: 5 },
+  swatch:      { width: 14, height: 14, borderRadius: 3, borderWidth: 1.5 },
+  legendTxt:   { fontSize: 11, fontWeight: "600" },
+});
+
+export default function Lobby({ route, navigation }) {
+  const { sessionId, pin, gameId, isHost } = route.params;
+
+  const [players,    setPlayers]    = useState([]);
+  const [session,    setSession]    = useState(null);
+  const [locked,     setLocked]     = useState(false);
+  const [loading,    setLoading]    = useState(true);
+  const [showLeave,  setShowLeave]  = useState(false);
+  const [kickTarget, setKickTarget] = useState(null);
+  const [starting,   setStarting]   = useState(false);
+  const [writeError, setWriteError] = useState(null);
+
+  // Host-plays: name & color chosen in lobby before start
+  const [hostName,   setHostName]   = useState("");
+  const [hostColor,  setHostColor]  = useState("#00c781");
+  const [hostNameErr,setHostNameErr]= useState(false);
+  const hostUid = useRef("host_" + Date.now()).current;
+
+  const sessionRef = useRef(null);
+  const pinPulse   = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    const loop = Animated.loop(Animated.sequence([
+      Animated.timing(pinPulse, { toValue: 1.03, duration: 1200, useNativeDriver: false }),
+      Animated.timing(pinPulse, { toValue: 1.0,  duration: 1200, useNativeDriver: false }),
+    ]));
+    loop.start();
+    return () => loop.stop();
+  }, []);
+
+  useEffect(() => {
+    if (!sessionId) return;
+    return onSnapshot(doc(db, "gameSessions", sessionId), (snap) => {
+      if (!snap.exists()) return;
+      const data = snap.data();
+      sessionRef.current = data;
+      setSession(data);
+      setPlayers(data.players || []);
+      setLocked(data.isLobbyLocked || false);
+      setLoading(false);
+      if (!isHost && data.status === "abandoned") {
+        navigation.reset({ index: 0, routes: [{ name: "JoinGameScreen" }] });
+      }
+    });
+  }, [sessionId, isHost]);
+
+  const toggleLock = async () => {
+    try {
+      await updateDoc(doc(db, "gameSessions", sessionId), { isLobbyLocked: !locked });
+    } catch (err) { setWriteError("Lock failed: " + err.message); }
+  };
+
+  const confirmKick = async (player) => {
+    setKickTarget(null);
+    setWriteError(null);
+    try {
+      const sess = sessionRef.current;
+      if (!sess) return;
+      const upd    = (sess.players || []).filter((p) => p.name !== player.name);
+      const kicked = [...(sess.kickedPlayers || [])];
+      if (!kicked.includes(player.name)) kicked.push(player.name);
+      await updateDoc(doc(db, "gameSessions", sessionId), { players: upd, kickedPlayers: kicked });
+    } catch (err) {
+      console.error("Kick:", err);
+      setWriteError("Kick failed — " + err.message + ". Check Firestore rules.");
+    }
+  };
+
+  const handleStartGame = async () => {
+    const hostPlays = session?.settings?.hostPlays;
+
+    // If hostPlays is on, the host must have entered a name
+    if (hostPlays) {
+      if (!hostName.trim()) { setHostNameErr(true); setWriteError("Enter your name before starting."); return; }
+    }
+    if (players.length === 0 && !hostPlays) { setWriteError("Wait for at least one player."); return; }
+    if (starting) return;
+    setStarting(true);
+    setWriteError(null);
+    setHostNameErr(false);
+
+    try {
+      const sd = sessionRef.current;
+      if (!sd) { setStarting(false); return; }
+      const currentPlayers = sd.players || [];
+      const manualSize     = sd.settings ? sd.settings.boardSize : null;
+      const boardEnd       = (manualSize != null && manualSize > 0)
+        ? manualSize : calcBoardSize(currentPlayers.length);
+
+      const board = Array.from({ length: boardEnd + 1 }, (_, i) => ({
+        index: i,
+        type:  (i === 0 || i === boardEnd)
+          ? "normal"
+          : SPACE_POOL[Math.floor(Math.random() * SPACE_POOL.length)],
+      }));
+
+      let finalPlayers = currentPlayers;
+      if (sd.settings && sd.settings.nicknameGenerator) {
+        const used = new Set();
+        finalPlayers = currentPlayers.map((p) => {
+          let nick = randomNick();
+          while (used.has(nick)) nick = randomNick();
+          used.add(nick);
+          return { ...p, name: nick };
+        });
+      }
+
+      let questions = [];
+      const gid = sd.gameId || gameId;
+      if (gid) {
+        const gSnap = await getDoc(doc(db, "games", gid));
+        if (gSnap.exists()) {
+          questions = (gSnap.data() || {}).questions || [];
+
+          // ── Fisher-Yates shuffle helper ──────────────────────────────────
+          const shuffle = (arr) => {
+            const a = [...arr];
+            for (let i = a.length - 1; i > 0; i--) {
+              const j = Math.floor(Math.random() * (i + 1));
+              [a[i], a[j]] = [a[j], a[i]];
+            }
+            return a;
+          };
+
+          // Question/answer randomisation now happens per-player in BoardGameScreen
+          // so each player gets a unique order every game.
+        }
+      }
+
+      const durSecs = ((sd.settings && sd.settings.gameDuration) || 10) * 60;
+      const hostPlays = !!(sd.settings && sd.settings.hostPlays);
+
+      // If hostPlays is on, inject the host as the first player
+      if (hostPlays) {
+        const hName  = hostName.trim() || "Host";
+        const hColor = hostColor;
+        const hostPlayer = {
+          uid: hostUid, name: hName, color: hColor,
+          joinedAt: new Date().toISOString(),
+          score: 0, position: 0, correctStreak: 0, totalCorrect: 0,
+          luck: 0, stunned: false, isHostPlayer: true,
+        };
+        if (!finalPlayers.some(p => p.uid === hostUid)) {
+          finalPlayers = [hostPlayer, ...finalPlayers];
+        }
+      }
+
+      await updateDoc(doc(db, "gameSessions", sessionId), {
+        status:               "playing",
+        board,
+        players:              finalPlayers,
+        questions,
+        currentQuestionIndex: 0,
+        gameEndsAt:           Date.now() + durSecs * 1000,
+        settings:             { ...(sd.settings || {}), boardSize: boardEnd },
+      });
+
+      if (hostPlays) {
+        navigation.replace("BoardGameScreen", {
+          sessionId,
+          gameId:        gid,
+          playerName:    hostName.trim() || "Host",
+          playerColor:   hostColor,
+          playerUid:     hostUid,
+          isHost:        true,
+          hostIsPlaying: true,
+        });
+      } else {
+        navigation.replace("BoardGameScreen", {
+          sessionId,
+          gameId:     gid,
+          playerName: "Host",
+          playerColor:"#00c781",
+          isHost:     true,
+        });
+      }
+    } catch (err) {
+      console.error("Start:", err);
+      setWriteError("Failed to start — " + err.message + ". Check Firestore rules.");
+      setStarting(false);
+    }
+  };
+
+  const handleLeaveConfirm = async () => {
+    setShowLeave(false);
+    if (isHost) {
+      try { await updateDoc(doc(db, "gameSessions", sessionId), { status: "abandoned" }); } catch {}
+      navigation.navigate("Dashboard");
+    } else {
+      navigation.navigate("JoinGameScreen");
+    }
+  };
+
+  if (loading) return (
+    <SafeAreaView style={S.container}>
+      <ActivityIndicator size="large" color="#00c781" />
+      <Text style={S.loadTxt}>Loading lobby…</Text>
+    </SafeAreaView>
+  );
+
+  const maxPlayers  = (session && session.settings) ? session.settings.maxPlayers || 30 : 30;
+  const manualSize  = (session && session.settings) ? session.settings.boardSize : null;
+  const previewSize = (manualSize != null && manualSize > 0) ? manualSize : calcBoardSize(players.length);
+
+  return (
+    <SafeAreaView style={S.container}>
+      <ScrollView contentContainerStyle={S.scroll}>
+
+        {writeError ? (
+          <View style={S.errBanner}>
+            <Text style={S.errTxt} numberOfLines={3}>{writeError}</Text>
+            <TouchableOpacity onPress={() => setWriteError(null)}>
+              <Text style={S.errClose}>✕</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
+
+        <Animated.View style={[S.pinCard, { transform: [{ scale: pinPulse }] }]}>
+          <Text style={S.pinLbl}>GAME PIN</Text>
+          <Text style={S.pin}>{pin || "------"}</Text>
+          <Text style={S.pinHint}>Share with players</Text>
+        </Animated.View>
+
+        <Text style={S.countTxt}>{players.length} / {maxPlayers} players</Text>
+
+        <View style={S.settingsBox}>
+          <Text style={S.settingsLbl}>Settings</Text>
+          <View style={S.settingsRow}>
+            <Text style={S.settingsItem}>
+              Duration: {(session && session.settings) ? session.settings.gameDuration || 10 : 10} min
+            </Text>
+            <Text style={S.settingsItem}>
+              Time/Q: {(session && session.settings) ? session.settings.timePerQuestion || 20 : 20}s
+            </Text>
+            <Text style={S.settingsItem}>
+              Tiles: {manualSize != null ? manualSize : "Auto (~" + previewSize + ")"}
+            </Text>
+          </View>
+          {(session && session.settings && session.settings.nicknameGenerator) ? (
+            <Text style={S.badge}>🎲 Nickname generator ON</Text>
+          ) : null}
+          {(session && session.settings && session.settings.randomizeQuestions) ? (
+            <Text style={S.badge}>🔀 Questions randomized</Text>
+          ) : null}
+          {(session && session.settings && session.settings.randomizeAnswers) ? (
+            <Text style={S.badge}>🔀 Answer order randomized</Text>
+          ) : null}
+          {(session && session.settings && session.settings.showCorrectAnswer === false) ? (
+            <Text style={[S.badge, { color: "#e74c3c" }]}>❌ Correct answer hidden</Text>
+          ) : null}
+        </View>
+
+        {/* Host-plays name & color picker — only shown when setting is on */}
+        {isHost && session?.settings?.hostPlays ? (
+          <View style={S.hostPickerBox}>
+            <Text style={S.hostPickerTitle}>🎮 You're playing! Enter your name</Text>
+            <TextInput
+              style={[S.hostNameInput, hostNameErr && S.hostNameInputErr]}
+              placeholder="Your name…"
+              placeholderTextColor="#444"
+              value={hostName}
+              onChangeText={t => { setHostName(t); setHostNameErr(false); setWriteError(null); }}
+              maxLength={20}
+              autoCapitalize="words"
+            />
+            <Text style={S.hostPickerSubtitle}>Pick your colour</Text>
+            <View style={S.hostColorRow}>
+              {["#00c781","#e74c3c","#e67e22","#f1c40f","#3498db","#9b59b6","#e91e63","#1abc9c","#ff5722","#00bcd4"].map(c => {
+                const taken  = players.some(p => p.color === c);
+                const active = hostColor === c;
+                return (
+                  <TouchableOpacity
+                    key={c}
+                    onPress={() => !taken && setHostColor(c)}
+                    disabled={taken}
+                    style={[S.hostSwatch, { backgroundColor: c }, active && S.hostSwatchActive, taken && S.hostSwatchTaken]}
+                  >
+                    {active && <Text style={S.hostSwatchCheck}>✓</Text>}
+                    {taken  && <Text style={S.hostSwatchCheck}>✕</Text>}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+        ) : null}
+
+        {players.length === 0 ? (
+          <View style={S.emptyArea}>
+            <Text style={S.emptyTxt}>Waiting for players to join…</Text>
+          </View>
+        ) : (
+          <View style={S.playerGrid}>
+            {players.map((item, index) => (
+              <View key={item.uid || index} style={S.playerCard}>
+                <View style={[S.playerDot, { backgroundColor: item.color || "#888" }]} />
+                <Text style={S.playerName} numberOfLines={1}>{item.name || "Player"}</Text>
+                {isHost ? (
+                  <TouchableOpacity style={S.kickBtn} onPress={() => setKickTarget(item)}>
+                    <Text style={S.kickTxt}>✕</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+            ))}
+          </View>
+        )}
+
+        <BoardPreview players={players} boardSize={previewSize} />
+      </ScrollView>
+
+      {isHost ? (
+        <View style={S.hostBar}>
+          <TouchableOpacity style={[S.lockBtn, locked && S.lockOn]} onPress={toggleLock}>
+            <Text style={[S.lockTxt, locked && { color: "#00c781" }]}>
+              {locked ? "LOCKED" : "OPEN"}
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[S.startBtn, (players.length === 0 || starting) && S.startOff]}
+            onPress={handleStartGame}
+            disabled={players.length === 0 || starting}
+          >
+            <Text style={S.startTxt}>{starting ? "Starting…" : "Start Game"}</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
+
+      <TouchableOpacity style={S.leaveBtn} onPress={() => setShowLeave(true)}>
+        <Text style={S.leaveTxt}>Leave</Text>
+      </TouchableOpacity>
+
+      <Modal visible={!!kickTarget} transparent animationType="fade">
+        <View style={S.overlay}><View style={S.modal}>
+          <Text style={S.mTtl}>Kick Player?</Text>
+          <Text style={S.mTxt}>
+            Remove{" "}
+            <Text style={{ color: kickTarget ? kickTarget.color || "#fff" : "#fff", fontWeight: "bold" }}>
+              {kickTarget ? kickTarget.name : ""}
+            </Text>
+            {" "}from the game?
+          </Text>
+          <View style={S.mRow}>
+            <TouchableOpacity style={S.mGrey} onPress={() => setKickTarget(null)}>
+              <Text style={S.mBtnTxt}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={S.mRed} onPress={() => confirmKick(kickTarget)}>
+              <Text style={S.mBtnTxt}>Kick</Text>
+            </TouchableOpacity>
+          </View>
+        </View></View>
+      </Modal>
+
+      <Modal visible={showLeave} transparent animationType="fade">
+        <View style={S.overlay}><View style={S.modal}>
+          <Text style={S.mTtl}>{isHost ? "Close Lobby?" : "Leave Lobby?"}</Text>
+          <Text style={S.mTxt}>{isHost ? "This will disconnect all players." : "Are you sure?"}</Text>
+          <View style={S.mRow}>
+            <TouchableOpacity style={S.mGrey} onPress={() => setShowLeave(false)}>
+              <Text style={S.mBtnTxt}>Stay</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={S.mRed} onPress={handleLeaveConfirm}>
+              <Text style={S.mBtnTxt}>Leave</Text>
+            </TouchableOpacity>
+          </View>
+        </View></View>
+      </Modal>
+    </SafeAreaView>
+  );
+}
+
+const S = StyleSheet.create({
+  container: { flex: 1, backgroundColor: "#111" },
+  scroll:    { padding: 20, paddingBottom: 140 },
+  loadTxt:   { color: "#fff", marginTop: 16, fontSize: 18, textAlign: "center" },
+  errBanner: { backgroundColor: "#3a0000", borderRadius: 10, padding: 14, marginBottom: 12, flexDirection: "row", alignItems: "flex-start", borderWidth: 1, borderColor: "#e74c3c" },
+  errTxt:    { color: "#ff6b6b", fontSize: 13, flex: 1, lineHeight: 18 },
+  errClose:  { color: "#ff6b6b", fontSize: 16, fontWeight: "bold", marginLeft: 8 },
+  pinCard:   { backgroundColor: "#1e1e1e", borderRadius: 22, padding: 28, alignItems: "center", marginBottom: 16, borderWidth: 2, borderColor: "#00c781" },
+  pinLbl:    { color: "#888", fontSize: 13, letterSpacing: 4, marginBottom: 8 },
+  pin:       { fontSize: 60, fontWeight: "bold", color: "#00c781", letterSpacing: 14 },
+  pinHint:   { color: "#555", fontSize: 13, marginTop: 6 },
+  countTxt:  { color: "#888", fontSize: 16, textAlign: "center", marginBottom: 12 },
+  settingsBox:  { backgroundColor: "#1a1a1a", borderRadius: 12, padding: 14, marginBottom: 16, borderWidth: 1, borderColor: "#2a2a2a" },
+  settingsLbl:  { color: "#666", fontSize: 11, letterSpacing: 1, fontWeight: "bold", marginBottom: 6 },
+  settingsRow:  { flexDirection: "row", flexWrap: "wrap", gap: 14 },
+  settingsItem: { color: "#ccc", fontSize: 14 },
+  badge:        { color: "#00c781", fontSize: 12, marginTop: 4 },
+  emptyArea:  { alignItems: "center", paddingVertical: 36 },
+  emptyTxt:   { color: "#555", fontSize: 17 },
+
+  hostPickerBox:     { backgroundColor: "#0d1a12", borderRadius: 14, padding: 16, marginBottom: 14, borderWidth: 1.5, borderColor: "#00c781" },
+  hostPickerTitle:   { color: "#00c781", fontSize: 15, fontWeight: "bold", marginBottom: 10 },
+  hostPickerSubtitle:{ color: "#888", fontSize: 12, marginTop: 12, marginBottom: 8 },
+  hostNameInput:     { backgroundColor: "#1e1e1e", color: "#fff", fontSize: 18, padding: 14, borderRadius: 12, borderWidth: 1.5, borderColor: "#333" },
+  hostNameInputErr:  { borderColor: "#e74c3c" },
+  hostColorRow:      { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  hostSwatch:        { width: 36, height: 36, borderRadius: 18, justifyContent: "center", alignItems: "center", borderWidth: 2.5, borderColor: "transparent" },
+  hostSwatchActive:  { borderColor: "#fff", transform: [{ scale: 1.2 }] },
+  hostSwatchTaken:   { opacity: 0.25 },
+  hostSwatchCheck:   { color: "#fff", fontSize: 14, fontWeight: "bold" },
+  playerGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginBottom: 8 },
+  playerCard: { flexDirection: "row", alignItems: "center", backgroundColor: "#1e1e1e", borderRadius: 12, paddingVertical: 12, paddingHorizontal: 14, borderWidth: 1, borderColor: "#2a2a2a", minWidth: 120, flex: 1 },
+  playerDot:  { width: 14, height: 14, borderRadius: 7, marginRight: 10 },
+  playerName: { color: "#fff", fontSize: 15, flex: 1 },
+  kickBtn:    { backgroundColor: "#3a0000", borderRadius: 8, width: 26, height: 26, justifyContent: "center", alignItems: "center", marginLeft: 6 },
+  kickTxt:    { color: "#ff6b6b", fontSize: 13, fontWeight: "bold" },
+  hostBar:    { position: "absolute", bottom: 50, left: 0, right: 0, flexDirection: "row", gap: 12, paddingHorizontal: 20, alignItems: "center" },
+  lockBtn:    { backgroundColor: "#1e1e1e", borderRadius: 14, paddingVertical: 14, paddingHorizontal: 18, alignItems: "center", borderWidth: 1, borderColor: "#333" },
+  lockOn:     { backgroundColor: "#003322", borderColor: "#00c781" },
+  lockTxt:    { color: "#888", fontSize: 12, fontWeight: "bold" },
+  startBtn:   { flex: 1, backgroundColor: "#00c781", borderRadius: 16, paddingVertical: 18, alignItems: "center" },
+  startOff:   { backgroundColor: "#1e1e1e", opacity: 0.4 },
+  startTxt:   { color: "#000", fontSize: 19, fontWeight: "bold" },
+  leaveBtn:   { position: "absolute", bottom: 12, left: 20, backgroundColor: "#2a0000", paddingVertical: 10, paddingHorizontal: 20, borderRadius: 12 },
+  leaveTxt:   { color: "#ff6b6b", fontSize: 14, fontWeight: "bold" },
+  overlay:    { flex: 1, backgroundColor: "rgba(0,0,0,0.88)", justifyContent: "center", alignItems: "center" },
+  modal:      { backgroundColor: "#1e1e1e", borderRadius: 20, padding: 28, width: "85%", maxWidth: 360, borderWidth: 1, borderColor: "#333" },
+  mTtl:       { color: "#fff", fontSize: 20, fontWeight: "bold", marginBottom: 12 },
+  mTxt:       { color: "#ccc", fontSize: 15, lineHeight: 22, marginBottom: 24 },
+  mRow:       { flexDirection: "row", gap: 12 },
+  mGrey:      { flex: 1, backgroundColor: "#2a2a2a", paddingVertical: 14, borderRadius: 12, alignItems: "center" },
+  mRed:       { flex: 1, backgroundColor: "#c0392b", paddingVertical: 14, borderRadius: 12, alignItems: "center" },
+  mBtnTxt:    { color: "#fff", fontWeight: "bold" },
 });

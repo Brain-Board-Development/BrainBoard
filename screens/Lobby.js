@@ -262,28 +262,8 @@ export default function Lobby({ route, navigation }) {
             return a;
           };
 
-          // Randomize question ORDER if setting is on
-          if (sd.settings && sd.settings.randomizeQuestions) {
-            questions = shuffle(questions);
-          }
-
-          // Randomize ANSWER ORDER within each question if setting is on
-          if (sd.settings && sd.settings.randomizeAnswers) {
-            questions = questions.map((q) => {
-              if (q.type !== "multipleChoice" || !Array.isArray(q.answers) || !q.answers.length) return q;
-              const n   = q.answers.length;
-              const idx = Array.from({ length: n }, (_, i) => i);
-              for (let i = n - 1; i > 0; i--) {
-                const j = Math.floor(Math.random() * (i + 1));
-                const tmp = idx[i]; idx[i] = idx[j]; idx[j] = tmp;
-              }
-              return {
-                ...q,
-                answers:        idx.map((i) => q.answers[i]),
-                correctAnswers: idx.map((i) => q.correctAnswers[i]),
-              };
-            });
-          }
+          // Question/answer randomisation now happens per-player in BoardGameScreen
+          // so each player gets a unique order every game.
         }
       }
 

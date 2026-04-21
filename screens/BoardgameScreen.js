@@ -291,10 +291,40 @@ export default function BoardGameScreen({ route, navigation }) {
       const data = snap.data();
       sessionRef.current = data;
 
-      // Load questions ONCE (shuffled by Lobby)
+      // Load questions ONCE — shuffle locally so every player gets a different random order
       if (!questionsSetRef.current && data.questions?.length) {
         questionsSetRef.current = true;
-        setQuestions(data.questions);
+
+        // Fisher-Yates shuffle
+        const fyShuffle = (arr) => {
+          const a = [...arr];
+          for (let i = a.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [a[i], a[j]] = [a[j], a[i]];
+          }
+          return a;
+        };
+
+        // 1. Randomise question order
+        let qs = fyShuffle(data.questions);
+
+        // 2. Randomise answer order within each question (skip trueFalse)
+        qs = qs.map(q => {
+          if (q.type === 'trueFalse' || !Array.isArray(q.answers) || q.answers.length < 2) return q;
+          const n = q.answers.length;
+          const idx = Array.from({length: n}, (_, i) => i);
+          for (let i = n - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [idx[i], idx[j]] = [idx[j], idx[i]];
+          }
+          return {
+            ...q,
+            answers:        idx.map(i => q.answers[i]),
+            correctAnswers: idx.map(i => q.correctAnswers[i]),
+          };
+        });
+
+        setQuestions(qs);
       }
 
       const me = (data.players||[]).find(p => (playerUid && p.uid===playerUid) || p.name===playerName);
