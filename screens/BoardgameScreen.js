@@ -42,8 +42,11 @@ function shuffleQuestionAnswers(qs) {
     };
   });
 }
-function buildFreshDeck(rawQuestions) {
-  return shuffleQuestionAnswers(fyShuffleArr(rawQuestions));
+// randQ / randA flags come from session.settings — if both false, returns questions unchanged
+function buildFreshDeck(rawQuestions, randQ = true, randA = true) {
+  let qs = randQ ? fyShuffleArr(rawQuestions) : [...rawQuestions];
+  if (randA) qs = shuffleQuestionAnswers(qs);
+  return qs;
 }
 
 const SPACE_CFG = {
@@ -229,10 +232,13 @@ export default function BoardGameScreen({ route, navigation }) {
   const [srValue,   setSrValue]   = useState(null);
   const [srRolling, setSrRolling] = useState(false);
   const srAnim = useRef(new Animated.Value(0)).current;
+  const srLandingPos = useRef(null); // exact position landed on — avoids Firestore snapshot race
 
-  const [trapEvent,    setTrapEvent]    = useState(null);
-  const [trapTimer,    setTrapTimer]    = useState(10);
-  const [trapAnswered, setTrapAnswered] = useState(false);
+  const [trapEvent,      setTrapEvent]      = useState(null);
+  const [trapTimer,      setTrapTimer]      = useState(10);
+  const [trapAnswered,   setTrapAnswered]   = useState(false);
+  const [trapMultiSel,   setTrapMultiSel]   = useState([]); // for multiSelect trap questions
+  const [trapMultiDone,  setTrapMultiDone]  = useState(false);
   const trapRef = useRef(null);
 
   const [mBoxOpen,    setMBoxOpen]    = useState(false);
@@ -298,9 +304,7 @@ export default function BoardGameScreen({ route, navigation }) {
   const sessionRef = useRef(null);
   const myStateRef = useRef(null);
 
-  // Stun freedom prompt — shown briefly after breaking free
-  const [stunFreed, setStunFreed] = useState(false);
-  // MultiSelect state for stun questions
+  // Stun multiSelect state
   const [stunMultiSel,       setStunMultiSel]       = useState([]);
   const [stunMultiSubmitted, setStunMultiSubmitted] = useState(false);
   // MultiSelect state for duel questions
@@ -326,8 +330,10 @@ export default function BoardGameScreen({ route, navigation }) {
       if (!questionsSetRef.current && data.questions?.length) {
         questionsSetRef.current = true;
         const rawQs = data.questions;
+        const randQ = data.settings?.randomizeQuestions !== false; // default true
+        const randA = data.settings?.randomizeAnswers   !== false;
         setQuestions(rawQs);
-        setShuffledDeck(buildFreshDeck(rawQs));
+        setShuffledDeck(buildFreshDeck(rawQs, randQ, randA));
       }
 
       const me = (data.players||[]).find(p => (playerUid && p.uid===playerUid) || p.name===playerName);
@@ -450,9 +456,10 @@ export default function BoardGameScreen({ route, navigation }) {
     setAnsFB(null);
     setMultiSelAnswers([]);
     // When qIdx wraps to the start of a new cycle, build a completely fresh deck
-    // so the same question never appears in the same slot two cycles in a row
     if (qIdx > 0 && qIdx % qList.length === 0) {
-      setShuffledDeck(buildFreshDeck(qList));
+      const randQ = sessionRef.current?.settings?.randomizeQuestions !== false;
+      const randA = sessionRef.current?.settings?.randomizeAnswers   !== false;
+      setShuffledDeck(buildFreshDeck(qList, randQ, randA));
     }
   }, [qIdx]); // eslint-disable-line
 
@@ -923,14 +930,11 @@ export default function BoardGameScreen({ route, navigation }) {
           [`activeStuns.${playerName}`]: deleteField(),
         }).catch(console.error);
         setTimeout(() => {
-          setStunRecovery(0);
-          setStunQIdx(0);
-          setStunSelAns(null);
-          setStunMultiSel([]);
-          setStunMultiSubmitted(false);
-          setIsStunned(false);
-          activeStunRef.current = false;
-          setStunFreed(true); // show "Back to Questions" prompt
+          setStunRecovery(0); setStunQIdx(0); setStunSelAns(null);
+          setStunMultiSel([]); setStunMultiSubmitted(false);
+          setIsStunned(false); activeStunRef.current = false;
+          // Go to "rolled" so the normal "Back to Questions" button appears
+          setPhaseSync("rolled");
         }, 600);
         return;
       }
@@ -973,7 +977,7 @@ export default function BoardGameScreen({ route, navigation }) {
           setStunRecovery(0); setStunQIdx(0); setStunSelAns(null);
           setStunMultiSel([]); setStunMultiSubmitted(false);
           setIsStunned(false); activeStunRef.current = false;
-          setStunFreed(true);
+          setPhaseSync("rolled");
         }, 600);
         return;
       }
@@ -1025,10 +1029,14 @@ export default function BoardGameScreen({ route, navigation }) {
   }, [srRolling, srType]);
 
   const applySpaceRoll = useCallback(async (type, roll) => {
-    const me=myStateRef.current, sess=sessionRef.current;
-    if (!me||!sess) { setSrType(null); exitMoving(); return; }
-    const be=sess.settings?.boardSize||25, cur=me.position||0;
-    const np = type==="lava" ? Math.max(0,cur-roll) : Math.min(be,cur+roll);
+    const sess = sessionRef.current;
+    if (!sess) { setSrType(null); exitMoving(); return; }
+    const be  = sess.settings?.boardSize || 25;
+    // Use the captured landing position — NOT myStateRef.position which may be stale
+    // if the Firestore snapshot hasn't fired yet when the player taps Roll
+    const cur = srLandingPos.current ?? (myStateRef.current?.position || 0);
+    srLandingPos.current = null; // clear after use
+    const np = type==="lava" ? Math.max(0, cur-roll) : Math.min(be, cur+roll);
     setPhaseSync("moving");
     const srSafetyTimer = setTimeout(() => { if (phaseRef.current === "moving") setPhaseSync("rolled"); }, 8000);
     const step = type==="lava" ? -1 : 1;
@@ -1072,12 +1080,17 @@ export default function BoardGameScreen({ route, navigation }) {
     if (immunityLeft>0 && type!=="normal") setImmunityLeft(n=>Math.max(0,n-1));
     if (type==="normal") { exitMoving(); return; }
     if (type==="mystery") { openMysteryBox(); return; }
-    if (type==="lava"||type==="cannon") { setSrType(type); setSrValue(null); setSrRolling(false); setPhaseSync("space_roll"); return; }
+    if (type==="lava"||type==="cannon") {
+      srLandingPos.current = pos; // capture exact position — avoids snapshot race in applySpaceRoll
+      setSrType(type); setSrValue(null); setSrRolling(false); setPhaseSync("space_roll"); return;
+    }
     if (type==="trap") {
       const pool = qs?.length ? qs : [];
       if (pool.length) {
         const trapQ = pool[Math.floor(Math.random()*pool.length)];
-        setTrapEvent({question:trapQ}); setTrapTimer(10); setTrapAnswered(false); setPhaseSync("space_event");
+        setTrapEvent({question:trapQ}); setTrapTimer(10);
+        setTrapAnswered(false); setTrapMultiSel([]); setTrapMultiDone(false);
+        setPhaseSync("space_event");
         clearInterval(trapRef.current);
         trapRef.current = setInterval(() => {
           setTrapTimer(t => { if(t<=1){ clearInterval(trapRef.current); handleTrapFail(); return 0; } return t-1; });
@@ -1548,18 +1561,6 @@ export default function BoardGameScreen({ route, navigation }) {
         </View>
       </Modal>
 
-      {/* Stun freedom — shown after player answers 3 correct and breaks free */}
-      <Modal visible={stunFreed} transparent animationType="fade">
-        <View style={S.overlay}><View style={[S.modal,{borderColor:"#00c781",borderWidth:2}]}>
-          <Text style={{fontSize:52,textAlign:"center"}}>🎉</Text>
-          <Text style={[S.mTtl,{color:"#00c781"}]}>You're Free!</Text>
-          <Text style={S.mDesc}>You broke out of the stun. Back to the game!</Text>
-          <TouchableOpacity style={[S.rollBtn,{backgroundColor:"#00c781",marginTop:8}]} onPress={()=>{ setStunFreed(false); setPhaseSync("questions"); }}>
-            <Text style={S.rollTxtBig}>Back to Questions</Text>
-          </TouchableOpacity>
-        </View></View>
-      </Modal>
-
       {/* Duel countdown */}
       <Modal visible={duelCountdown !== null} transparent animationType="fade">
         <View style={S.overlay}><View style={[S.modal,{borderColor:"#3498db",borderWidth:2}]}>
@@ -1591,14 +1592,52 @@ export default function BoardGameScreen({ route, navigation }) {
             <>
               {trapEvent.question.imageUrl?<TouchableOpacity onPress={()=>setZoomImage(trapEvent.question.imageUrl)} activeOpacity={0.85}><Image source={{uri:trapEvent.question.imageUrl}} style={[S.qImage,{height:120}]} resizeMode="contain"/><Text style={S.zoomHint}>Tap to zoom</Text></TouchableOpacity>:null}
               <Text style={S.mDesc}>{trapEvent.question.question}</Text>
-              <View style={S.aGrid}>
-                {(trapEvent.question.type==="multipleChoice"?trapEvent.question.answers:trapEvent.question.type==="multiSelect"?trapEvent.question.answers:["True","False"]).map((ans,i)=>(
-                  <TouchableOpacity key={i} style={[S.aBtn,{borderColor:"#555"}]} disabled={trapAnswered}
-                    onPress={()=>{ clearInterval(trapRef.current); setTrapAnswered(true); resolveEvent({correct:trapEvent.question.correctAnswers?.[i]===true}); }}>
-                    <Text style={S.aTxt}>{ans}</Text>
+              {trapEvent.question.type==="multiSelect" ? (
+                <>
+                  <Text style={{color:"#888",fontSize:12,textAlign:"center",marginBottom:4}}>Select ALL correct, then Confirm</Text>
+                  <View style={S.aGrid}>
+                    {trapEvent.question.answers.map((ans,i) => {
+                      const isSel = trapMultiSel.includes(i);
+                      return (
+                        <TouchableOpacity key={i}
+                          style={[S.aBtn,{borderColor:isSel?"#d68910":"#555",backgroundColor:isSel?"#2a1800":"#1c1c1c",flexDirection:"row",alignItems:"center"}]}
+                          disabled={trapMultiDone||trapAnswered}
+                          onPress={()=>{ if(trapMultiDone||trapAnswered) return; setTrapMultiSel(prev=>prev.includes(i)?prev.filter(x=>x!==i):[...prev,i]); }}
+                          activeOpacity={0.75}>
+                          <View style={{width:28,alignItems:"center"}}>
+                            <Text style={{fontSize:18,color:isSel?"#d68910":"#555"}}>{isSel?"☑":"☐"}</Text>
+                          </View>
+                          <Text style={[S.aTxt,{flex:1,textAlign:"left"}]}>{ans}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                  <TouchableOpacity
+                    style={[S.rollBtn,{backgroundColor:"#d68910",marginTop:10,alignSelf:"center",opacity:(!trapMultiDone&&!trapAnswered&&trapMultiSel.length>0)?1:0.3}]}
+                    disabled={trapMultiDone||trapAnswered||trapMultiSel.length===0}
+                    onPress={()=>{
+                      clearInterval(trapRef.current);
+                      setTrapMultiDone(true); setTrapAnswered(true);
+                      const q = trapEvent.question;
+                      const correctIdxs = (q.correctAnswers||[]).map((v,i)=>v?i:null).filter(x=>x!==null);
+                      const selected = [...trapMultiSel].sort((a,b)=>a-b);
+                      const sortedCorrect = [...correctIdxs].sort((a,b)=>a-b);
+                      const correct = selected.length===sortedCorrect.length && selected.every((v,i)=>v===sortedCorrect[i]);
+                      resolveEvent({correct});
+                    }}>
+                    <Text style={S.rollTxtBig}>Confirm</Text>
                   </TouchableOpacity>
-                ))}
-              </View>
+                </>
+              ) : (
+                <View style={S.aGrid}>
+                  {(trapEvent.question.type==="multipleChoice"?trapEvent.question.answers:["True","False"]).map((ans,i)=>(
+                    <TouchableOpacity key={i} style={[S.aBtn,{borderColor:"#555"}]} disabled={trapAnswered}
+                      onPress={()=>{ clearInterval(trapRef.current); setTrapAnswered(true); resolveEvent({correct:trapEvent.question.correctAnswers?.[i]===true}); }}>
+                      <Text style={S.aTxt}>{ans}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
             </>
           )}
         </View></View>
