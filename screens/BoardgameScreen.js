@@ -178,7 +178,12 @@ function DiceFace({ value, style }) {
 
 // ── Main Component ─────────────────────────────────────────────────────────
 export default function BoardGameScreen({ route, navigation }) {
-  const { sessionId, playerName, playerColor="#00c781", playerUid, isHost, hostIsPlaying, gameId } = route.params;
+  // Guard: on web hard-refresh route.params is lost — send back to join screen
+  if (!route?.params?.sessionId) {
+    // Use a simple effect-free redirect since hooks haven't run yet is not possible,
+    // so we render null and navigate in a useEffect below
+  }
+  const { sessionId, playerName, playerColor="#00c781", playerUid, isHost, hostIsPlaying, gameId } = route?.params || {};
 
   const [session,  setSession]  = useState(null);
   const [loading,  setLoading]  = useState(true);
@@ -293,6 +298,22 @@ export default function BoardGameScreen({ route, navigation }) {
   const sessionRef = useRef(null);
   const myStateRef = useRef(null);
 
+  // Stun freedom prompt — shown briefly after breaking free
+  const [stunFreed, setStunFreed] = useState(false);
+  // MultiSelect state for stun questions
+  const [stunMultiSel,       setStunMultiSel]       = useState([]);
+  const [stunMultiSubmitted, setStunMultiSubmitted] = useState(false);
+  // MultiSelect state for duel questions
+  const [duelMultiSel,       setDuelMultiSel]       = useState([]);
+  const [duelMultiSubmitted, setDuelMultiSubmitted] = useState(false);
+
+  // ── Redirect on web hard-refresh (route.params lost) ─────────────────────
+  useEffect(() => {
+    if (!sessionId) {
+      navigation.reset({ index: 0, routes: [{ name: "JoinGameScreen" }] });
+    }
+  }, []); // eslint-disable-line
+
   // ── Session listener ──────────────────────────────────────────────────────
   useEffect(() => {
     if (!sessionId) return;
@@ -315,10 +336,15 @@ export default function BoardGameScreen({ route, navigation }) {
         setMyState(me);
         if (me.notification?.id > lastNotifId.current) {
           lastNotifId.current = me.notification.id;
-          setNotif(me.notification.text || "");
+          const txt = me.notification.text || "";
+          setNotif(txt);
           setShowNotif(true);
           const cur = phaseRef.current;
           if (cur !== "questions" && cur !== "duel") setInterruptedPhase(cur);
+          // Duel invites auto-dismiss after 1.5 s — the countdown will show behind
+          if (txt.includes("1v1") || txt.includes("challenged")) {
+            setTimeout(() => setShowNotif(false), 1500);
+          }
         }
       }
 
@@ -379,8 +405,12 @@ export default function BoardGameScreen({ route, navigation }) {
             if (ad.currentRound !== lastDuelRound.current) {
               lastDuelRound.current = ad.currentRound;
               setDuelAnswered(false);
+              setDuelMultiSel([]); setDuelMultiSubmitted(false);
             }
-            if (!duelSeenRef.current) {
+            // Only start countdown for a brand-new duel (round 0).
+            // If duelSeenRef were ever spuriously reset mid-duel, currentRound > 0
+            // would block a false countdown retrigger.
+            if (!duelSeenRef.current && ad.currentRound === 0) {
               duelSeenRef.current = true;
               setDuelCountdown(3);
               clearInterval(duelCountdownRef.current);
@@ -455,7 +485,8 @@ export default function BoardGameScreen({ route, navigation }) {
     clearInterval(qTimerRef.current);
     timerBar.stopAnimation();
     const tl = curQ?.timeLimit || session?.settings?.timePerQuestion;
-    if (!tl || phase !== "questions") { setQTimeLeft(null); timerBar.setValue(1); return; }
+    // Pause timer while stunned — stun doesn't change phase so we must check explicitly
+    if (!tl || phase !== "questions" || isStunned) { setQTimeLeft(null); timerBar.setValue(1); return; }
     timerBar.setValue(1);
     Animated.timing(timerBar, {toValue:0, duration:tl*1000, useNativeDriver:false}).start();
     setQTimeLeft(tl);
@@ -717,7 +748,7 @@ export default function BoardGameScreen({ route, navigation }) {
   }, [mBoxKey, mBoxDef, playerName, playerUid, playerColor, sessionId, closeMBox, removeFromInventory, qList]);
 
   // ── 1v1 Duel answer ───────────────────────────────────────────────────────
-  const handleDuelAnswer = useCallback(async (ansIdx) => {
+  const handleDuelAnswer = useCallback(async (ansIdx, correctOverride) => {
     if (duelAnswered) return;
     const sess = sessionRef.current;
     if (!sess?.activeDuel || sess.activeDuel.status !== "active") return;
@@ -726,7 +757,8 @@ export default function BoardGameScreen({ route, navigation }) {
     const myKey  = isChallenger ? `c_${r}` : `o_${r}`;
     const othKey = isChallenger ? `o_${r}` : `c_${r}`;
     const q = ad.questions[r];
-    const correct = q?.correctAnswers?.[ansIdx] === true;
+    // correctOverride used for multiSelect (pre-computed before calling)
+    const correct = correctOverride !== undefined ? correctOverride : (q?.correctAnswers?.[ansIdx] === true);
     const timeSec = Math.max(0, (Date.now() - ad.roundStartedAt) / 1000);
     setDuelAnswered(true);
     try {
@@ -764,6 +796,28 @@ export default function BoardGameScreen({ route, navigation }) {
       });
     } catch(e) { console.error("duelAnswer:", e); }
   }, [duelAnswered, playerName, playerUid, sessionId]);
+
+  // Duel multiSelect: toggle + confirm (same pattern as normal multiSelect)
+  const handleDuelMultiToggle = useCallback((i) => {
+    if (duelAnswered || duelMultiSubmitted) return;
+    setDuelMultiSel(prev => prev.includes(i) ? prev.filter(x=>x!==i) : [...prev, i]);
+  }, [duelAnswered, duelMultiSubmitted]);
+
+  const handleDuelMultiConfirm = useCallback(async () => {
+    if (duelAnswered || duelMultiSubmitted) return;
+    const sess = sessionRef.current;
+    if (!sess?.activeDuel || sess.activeDuel.status !== "active") return;
+    const ad = sess.activeDuel, r = ad.currentRound;
+    const q = ad.questions[r];
+    if (!q) return;
+    setDuelMultiSubmitted(true);
+    const correctIdxs = (q.correctAnswers||[]).map((v,i)=>v?i:null).filter(x=>x!==null);
+    const selected = [...duelMultiSel].sort((a,b)=>a-b);
+    const sortedCorrect = [...correctIdxs].sort((a,b)=>a-b);
+    const correct = selected.length === sortedCorrect.length && selected.every((v,i)=>v===sortedCorrect[i]);
+    // ansIdx -2 = multiselect sentinel
+    await handleDuelAnswer(-2, correct);
+  }, [duelAnswered, duelMultiSubmitted, duelMultiSel, handleDuelAnswer]);
 
   // ── Dismiss duel — applies any pending stun after duel ends ──────────────
   const dismissDuel = useCallback(async () => {
@@ -872,16 +926,65 @@ export default function BoardGameScreen({ route, navigation }) {
           setStunRecovery(0);
           setStunQIdx(0);
           setStunSelAns(null);
+          setStunMultiSel([]);
+          setStunMultiSubmitted(false);
           setIsStunned(false);
           activeStunRef.current = false;
+          setStunFreed(true); // show "Back to Questions" prompt
         }, 600);
         return;
       }
     } else {
       setStunRecovery(0);
     }
-    setTimeout(() => { setStunQIdx(i => i+1); setStunSelAns(null); }, 1200);
+    setTimeout(() => {
+      setStunQIdx(i => i+1);
+      setStunSelAns(null);
+      setStunMultiSel([]);
+      setStunMultiSubmitted(false);
+    }, 1200);
   }, [stunSelAns, stunQIdx, stunRecovery, qList, playerName, sessionId]);
+
+  // Stun multiSelect handlers
+  const handleStunMultiToggle = useCallback((i) => {
+    if (stunSelAns !== null || stunMultiSubmitted) return;
+    setStunMultiSel(prev => prev.includes(i) ? prev.filter(x=>x!==i) : [...prev, i]);
+  }, [stunSelAns, stunMultiSubmitted]);
+
+  const handleStunMultiConfirm = useCallback(() => {
+    if (stunMultiSubmitted || stunSelAns !== null) return;
+    const q = qList[stunQIdx % qList.length];
+    if (!q) return;
+    setStunMultiSubmitted(true);
+    const correctIdxs = (q.correctAnswers||[]).map((v,i)=>v?i:null).filter(x=>x!==null);
+    const selected = [...stunMultiSel].sort((a,b)=>a-b);
+    const sortedCorrect = [...correctIdxs].sort((a,b)=>a-b);
+    const correct = selected.length === sortedCorrect.length && selected.every((v,i)=>v===sortedCorrect[i]);
+    // Use -2 sentinel to mark multiselect submitted
+    setStunSelAns(-2);
+    if (correct) {
+      const ns = stunRecovery + 1;
+      setStunRecovery(ns);
+      if (ns >= ROLL_AT) {
+        updateDoc(doc(db,"gameSessions",sessionId), {
+          [`activeStuns.${playerName}`]: deleteField(),
+        }).catch(console.error);
+        setTimeout(() => {
+          setStunRecovery(0); setStunQIdx(0); setStunSelAns(null);
+          setStunMultiSel([]); setStunMultiSubmitted(false);
+          setIsStunned(false); activeStunRef.current = false;
+          setStunFreed(true);
+        }, 600);
+        return;
+      }
+    } else {
+      setStunRecovery(0);
+    }
+    setTimeout(() => {
+      setStunQIdx(i=>i+1); setStunSelAns(null);
+      setStunMultiSel([]); setStunMultiSubmitted(false);
+    }, 1200);
+  }, [stunMultiSubmitted, stunSelAns, stunQIdx, stunMultiSel, stunRecovery, qList, playerName, sessionId]);
 
   const handleRoll = useCallback(async () => {
     if (diceRolling) return;
@@ -1231,11 +1334,38 @@ export default function BoardGameScreen({ route, navigation }) {
                     <View style={S.qCard}>
                       {q.imageUrl?<TouchableOpacity onPress={()=>setZoomImage(q.imageUrl)} activeOpacity={0.85}><Image source={{uri:q.imageUrl}} style={S.qImage} resizeMode="contain"/><Text style={S.zoomHint}>Tap to zoom</Text></TouchableOpacity>:null}
                       <Text style={[S.qTxt,{fontSize:22}]}>{q.question}</Text>
-                      <View style={S.aGrid}>
-                        {(q.type==="multipleChoice"?q.answers:q.type==="multiSelect"?q.answers:["True","False"]).map((ans,i)=>(
-                          <TouchableOpacity key={i} style={[S.aBtn,{backgroundColor:"#1c1c1c",borderColor:"#383838"}]} onPress={()=>handleDuelAnswer(i)} activeOpacity={0.75}><Text style={S.aTxt}>{ans}</Text></TouchableOpacity>
-                        ))}
-                      </View>
+                      {q.type==="multiSelect" ? (
+                        <>
+                          <Text style={{color:"#888",fontSize:13,marginBottom:6,textAlign:"center"}}>Select ALL correct answers, then tap Confirm</Text>
+                          <View style={S.aGrid}>
+                            {q.answers.map((ans,i) => {
+                              const isSel = duelMultiSel.includes(i);
+                              return (
+                                <TouchableOpacity key={i}
+                                  style={[S.aBtn,{backgroundColor:isSel?"#001d33":"#1c1c1c",borderColor:isSel?"#3498db":"#383838",flexDirection:"row",alignItems:"center"}]}
+                                  onPress={()=>handleDuelMultiToggle(i)} disabled={duelMultiSubmitted} activeOpacity={0.75}>
+                                  <View style={{width:28,alignItems:"center"}}>
+                                    <Text style={{fontSize:18,color:isSel?"#3498db":"#444"}}>{isSel?"☑":"☐"}</Text>
+                                  </View>
+                                  <Text style={[S.aTxt,{flex:1,textAlign:"left"}]}>{ans}</Text>
+                                </TouchableOpacity>
+                              );
+                            })}
+                          </View>
+                          <TouchableOpacity
+                            style={[S.rollBtn,{backgroundColor:"#3498db",marginTop:12,alignSelf:"center",opacity:!duelMultiSubmitted&&duelMultiSel.length>0?1:0}]}
+                            onPress={handleDuelMultiConfirm}
+                            disabled={duelMultiSubmitted||duelMultiSel.length===0}>
+                            <Text style={S.rollTxtBig}>Confirm</Text>
+                          </TouchableOpacity>
+                        </>
+                      ) : (
+                        <View style={S.aGrid}>
+                          {(q.type==="multipleChoice"?q.answers:["True","False"]).map((ans,i)=>(
+                            <TouchableOpacity key={i} style={[S.aBtn,{backgroundColor:"#1c1c1c",borderColor:"#383838"}]} onPress={()=>handleDuelAnswer(i)} activeOpacity={0.75}><Text style={S.aTxt}>{ans}</Text></TouchableOpacity>
+                          ))}
+                        </View>
+                      )}
                     </View>
                   ) : <View style={S.waitBox}><ActivityIndicator color="#3498db"/></View>}
                 </>
@@ -1372,7 +1502,34 @@ export default function BoardGameScreen({ route, navigation }) {
                 <View style={{width:"100%",gap:12}}>
                   {sq.imageUrl ? <TouchableOpacity onPress={()=>setZoomImage(sq.imageUrl)} activeOpacity={0.85}><Image source={{uri:sq.imageUrl}} style={[S.qImage,{height:140}]} resizeMode="contain"/><Text style={S.zoomHint}>Tap to zoom</Text></TouchableOpacity> : null}
                   <Text style={[S.qTxt,{fontSize:22,color:"#fff",marginBottom:4}]}>{sq.question}</Text>
-                  {(sq.type==="multipleChoice" ? sq.answers : sq.type==="multiSelect" ? sq.answers : ["True","False"]).map((ans,i) => {
+                  {sq.type === "multiSelect" ? (
+                    <>
+                      <Text style={{color:"#ffcc88",fontSize:12,textAlign:"center",marginBottom:6}}>Select ALL correct answers, then tap Confirm</Text>
+                      {sq.answers.map((ans,i) => {
+                        const isSel = stunMultiSel.includes(i);
+                        const isCorr = sq.correctAnswers?.[i]===true;
+                        let bg="#3d2000", bc="#6b3a00";
+                        if(stunSelAns!=null&&isCorr){bg="#003d1a";bc="#00c781";}
+                        if(stunSelAns!=null&&isSel&&!isCorr){bg="#3d0000";bc="#e74c3c";}
+                        if(stunSelAns===null&&isSel){bg="#002244";bc="#3498db";}
+                        return (
+                          <TouchableOpacity key={i} style={[S.aBtn,{backgroundColor:bg,borderColor:bc,flexDirection:"row",alignItems:"center"}]}
+                            onPress={()=>handleStunMultiToggle(i)} disabled={stunSelAns!==null} activeOpacity={0.75}>
+                            <View style={{width:28,alignItems:"center"}}>
+                              <Text style={{fontSize:18,color:isSel?"#3498db":"#666"}}>{isSel?"☑":"☐"}</Text>
+                            </View>
+                            <Text style={[S.aTxt,{flex:1,textAlign:"left"}]}>{ans}</Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                      <TouchableOpacity
+                        style={[S.rollBtn,{backgroundColor:"#f39c12",marginTop:10,alignSelf:"center",opacity:stunSelAns===null&&stunMultiSel.length>0?1:0}]}
+                        onPress={handleStunMultiConfirm}
+                        disabled={stunSelAns!==null||stunMultiSel.length===0}>
+                        <Text style={S.rollTxtBig}>Confirm</Text>
+                      </TouchableOpacity>
+                    </>
+                  ) : (sq.type==="multipleChoice" ? sq.answers : ["True","False"]).map((ans,i) => {
                     const isSel=stunSelAns===i, isCorr=sq.correctAnswers?.[i]===true;
                     let bg="#3d2000", bc="#6b3a00";
                     if(isSel){bg=isCorr?"#003d1a":"#3d0000";bc=isCorr?"#00c781":"#e74c3c";}
@@ -1391,6 +1548,18 @@ export default function BoardGameScreen({ route, navigation }) {
         </View>
       </Modal>
 
+      {/* Stun freedom — shown after player answers 3 correct and breaks free */}
+      <Modal visible={stunFreed} transparent animationType="fade">
+        <View style={S.overlay}><View style={[S.modal,{borderColor:"#00c781",borderWidth:2}]}>
+          <Text style={{fontSize:52,textAlign:"center"}}>🎉</Text>
+          <Text style={[S.mTtl,{color:"#00c781"}]}>You're Free!</Text>
+          <Text style={S.mDesc}>You broke out of the stun. Back to the game!</Text>
+          <TouchableOpacity style={[S.rollBtn,{backgroundColor:"#00c781",marginTop:8}]} onPress={()=>{ setStunFreed(false); setPhaseSync("questions"); }}>
+            <Text style={S.rollTxtBig}>Back to Questions</Text>
+          </TouchableOpacity>
+        </View></View>
+      </Modal>
+
       {/* Duel countdown */}
       <Modal visible={duelCountdown !== null} transparent animationType="fade">
         <View style={S.overlay}><View style={[S.modal,{borderColor:"#3498db",borderWidth:2}]}>
@@ -1401,8 +1570,8 @@ export default function BoardGameScreen({ route, navigation }) {
         </View></View>
       </Modal>
 
-      {/* Effect notification */}
-      <Modal visible={showNotif} transparent animationType="fade">
+      {/* Effect notification — hidden during duel countdown so it can't cover it */}
+      <Modal visible={showNotif && duelCountdown === null} transparent animationType="fade">
         <View style={S.overlay}><View style={[S.modal,{borderColor:"#e67e22",borderWidth:2}]}>
           <CloseBtn onPress={()=>{ setShowNotif(false); if(interruptedPhase){setPhaseSync(interruptedPhase);setInterruptedPhase(null);} }}/>
           <Text style={{fontSize:52}}>⚡</Text>
