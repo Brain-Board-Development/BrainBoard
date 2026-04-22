@@ -1,14 +1,11 @@
 /**
- * BoardGameScreen.js
- *
- * KEY CHANGES IN THIS VERSION:
- * - "Questions" button always visible — resets everything back to questions
- * - closeMBox() ALWAYS sets phase="questions" so player is never stuck
- * - Inventory holds ONLY mystery_box and deflector (duel is immediate from mystery box)
- * - Every modal/popup has an X close button
- * - Duel starts immediately from mystery box (no inventory step, no accept/pass)
- * - Roll 1 = no movement + mystery_box to inventory + popup with close button
- * - Equal-probability mystery effects via MYSTERY_KEYS array
+ * BoardGameScreen.js — Fixed
+ * Fixes applied to user's current code:
+ * 1. White screen: shuffle helpers moved to module-level (no stale closure in onSnapshot)
+ * 2. Randomization: shuffledDeck state + per-cycle reshuffle via buildFreshDeck
+ * 3. Stun: separate activeStunRef (not shared with me.stunned block), removed dual detection
+ * 4. 1v1 priority: pendingStun queued during duel, applied in dismissDuel
+ * 5. Deflector: removeFromInventory(item.id) actually called
  */
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
@@ -24,6 +21,31 @@ const BOARD_COLS = 10;
 const BASE_TILE  = Math.min(96, Math.max(44, Math.floor((SCREEN_W - 32) / BOARD_COLS)));
 const HOST_TILE  = Math.min(96, Math.max(48, Math.floor((SCREEN_W * 0.65 - 32) / BOARD_COLS)));
 
+// ── Module-level shuffle helpers — defined here so onSnapshot closure is NEVER stale ──
+function fyShuffleArr(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+function shuffleQuestionAnswers(qs) {
+  return qs.map(q => {
+    if (q.type === 'trueFalse' || !Array.isArray(q.answers) || q.answers.length < 2) return q;
+    const n = q.answers.length;
+    const perm = fyShuffleArr(Array.from({ length: n }, (_, k) => k));
+    return {
+      ...q,
+      answers:        perm.map(k => q.answers[k]),
+      correctAnswers: perm.map(k => q.correctAnswers[k]),
+    };
+  });
+}
+function buildFreshDeck(rawQuestions) {
+  return shuffleQuestionAnswers(fyShuffleArr(rawQuestions));
+}
+
 const SPACE_CFG = {
   normal:  { bg:"#1a3d1a", border:"#27ae60", label:"" },
   lava:    { bg:"#3d1200", border:"#e74c3c", label:"L" },
@@ -32,8 +54,6 @@ const SPACE_CFG = {
   mystery: { bg:"#2a0a3d", border:"#8e44ad", label:"?" },
 };
 
-// All effects. Only mystery_box and deflector go to inventory.
-// Duel is needsTarget:true — shows target picker immediately from mystery box.
 const MYSTERY_DEFS = {
   pushback:   { emoji:"💥", title:"Push Back",     desc:"Push a player 3 spaces backward.",                color:"#e74c3c", needsTarget:true,  inventoryType:null },
   duel:       { emoji:"⚔️",  title:"1v1 a Player",  desc:"Challenge a player to a 3-question quiz duel.",   color:"#3498db", needsTarget:true,  inventoryType:null },
@@ -43,9 +63,8 @@ const MYSTERY_DEFS = {
   deflector:  { emoji:"🪞", title:"Deflector",      desc:"Saved to inventory! Reflects next incoming effect back for 30 s.", color:"#00bcd4", needsTarget:false, inventoryType:"deflector" },
   badluck:    { emoji:"🌑", title:"Bad Luck Aura",  desc:"A player loses 30% Luck for 45 seconds.",         color:"#7f8c8d", needsTarget:true,  inventoryType:null },
 };
-const MYSTERY_KEYS = Object.keys(MYSTERY_DEFS); // equal-chance roll across all keys
+const MYSTERY_KEYS = Object.keys(MYSTERY_DEFS);
 
-// INVENTORY: only mystery_box and deflector can be stored
 const INVENTORY_DEFS = {
   mystery_box: { emoji:"🎁", label:"Mystery Box", desc:"Open for a random effect" },
   deflector:   { emoji:"🪞", label:"Deflector",   desc:"Reflect next effect (30 s)" },
@@ -154,11 +173,7 @@ function Legend() {
 }
 
 function DiceFace({ value, style }) {
-  return (
-    <Text style={style}>
-      {value ? getDiceFace(Math.min(6, value)) : "?"}
-    </Text>
-  );
+  return <Text style={style}>{value ? getDiceFace(Math.min(6, value)) : "?"}</Text>;
 }
 
 // ── Main Component ─────────────────────────────────────────────────────────
@@ -170,14 +185,19 @@ export default function BoardGameScreen({ route, navigation }) {
   const [myState,  setMyState]  = useState(null);
   const [viewMode, setViewMode] = useState("questions");
 
-  // Questions — loaded ONCE from session (shuffled by Lobby)
-  const [questions, setQuestions] = useState(null);
+  // ── Questions: raw list + shuffled deck, rebuilt each cycle ──────────────
+  const [questions,    setQuestions]    = useState(null); // raw from Firestore, never changes
+  const [shuffledDeck, setShuffledDeck] = useState(null); // randomised view, rebuilt per cycle
   const questionsSetRef = useRef(false);
-  const [qIdx,    setQIdx]    = useState(0);
-  const qList = questions || [];
-  const curQ  = qList.length ? qList[qIdx % qList.length] : null;
-  const [selAns, setSelAns] = useState(null);        // single-select / sentinel
-  const [multiSelAnswers, setMultiSelAnswers] = useState([]); // for multiSelect questions
+  const [qIdx, setQIdx] = useState(0);
+
+  const qList    = questions || [];
+  const cycleIdx = qList.length > 0 ? qIdx % qList.length : 0;
+  // curQ: null until first deck is ready — shows spinner, never crashes
+  const curQ = (shuffledDeck && shuffledDeck.length > 0) ? (shuffledDeck[cycleIdx] ?? null) : null;
+
+  const [selAns, setSelAns] = useState(null);
+  const [multiSelAnswers, setMultiSelAnswers] = useState([]);
   const [ansFB,  setAnsFB]  = useState(null);
 
   // Progress
@@ -189,7 +209,7 @@ export default function BoardGameScreen({ route, navigation }) {
 
   // Phase
   const [phase,        setPhase]        = useState("questions");
-  const phaseRef = useRef("questions"); // always mirrors phase — safe to read in async code & onSnapshot
+  const phaseRef = useRef("questions");
   const setPhaseSync = useCallback((next) => {
     const val = typeof next === "function" ? next(phaseRef.current) : next;
     phaseRef.current = val;
@@ -200,37 +220,32 @@ export default function BoardGameScreen({ route, navigation }) {
   const [highlightPos, setHighlightPos] = useState(null);
   const diceAnim = useRef(new Animated.Value(0)).current;
 
-  // Space roll
   const [srType,    setSrType]    = useState(null);
   const [srValue,   setSrValue]   = useState(null);
   const [srRolling, setSrRolling] = useState(false);
   const srAnim = useRef(new Animated.Value(0)).current;
 
-  // Trap
   const [trapEvent,    setTrapEvent]    = useState(null);
   const [trapTimer,    setTrapTimer]    = useState(10);
   const [trapAnswered, setTrapAnswered] = useState(false);
   const trapRef = useRef(null);
 
-  // Mystery box overlay (never a separate phase — always a Modal overlay)
   const [mBoxOpen,    setMBoxOpen]    = useState(false);
-  const [mBoxStep,    setMBoxStep]    = useState("roll"); // roll | target | apply | inventory
+  const [mBoxStep,    setMBoxStep]    = useState("roll");
   const [mBoxKey,     setMBoxKey]     = useState(null);
   const [mBoxDef,     setMBoxDef]     = useState(null);
   const [mBoxRolling, setMBoxRolling] = useState(false);
-  const savedPhaseRef = useRef(null); // phase to restore after mystery box closes
+  const savedPhaseRef = useRef(null);
+  const mBoxInventoryItemId = useRef(null);
   const mBoxAnim = useRef(new Animated.Value(0)).current;
 
-  // Inventory — only mystery_box and deflector
   const [inventory,   setInventory]   = useState([]);
   const [invFullItem, setInvFullItem] = useState(null);
   const [itemToast,   setItemToast]   = useState(null);
   const toastAnim = useRef(new Animated.Value(0)).current;
 
-  // Roll-1 popup
   const [roll1Notif, setRoll1Notif] = useState(false);
 
-  // Active bonuses
   const [doubleRollsLeft, setDoubleRollsLeft] = useState(0);
   const [immunityLeft,    setImmunityLeft]    = useState(0);
   const [immunitySecsLeft,setImmunitySecsLeft]= useState(0);
@@ -241,45 +256,40 @@ export default function BoardGameScreen({ route, navigation }) {
   const deflectorTimerRef = useRef(null);
   const deflectorSecsRef  = useRef(null);
 
-  // Stun — mirrors 1v1 architecture: detected via top-level session field, not players array
+  // ── Stun — uses its OWN ref, never shared with any other detection ────────
   const [isStunned,    setIsStunned]    = useState(false);
-  const [stunBy,       setStunBy]       = useState(""); // who stunned you (for display)
+  const [stunBy,       setStunBy]       = useState("");
   const [stunRecovery, setStunRecovery] = useState(0);
   const [stunQIdx,     setStunQIdx]     = useState(0);
   const [stunSelAns,   setStunSelAns]   = useState(null);
-  const prevStunnedRef = useRef(false);
+  const activeStunRef = useRef(false); // ONLY tracks activeStuns — not shared with me.stunned
+  // Pending stun: queued while duel is active, applied in dismissDuel
+  const [pendingStun, setPendingStun] = useState(null);
 
-  // Notifications (from opponents' effects)
-  const [notif,          setNotif]           = useState("");
-  const [showNotif,      setShowNotif]        = useState(false);
-  const [interruptedPhase,setInterruptedPhase]= useState(null);
+  const [notif,           setNotif]           = useState("");
+  const [showNotif,       setShowNotif]        = useState(false);
+  const [interruptedPhase,setInterruptedPhase] = useState(null);
   const lastNotifId = useRef(0);
 
-  // 1v1 duel countdown (shown to both players before duel starts)
-  const [duelCountdown,    setDuelCountdown]    = useState(null); // 3|2|1|null
-  const duelCountdownRef   = useRef(null);
-  const duelSeenRef        = useRef(false); // tracks if we've already started countdown for current duel
+  const [duelCountdown, setDuelCountdown] = useState(null);
+  const duelCountdownRef = useRef(null);
+  const duelSeenRef      = useRef(false);
 
-  // Duel
   const [duelAnswered, setDuelAnswered] = useState(false);
-  const [duelView,    setDuelView]    = useState("active"); // "active" | "done" — drives JSX exclusively
+  const [duelView,     setDuelView]     = useState("active");
   const lastDuelRound  = useRef(-1);
 
-  // Timers
   const [gameLeft,  setGameLeft]  = useState(null);
   const [qTimeLeft, setQTimeLeft] = useState(null);
   const gameTimerRef = useRef(null);
   const qTimerRef    = useRef(null);
   const timerBar     = useRef(new Animated.Value(1)).current;
 
-  // Flash
   const flashOpacity = useRef(new Animated.Value(0)).current;
-  const [flashData, setFlashData] = useState(null);
-  const [zoomImage, setZoomImage] = useState(null); // base64/url of image to show fullscreen
-
+  const [flashData,  setFlashData]  = useState(null);
+  const [zoomImage,  setZoomImage]  = useState(null);
   const [gameOverDone, setGameOverDone] = useState(false);
-  const boardRef = useRef(null);
-
+  const boardRef   = useRef(null);
   const sessionRef = useRef(null);
   const myStateRef = useRef(null);
 
@@ -291,67 +301,25 @@ export default function BoardGameScreen({ route, navigation }) {
       const data = snap.data();
       sessionRef.current = data;
 
-      // Load questions ONCE — shuffle locally so every player gets a different random order
+      // Load questions ONCE — buildFreshDeck uses module-level functions (never stale)
       if (!questionsSetRef.current && data.questions?.length) {
         questionsSetRef.current = true;
-
-        // Fisher-Yates shuffle
-        const fyShuffle = (arr) => {
-          const a = [...arr];
-          for (let i = a.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [a[i], a[j]] = [a[j], a[i]];
-          }
-          return a;
-        };
-
-        // 1. Randomise question order
-        let qs = fyShuffle(data.questions);
-
-        // 2. Randomise answer order within each question (skip trueFalse)
-        qs = qs.map(q => {
-          if (q.type === 'trueFalse' || !Array.isArray(q.answers) || q.answers.length < 2) return q;
-          const n = q.answers.length;
-          const idx = Array.from({length: n}, (_, i) => i);
-          for (let i = n - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [idx[i], idx[j]] = [idx[j], idx[i]];
-          }
-          return {
-            ...q,
-            answers:        idx.map(i => q.answers[i]),
-            correctAnswers: idx.map(i => q.correctAnswers[i]),
-          };
-        });
-
-        setQuestions(qs);
+        const rawQs = data.questions;
+        setQuestions(rawQs);
+        setShuffledDeck(buildFreshDeck(rawQs));
       }
 
       const me = (data.players||[]).find(p => (playerUid && p.uid===playerUid) || p.name===playerName);
       if (me) {
         myStateRef.current = me;
         setMyState(me);
-
-        // Notification interrupt — save phase so we can restore it
         if (me.notification?.id > lastNotifId.current) {
           lastNotifId.current = me.notification.id;
           setNotif(me.notification.text || "");
           setShowNotif(true);
           const cur = phaseRef.current;
-          if (cur !== "questions" && cur !== "duel") {
-            setInterruptedPhase(cur);
-          }
+          if (cur !== "questions" && cur !== "duel") setInterruptedPhase(cur);
         }
-
-        // Stun: just reset recovery counter on each new stun.
-        // The stun Modal reads myState.stunned directly — no phase change needed.
-        const wasStunned = prevStunnedRef.current;
-        if (me.stunned && !wasStunned) {
-          setStunRecovery(0);
-          setStunQIdx(0);
-          setStunSelAns(null);
-        }
-        prevStunnedRef.current = !!me.stunned;
       }
 
       setSession(data);
@@ -362,29 +330,46 @@ export default function BoardGameScreen({ route, navigation }) {
         if ((data.kickedPlayers||[]).includes(playerName)) return;
       }
 
-      // ── Stun detection — mirrors activeDuel: reads top-level field, not players array ──
-      // This is why 1v1 works reliably: it never depends on finding "me" in the players array.
-      // We do the same for stun.
-      const stunMap = data.activeStuns || {};
+      // ── Stun detection — uses activeStunRef exclusively ──────────────────
+      // CRITICAL: do NOT touch activeStunRef anywhere else in this component.
+      // The old prevStunnedRef was shared with the me.stunned block, which set it
+      // to false on every snapshot, causing the stun to re-detect as "new" each time
+      // and reset stunRecovery to 0. This is now fixed with a dedicated ref.
+      const stunMap     = data.activeStuns || {};
       const myStunEntry = stunMap[playerName];
+
+      // Check if we're currently in an active duel (1v1 takes priority over stun)
+      const duelActive = !!(data.activeDuel && (
+        data.activeDuel.challengerName===playerName || data.activeDuel.opponentName===playerName ||
+        data.activeDuel.challengerUid===playerUid   || data.activeDuel.opponentUid===playerUid
+      ));
+
       if (myStunEntry) {
-        if (!prevStunnedRef.current) {
-          // Newly stunned — reset counters and show modal
-          prevStunnedRef.current = true;
-          setIsStunned(true);
-          setStunBy(myStunEntry.by || "");
-          setStunRecovery(0);
-          setStunQIdx(0);
-          setStunSelAns(null);
+        if (!activeStunRef.current) {
+          // Newly stunned — fire exactly once per stun event
+          activeStunRef.current = true;
+          if (duelActive) {
+            // 1v1 is running — queue stun, show after duel ends
+            setPendingStun(myStunEntry);
+          } else {
+            setIsStunned(true);
+            setStunBy(myStunEntry.by || "");
+            setStunRecovery(0);
+            setStunQIdx(0);
+            setStunSelAns(null);
+          }
         }
+        // If already stunned (activeStunRef.current === true), do nothing — don't reset counters
       } else {
-        if (prevStunnedRef.current) {
-          prevStunnedRef.current = false;
+        if (activeStunRef.current) {
+          // Stun cleared in Firestore
+          activeStunRef.current = false;
           setIsStunned(false);
+          setPendingStun(null);
         }
       }
 
-      // Duel detection
+      // ── Duel detection ────────────────────────────────────────────────────
       const ad = data.activeDuel;
       if (ad) {
         const involved = ad.challengerUid===playerUid || ad.opponentUid===playerUid
@@ -395,7 +380,6 @@ export default function BoardGameScreen({ route, navigation }) {
               lastDuelRound.current = ad.currentRound;
               setDuelAnswered(false);
             }
-            // First time seeing this duel → 3-2-1 countdown
             if (!duelSeenRef.current) {
               duelSeenRef.current = true;
               setDuelCountdown(3);
@@ -429,13 +413,18 @@ export default function BoardGameScreen({ route, navigation }) {
     });
   }, [sessionId, playerName, playerUid, isHost, hostIsPlaying]);
 
-  // ── Pick question ─────────────────────────────────────────────────────────
+  // ── Pick question: reset answers + reshuffle deck at start of each new cycle
   useEffect(() => {
     if (!qList.length) return;
     setSelAns(null);
     setAnsFB(null);
     setMultiSelAnswers([]);
-  }, [qIdx]);
+    // When qIdx wraps to the start of a new cycle, build a completely fresh deck
+    // so the same question never appears in the same slot two cycles in a row
+    if (qIdx > 0 && qIdx % qList.length === 0) {
+      setShuffledDeck(buildFreshDeck(qList));
+    }
+  }, [qIdx]); // eslint-disable-line
 
   // ── Auto map ──────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -487,7 +476,6 @@ export default function BoardGameScreen({ route, navigation }) {
     return () => clearInterval(qTimerRef.current);
   }, [qIdx, phase, curQ?.timeLimit, session?.settings?.timePerQuestion]);
 
-  // ── Flash ─────────────────────────────────────────────────────────────────
   const triggerFlash = useCallback((ok, txt) => {
     setFlashData({isCorrect:ok, text:txt});
     flashOpacity.setValue(1);
@@ -497,29 +485,24 @@ export default function BoardGameScreen({ route, navigation }) {
     ]).start(() => setFlashData(null));
   }, []);
 
-  // ── Scroll ────────────────────────────────────────────────────────────────
   const scrollToPos = useCallback((pos, be) => {
     if (!boardRef.current) return;
     const r = Math.floor(pos / BOARD_COLS), total = Math.ceil((be+1) / BOARD_COLS), vr = total - 1 - r;
     boardRef.current.scrollTo({y: Math.max(0, vr*(BASE_TILE+6)-50), animated:true});
   }, []);
 
-  // ── Panic: always return to questions ────────────────────────────────────
   const forceQuestions = useCallback(() => {
     setMBoxOpen(false); setMBoxKey(null); setMBoxDef(null); setMBoxRolling(false);
     setRoll1Notif(false); setShowNotif(false);
     setInterruptedPhase(null);
-    // If coming from "rolled", the current question was already answered — advance to next
     const cur = phaseRef.current;
     setPhaseSync("questions"); setViewMode("questions"); setDiceValue(null);
     if (cur === "rolled" || cur === "rolling") setQIdx(i => i+1);
     clearInterval(trapRef.current); setTrapEvent(null); setTrapAnswered(false);
   }, [setPhaseSync]);
 
-  // exitMoving: show "Back to Questions" prompt
   const exitMoving = () => { setPhaseSync("rolled"); setDiceValue(null); };
 
-  // ── Item toast ────────────────────────────────────────────────────────────
   const showItemToast = useCallback((type, reason) => {
     const def = INVENTORY_DEFS[type];
     if (!def) return;
@@ -533,7 +516,6 @@ export default function BoardGameScreen({ route, navigation }) {
     ]).start(() => setItemToast(null));
   }, []);
 
-  // ── Inventory ─────────────────────────────────────────────────────────────
   const addToInventory = useCallback((type, reason) => {
     setInventory(prev => {
       if (prev.length >= 3) { setInvFullItem({type, reason}); return prev; }
@@ -546,13 +528,11 @@ export default function BoardGameScreen({ route, navigation }) {
   const removeFromInventory = useCallback((id) => setInventory(prev => prev.filter(i => i.id !== id)), []);
 
   const useInventoryItem = useCallback((item) => {
-    // NOTE: we do NOT remove from inventory here — removal happens after the item is consumed.
-    // For mystery_box: removed when closeMBox finalises (claim or target chosen).
-    // For deflector: removed immediately since activating it IS consuming it.
     if (item.type === "mystery_box") {
-      // Pass the item id so closeMBox can remove it after use
       openMysteryBox(item.id);
     } else if (item.type === "deflector") {
+      // FIX: actually remove from inventory — this was missing, causing infinite deflector
+      removeFromInventory(item.id);
       setDeflectorActive(true);
       setDeflectorSecsLeft(30);
       clearTimeout(deflectorTimerRef.current);
@@ -569,11 +549,6 @@ export default function BoardGameScreen({ route, navigation }) {
       }
     }
   }, [removeFromInventory, playerName, playerUid, sessionId]);
-
-  // ── Open mystery box (Modal overlay on map) ───────────────────────────────
-  // mBoxInventoryItemId: if box was opened FROM inventory, hold the item id so
-  // X (close without claiming) puts it BACK into inventory rather than consuming it.
-  const mBoxInventoryItemId = useRef(null);
 
   const openMysteryBox = useCallback((inventoryItemId = null) => {
     mBoxInventoryItemId.current = inventoryItemId;
@@ -595,23 +570,19 @@ export default function BoardGameScreen({ route, navigation }) {
     await new Promise(r => setTimeout(r, 500));
     const key = MYSTERY_KEYS[Math.floor(Math.random() * MYSTERY_KEYS.length)];
     const def = MYSTERY_DEFS[key];
-    setMBoxKey(key);
-    setMBoxDef(def);
-    setMBoxRolling(false);
+    setMBoxKey(key); setMBoxDef(def); setMBoxRolling(false);
     if (def.inventoryType) setMBoxStep("inventory");
     else if (def.needsTarget) setMBoxStep("target");
     else setMBoxStep("apply");
   }, [mBoxRolling]);
 
-  // closeMBox: called by X button — item NOT consumed, restore to inventory if applicable
   const closeMBox = useCallback(() => {
     setMBoxOpen(false); setMBoxKey(null); setMBoxDef(null);
-    // If opened from inventory and user pressed X without claiming, put item back
     const itemId = mBoxInventoryItemId.current;
     mBoxInventoryItemId.current = null;
     if (itemId) {
       setInventory(prev => {
-        if (prev.find(i => i.id === itemId)) return prev; // already there
+        if (prev.find(i => i.id === itemId)) return prev;
         return [...prev, { type: "mystery_box", id: itemId }];
       });
     }
@@ -626,10 +597,8 @@ export default function BoardGameScreen({ route, navigation }) {
     }
   }, [setPhaseSync]);
 
-  // Apply effect that doesn't need a target (immunity, doubleroll, or inventory item)
   const claimMBoxNoTarget = useCallback(async () => {
     if (!mBoxDef) return;
-    // Peek at restore target BEFORE closeMBox clears savedPhaseRef
     const willReturnToQ = !savedPhaseRef.current || savedPhaseRef.current === "questions";
     const itemId = mBoxInventoryItemId.current; mBoxInventoryItemId.current = null; if (itemId) removeFromInventory(itemId);
     if (mBoxDef.inventoryType) {
@@ -640,10 +609,8 @@ export default function BoardGameScreen({ route, navigation }) {
     }
     switch (mBoxKey) {
       case "immunity": {
-        setImmunityLeft(2);
-        setImmunitySecsLeft(45);
-        clearTimeout(immunityTimerRef.current);
-        clearInterval(immunitySecsRef.current);
+        setImmunityLeft(2); setImmunitySecsLeft(45);
+        clearTimeout(immunityTimerRef.current); clearInterval(immunitySecsRef.current);
         immunityTimerRef.current = setTimeout(() => { setImmunityLeft(0); setImmunitySecsLeft(0); }, 45000);
         immunitySecsRef.current  = setInterval(() => setImmunitySecsLeft(s => { if(s<=1){ clearInterval(immunitySecsRef.current); return 0; } return s-1; }), 1000);
         const exp = Date.now() + 45000;
@@ -656,23 +623,17 @@ export default function BoardGameScreen({ route, navigation }) {
         }
         break;
       }
-      case "doubleroll":
-        setDoubleRollsLeft(2);
-        break;
+      case "doubleroll": setDoubleRollsLeft(2); break;
     }
     closeMBox();
     if (willReturnToQ) setQIdx(i => i+1);
-  }, [mBoxDef, mBoxKey, addToInventory, closeMBox, playerName, playerUid, sessionId]);
+  }, [mBoxDef, mBoxKey, addToInventory, closeMBox, removeFromInventory, playerName, playerUid, sessionId]);
 
-  // Apply effect on a chosen target
   const claimMBoxTarget = useCallback(async (target) => {
     if (!mBoxKey) { closeMBox(); return; }
-
-    // Peek at restore target BEFORE closeMBox clears savedPhaseRef
     const willReturnToQ = !savedPhaseRef.current || savedPhaseRef.current === "questions";
     const itemId2 = mBoxInventoryItemId.current; mBoxInventoryItemId.current = null; if (itemId2) removeFromInventory(itemId2);
 
-    // Fetch FRESH player data from Firestore so deflector/immunity checks are accurate
     let freshSess;
     try {
       const snap = await getDoc(doc(db,"gameSessions",sessionId));
@@ -680,7 +641,6 @@ export default function BoardGameScreen({ route, navigation }) {
     } catch(e) { console.error(e); closeMBox(); return; }
 
     const sess = freshSess || sessionRef.current;
-
     const tPlayer = (sess.players||[]).find(p => p.name === target.name);
     const tImmune = tPlayer?.immunityExpires > Date.now();
     const tDeflect = tPlayer?.deflectorExpires > Date.now();
@@ -689,7 +649,6 @@ export default function BoardGameScreen({ route, navigation }) {
       setNotif(`Your ${mBoxDef?.title} was deflected back at you by ${target.name}! 🪞`);
       setShowNotif(true);
       const notifBack = {text:`You deflected ${playerName}'s ${mBoxDef?.title} back at them! 🪞`, id:Date.now()};
-      // Single write: clear deflector + send notification atomically
       const upd = (sess.players||[]).map(p =>
         p.name===target.name ? {...p, deflectorExpires:0, notification:notifBack} : p
       );
@@ -705,7 +664,6 @@ export default function BoardGameScreen({ route, navigation }) {
       setMBoxOpen(false); setMBoxKey(null); setMBoxDef(null);
       const restore = savedPhaseRef.current; savedPhaseRef.current = null;
       if (restore && restore !== "questions") { setPhaseSync(restore); setViewMode(["rolling","moving","space_roll"].includes(restore)?"map":"questions"); }
-      // Only advance question if we're going back to questions
       if (!restore || restore === "questions") setQIdx(i => i+1);
       return;
     }
@@ -720,8 +678,6 @@ export default function BoardGameScreen({ route, navigation }) {
       }
       case "stun": {
         const notif = {text:`You've been stunned by ${playerName}! 😵 Answer 3 in a row to recover.`, id:Date.now()};
-        // Write to top-level activeStuns map AND notification in one atomic write
-        // Use dot-notation to only update the specific target's entry, not the whole map
         await updateDoc(doc(db,"gameSessions",sessionId), {
           [`activeStuns.${target.name}`]: { by: playerName, id: Date.now() },
           players: (sess.players||[]).map(p => p.name===target.name ? {...p, notification:notif} : p),
@@ -758,7 +714,7 @@ export default function BoardGameScreen({ route, navigation }) {
     }
     closeMBox();
     if (willReturnToQ) setQIdx(i => i+1);
-  }, [mBoxKey, mBoxDef, playerName, playerUid, playerColor, sessionId, closeMBox, qList]);
+  }, [mBoxKey, mBoxDef, playerName, playerUid, playerColor, sessionId, closeMBox, removeFromInventory, qList]);
 
   // ── 1v1 Duel answer ───────────────────────────────────────────────────────
   const handleDuelAnswer = useCallback(async (ansIdx) => {
@@ -785,7 +741,6 @@ export default function BoardGameScreen({ route, navigation }) {
         if (other !== null) {
           const nextR = r + 1;
           if (nextR >= 3) {
-            // Compute winner from all answers
             const cA = [duel.c_0,duel.c_1,duel.c_2].map((a,i) => (isChallenger&&i===r) ? {correct,timeSec} : a);
             const oA = [duel.o_0,duel.o_1,duel.o_2].map((a,i) => (!isChallenger&&i===r) ? {correct,timeSec} : a);
             const cC = cA.filter(a=>a?.correct).length;
@@ -810,7 +765,7 @@ export default function BoardGameScreen({ route, navigation }) {
     } catch(e) { console.error("duelAnswer:", e); }
   }, [duelAnswered, playerName, playerUid, sessionId]);
 
-  // ── Dismiss duel (both must dismiss before activeDuel clears) ─────────────
+  // ── Dismiss duel — applies any pending stun after duel ends ──────────────
   const dismissDuel = useCallback(async () => {
     const ad = sessionRef.current?.activeDuel;
     const me = myStateRef.current;
@@ -819,7 +774,6 @@ export default function BoardGameScreen({ route, navigation }) {
     const myKey  = isChallenger ? "challengerDismissed" : "opponentDismissed";
     const othKey = isChallenger ? "opponentDismissed" : "challengerDismissed";
 
-    // Swap logic: winner swaps only if they were BEHIND (lower position)
     if (ad.winnerName === playerName) {
       const otherName = isChallenger ? ad.opponentName : ad.challengerName;
       const opp = (sessionRef.current?.players||[]).find(p => p.name===otherName);
@@ -839,13 +793,24 @@ export default function BoardGameScreen({ route, navigation }) {
     } else {
       await updateDoc(doc(db,"gameSessions",sessionId), {[`activeDuel.${myKey}`]:true}).catch(console.error);
     }
-    setDuelView("active"); // reset for next duel
+    setDuelView("active");
     setPhaseSync("questions");
     setQIdx(i => i+1);
+
+    // Apply any stun that arrived while we were in the duel
+    setPendingStun(prev => {
+      if (prev) {
+        setIsStunned(true);
+        setStunBy(prev.by || "");
+        setStunRecovery(0);
+        setStunQIdx(0);
+        setStunSelAns(null);
+      }
+      return null;
+    });
   }, [playerName, playerUid, sessionId]);
 
-  // ── Answer handler (normal questions — stun questions are in the stun Modal) ──
-  // Toggle a multi-select answer choice (doesn't submit — user taps Confirm)
+  // ── Answer handlers ───────────────────────────────────────────────────────
   const handleMultiToggle = useCallback((ansIdx) => {
     if (selAns !== null || phase !== "questions") return;
     setMultiSelAnswers(prev =>
@@ -866,15 +831,14 @@ export default function BoardGameScreen({ route, navigation }) {
     }
   }, [streak, cc, luck, addToInventory, setPhaseSync]);
 
-  // Confirm multi-select submission
   const handleMultiConfirm = useCallback(() => {
     if (selAns !== null || phase !== "questions" || !curQ) return;
     clearInterval(qTimerRef.current); timerBar.stopAnimation();
-    const correctIdxs = (curQ.correctAnswers||[]).map((v,i)=>v?i:null).filter(i=>i!==null);
-    const selected = [...multiSelAnswers].sort();
-    const correct = selected.length === correctIdxs.length &&
-      selected.every((v,i) => v === correctIdxs[i]);
-    setSelAns(-2); // -2 = multiselect submitted
+    const correctIdxs = (curQ.correctAnswers||[]).map((v,i)=>v?i:null).filter(x=>x!==null);
+    const selected = [...multiSelAnswers].sort((a,b)=>a-b);
+    const sortedCorrect = [...correctIdxs].sort((a,b)=>a-b);
+    const correct = selected.length === sortedCorrect.length && selected.every((v,i) => v === sortedCorrect[i]);
+    setSelAns(-2);
     setAnsFB(correct ? "correct" : "wrong");
     triggerFlash(correct, getCorrectText(curQ));
     scoreAndAdvance(correct);
@@ -901,16 +865,15 @@ export default function BoardGameScreen({ route, navigation }) {
       const ns = stunRecovery + 1;
       setStunRecovery(ns);
       if (ns >= ROLL_AT) {
-        // All 3 correct — write to Firestore to clear stun
         updateDoc(doc(db,"gameSessions",sessionId), {
           [`activeStuns.${playerName}`]: deleteField(),
         }).catch(console.error);
-        // Reset UI immediately — don't wait for Firestore roundtrip or the modal freezes
         setTimeout(() => {
           setStunRecovery(0);
           setStunQIdx(0);
           setStunSelAns(null);
-          setIsStunned(false); // local immediate clear — Firestore will confirm shortly
+          setIsStunned(false);
+          activeStunRef.current = false;
         }, 600);
         return;
       }
@@ -919,6 +882,7 @@ export default function BoardGameScreen({ route, navigation }) {
     }
     setTimeout(() => { setStunQIdx(i => i+1); setStunSelAns(null); }, 1200);
   }, [stunSelAns, stunQIdx, stunRecovery, qList, playerName, sessionId]);
+
   const handleRoll = useCallback(async () => {
     if (diceRolling) return;
     setDiceRolling(true);
@@ -934,18 +898,14 @@ export default function BoardGameScreen({ route, navigation }) {
     else if (luck > 0) { const r2=Math.floor(Math.random()*6)+1; if(luck>=20) roll=Math.max(roll,r2); }
     if (streak >= 8) roll = Math.min(12, roll+1);
     setDiceValue(roll); setDiceRolling(false);
-
     if (roll === 1 && doubleRollsLeft === 0) {
-      // Roll 1: no movement, mystery_box to inventory — toast shows via addToInventory
       addToInventory("mystery_box", "you rolled a 1! 🎲");
-      // Return to rolled phase so user taps "Back to Questions"
       setPhaseSync("rolled");
       return;
     }
     setTimeout(() => movePlayer(roll), 800);
   }, [diceRolling, luck, streak, doubleRollsLeft, addToInventory]);
 
-  // ── Space dice roll ───────────────────────────────────────────────────────
   const handleSpaceRoll = useCallback(async () => {
     if (srRolling) return;
     setSrRolling(true);
@@ -967,9 +927,7 @@ export default function BoardGameScreen({ route, navigation }) {
     const be=sess.settings?.boardSize||25, cur=me.position||0;
     const np = type==="lava" ? Math.max(0,cur-roll) : Math.min(be,cur+roll);
     setPhaseSync("moving");
-    const srSafetyTimer = setTimeout(() => {
-      if (phaseRef.current === "moving") setPhaseSync("rolled");
-    }, 8000);
+    const srSafetyTimer = setTimeout(() => { if (phaseRef.current === "moving") setPhaseSync("rolled"); }, 8000);
     const step = type==="lava" ? -1 : 1;
     for (let p=cur; step>0?p<=np:p>=np; p+=step) { setHighlightPos(p); scrollToPos(p,be); await new Promise(r=>setTimeout(r,280)); }
     setHighlightPos(np);
@@ -984,17 +942,12 @@ export default function BoardGameScreen({ route, navigation }) {
     setSrType(null); setSrValue(null); exitMoving();
   }, [playerName,playerColor,playerUid,sessionId,scrollToPos]);
 
-  // ── Move player ───────────────────────────────────────────────────────────
   const movePlayer = useCallback(async (spaces) => {
     const me=myStateRef.current, sess=sessionRef.current;
     if (!me||!sess) { setPhaseSync("questions"); setDiceValue(null); return; }
     const be=sess.settings?.boardSize||25, op=me.position||0, np=Math.min(op+spaces,be);
     setPhaseSync("moving");
-
-    // Safety net: if we're still in "moving" after 8s, force to rolled
-    const safetyTimer = setTimeout(() => {
-      if (phaseRef.current === "moving") setPhaseSync("rolled");
-    }, 8000);
+    const safetyTimer = setTimeout(() => { if (phaseRef.current === "moving") setPhaseSync("rolled"); }, 8000);
     for (let c=op; c<=np; c++) { setHighlightPos(c); scrollToPos(c,be); await new Promise(r=>setTimeout(r,280)); }
     setHighlightPos(np);
     try {
@@ -1010,7 +963,6 @@ export default function BoardGameScreen({ route, navigation }) {
     } catch(e) { clearTimeout(safetyTimer); console.error("movePlayer:",e); exitMoving(); }
   }, [playerName,playerColor,playerUid,sessionId,scrollToPos]);
 
-  // ── Space landing ─────────────────────────────────────────────────────────
   const handleLanding = (space, pos, be, qs) => {
     const type = space?.type || "normal";
     if (immunityLeft>0 && ["lava","trap","cannon"].includes(type)) { setImmunityLeft(n=>Math.max(0,n-1)); exitMoving(); return; }
@@ -1036,7 +988,6 @@ export default function BoardGameScreen({ route, navigation }) {
   const handleTrapFail = async () => {
     clearInterval(trapRef.current);
     setTrapEvent(null); setPhaseSync("questions"); setDiceValue(null); setQIdx(i=>i+1);
-    // Use activeStuns — same mechanism as player-applied stun
     await updateDoc(doc(db,"gameSessions",sessionId), {
       [`activeStuns.${playerName}`]: { by: "Trap", id: Date.now() },
     }).catch(console.error);
@@ -1052,7 +1003,6 @@ export default function BoardGameScreen({ route, navigation }) {
     }
   };
 
-  // ── Leave ─────────────────────────────────────────────────────────────────
   const handleLeave = async () => {
     if (!isHost || hostIsPlaying) {
       try {
@@ -1083,11 +1033,9 @@ export default function BoardGameScreen({ route, navigation }) {
   const players  = session?.players || [];
   const boardEnd = session?.settings?.boardSize || 25;
   const myPos    = myState?.position || 0;
-  const stunned  = isStunned; // controlled by activeStuns top-level field, not players array
   const showCA   = session?.settings?.showAnswersAfter !== false;
   const badLuck  = myState?.badLuckExpires && myState.badLuckExpires > Date.now();
   const effLuck  = badLuck ? Math.max(0, luck-30) : luck;
-  // Display luck at ×2.5 so 40% real luck shows as 100% — cosmetic only, math unchanged
   const dispLuck = Math.min(100, Math.round(effLuck * 2.5));
   const otherPs  = players.filter(p => !((playerUid&&p.uid===playerUid)||p.name===playerName));
   const activeDuel = session?.activeDuel;
@@ -1119,7 +1067,6 @@ export default function BoardGameScreen({ route, navigation }) {
                 <View style={[S.lbDot,{backgroundColor:p.color||"#888"}]}/>
                 <Text style={S.lbName} numberOfLines={1}>{p.name}</Text>
                 <Text style={S.lbPos}>{p.position||0}/{boardEnd}</Text>
-                {p.stunned&&<Text style={[S.lbPos,{color:"#e74c3c"}]}>stunned</Text>}
               </View>
             ))}
           </View>
@@ -1135,7 +1082,6 @@ export default function BoardGameScreen({ route, navigation }) {
   return (
     <SafeAreaView style={[S.container, isStunned&&S.containerStunned]}>
 
-      {/* ─ HUD ─ */}
       <View style={[S.hud, isStunned&&S.hudStunned]}>
         <View style={S.hudCell}><Text style={S.hudLbl}>STREAK</Text><Text style={[S.hudVal,streak>0&&{color:"#f39c12"}]}>{streak>0?`🔥${streak}`:streak}</Text></View>
         <View style={S.hudCell}><Text style={S.hudLbl}>LUCK</Text><Text style={[S.hudVal,badLuck&&{color:"#e74c3c"}]}>{dispLuck}%</Text></View>
@@ -1144,7 +1090,6 @@ export default function BoardGameScreen({ route, navigation }) {
         {deflectorActive&&<View style={S.hudCell}><Text style={S.hudLbl}>REFLECT</Text><Text style={[S.hudVal,{color:"#00bcd4"}]}>🪞{deflectorSecsLeft}s</Text></View>}
         {doubleRollsLeft>0&&<View style={S.hudCell}><Text style={S.hudLbl}>2×ROLL</Text><Text style={[S.hudVal,{color:"#9b59b6"}]}>×{doubleRollsLeft}</Text></View>}
         {gameLeft!=null&&<View style={S.hudCell}><Text style={S.hudLbl}>TIME</Text><Text style={[S.hudVal,gameLeft<=30&&{color:"#e74c3c"}]}>{formatTime(gameLeft)}</Text></View>}
-        {/* Questions panic button — always visible */}
         <TouchableOpacity style={[S.qBtn, phase==="questions"&&!showMap&&S.qBtnActive]} onPress={forceQuestions}>
           <Text style={S.qBtnTxt}>Questions</Text>
         </TouchableOpacity>
@@ -1154,7 +1099,6 @@ export default function BoardGameScreen({ route, navigation }) {
         {hostIsPlaying&&<TouchableOpacity style={S.hudEndBtn} onPress={async()=>{await updateDoc(doc(db,"gameSessions",sessionId),{status:"ended"}).catch(console.error);exitGame();}}><Text style={S.hudEndBtnTxt}>End</Text></TouchableOpacity>}
       </View>
 
-      {/* Timer bar */}
       {!!(curQ?.timeLimit||session?.settings?.timePerQuestion) && phase==="questions" && !showMap && (
         <View style={S.timerTrack}>
           <Animated.View style={[S.timerFill, {width:timerBar.interpolate({inputRange:[0,1],outputRange:["0%","100%"]})}]}/>
@@ -1162,8 +1106,6 @@ export default function BoardGameScreen({ route, navigation }) {
       )}
 
       <View style={S.main}>
-
-        {/* MAP */}
         {showMap && (
           <ScrollView ref={boardRef} contentContainerStyle={{padding:10}}>
             <SnakeBoard board={board} players={players} myPosition={myPos} highlightPos={highlightPos} boardEnd={boardEnd} tileSize={BASE_TILE}/>
@@ -1171,7 +1113,6 @@ export default function BoardGameScreen({ route, navigation }) {
           </ScrollView>
         )}
 
-        {/* QUESTIONS */}
         {!showMap && phase==="questions" && (
           <ScrollView contentContainerStyle={S.qScroll}>
             <View style={S.rollBar}>
@@ -1201,7 +1142,6 @@ export default function BoardGameScreen({ route, navigation }) {
                           <TouchableOpacity key={i}
                             style={[S.aBtn,{backgroundColor:bg,borderColor:bc,flexDirection:"row",alignItems:"center"}]}
                             onPress={()=>handleMultiToggle(i)} disabled={selAns!==null} activeOpacity={0.75}>
-                            {/* Fixed 32px checkbox column so layout never shifts */}
                             <View style={{width:32,alignItems:"center"}}>
                               <Text style={{fontSize:20,color:isSel?"#3498db":"#444"}}>{isSel?"☑":"☐"}</Text>
                             </View>
@@ -1210,7 +1150,6 @@ export default function BoardGameScreen({ route, navigation }) {
                         );
                       })}
                     </View>
-                    {/* Always reserve space for Confirm — opacity 0 when nothing selected so layout is stable */}
                     <TouchableOpacity
                       style={[S.rollBtn,{backgroundColor:"#3498db",marginTop:12,alignSelf:"center",opacity:selAns===null&&multiSelAnswers.length>0?1:0}]}
                       onPress={handleMultiConfirm}
@@ -1234,7 +1173,6 @@ export default function BoardGameScreen({ route, navigation }) {
           </ScrollView>
         )}
 
-        {/* ROLLING */}
         {phase==="rolling" && (
           <View style={S.diceBox}>
             <Text style={S.diceTtl}>Roll the Dice!</Text>
@@ -1246,7 +1184,6 @@ export default function BoardGameScreen({ route, navigation }) {
           </View>
         )}
 
-        {/* SPACE ROLL */}
         {phase==="space_roll" && srType && (
           <View style={S.diceBox}>
             <Text style={[S.diceTtl,{color:srType==="lava"?"#e74c3c":"#3498db",fontSize:28}]}>{srType==="lava"?"🌋 Lava!":"💥 Cannon!"}</Text>
@@ -1257,10 +1194,8 @@ export default function BoardGameScreen({ route, navigation }) {
           </View>
         )}
 
-        {/* MOVING */}
         {phase==="moving" && <View style={S.movingBox}><ActivityIndicator color="#00c781" size="large"/><Text style={S.movingTxt}>Moving…</Text></View>}
 
-        {/* ROLLED — prompt to return to questions */}
         {phase==="rolled" && (
           <View style={S.rolledBox}>
             <Text style={S.rolledEmoji}>✅</Text>
@@ -1271,7 +1206,6 @@ export default function BoardGameScreen({ route, navigation }) {
           </View>
         )}
 
-        {/* 1v1 DUEL */}
         {phase==="duel" && activeDuel && (
           <ScrollView contentContainerStyle={S.duelScroll}>
             <Text style={[S.mysteryBigTtl,{color:"#3498db"}]}>⚔️ 1v1 Duel!</Text>
@@ -1295,12 +1229,7 @@ export default function BoardGameScreen({ route, navigation }) {
                     <View style={S.waitBox}><ActivityIndicator color="#3498db"/><Text style={S.waitTxt}>Waiting for opponent…</Text></View>
                   ) : q ? (
                     <View style={S.qCard}>
-                      {q.imageUrl ? (
-                        <TouchableOpacity onPress={()=>setZoomImage(q.imageUrl)} activeOpacity={0.85}>
-                          <Image source={{uri:q.imageUrl}} style={S.qImage} resizeMode="contain"/>
-                          <Text style={S.zoomHint}>Tap to zoom</Text>
-                        </TouchableOpacity>
-                      ) : null}
+                      {q.imageUrl?<TouchableOpacity onPress={()=>setZoomImage(q.imageUrl)} activeOpacity={0.85}><Image source={{uri:q.imageUrl}} style={S.qImage} resizeMode="contain"/><Text style={S.zoomHint}>Tap to zoom</Text></TouchableOpacity>:null}
                       <Text style={[S.qTxt,{fontSize:22}]}>{q.question}</Text>
                       <View style={S.aGrid}>
                         {(q.type==="multipleChoice"?q.answers:q.type==="multiSelect"?q.answers:["True","False"]).map((ans,i)=>(
@@ -1337,10 +1266,9 @@ export default function BoardGameScreen({ route, navigation }) {
             })()}
           </ScrollView>
         )}
-
       </View>
 
-      {/* Vertical inventory hotbar (right side) */}
+      {/* Hotbar */}
       <View style={S.hotbar}>
         {[0,1,2].map(i => {
           const item = inventory[i];
@@ -1348,25 +1276,19 @@ export default function BoardGameScreen({ route, navigation }) {
           const borderC = item ? (item.type==="deflector"?"#00bcd4":"#f39c12") : "#333";
           return (
             <TouchableOpacity key={i} style={[S.hotbarSlot, item&&S.hotbarSlotFull, {borderColor:borderC}]} onPress={()=>item&&useInventoryItem(item)} activeOpacity={0.75}>
-              {item ? (
-                <>
-                  <Text style={S.hotbarEmoji}>{def?.emoji}</Text>
-                  <Text style={S.hotbarLabel} numberOfLines={2}>{def?.label}</Text>
-                </>
-              ) : <Text style={S.hotbarEmpty}>—</Text>}
+              {item ? (<><Text style={S.hotbarEmoji}>{def?.emoji}</Text><Text style={S.hotbarLabel} numberOfLines={2}>{def?.label}</Text></>) : <Text style={S.hotbarEmpty}>—</Text>}
             </TouchableOpacity>
           );
         })}
         <Text style={S.hotbarHint}>TAP{"\n"}TO{"\n"}USE</Text>
       </View>
 
-      {/* Mystery box overlay */}
+      {/* Mystery box */}
       <Modal visible={mBoxOpen} transparent animationType="fade">
         <View style={S.mysteryOverlay}>
           <View style={S.mysteryPanel}>
             <CloseBtn onPress={closeMBox}/>
             <Text style={S.mysteryBigTtl}>🎁 Mystery Box!</Text>
-
             {mBoxStep==="roll" && (
               <>
                 <Text style={S.luckTxt}>Roll to reveal your effect…</Text>
@@ -1376,7 +1298,6 @@ export default function BoardGameScreen({ route, navigation }) {
                 </TouchableOpacity>
               </>
             )}
-
             {(mBoxStep==="apply"||mBoxStep==="inventory") && mBoxDef && (
               <View style={[S.mysteryCard,{borderColor:mBoxDef.color}]}>
                 <Text style={S.mysteryEmoji}>{mBoxDef.emoji}</Text>
@@ -1387,7 +1308,6 @@ export default function BoardGameScreen({ route, navigation }) {
                 </TouchableOpacity>
               </View>
             )}
-
             {mBoxStep==="target" && mBoxDef && (
               <>
                 <View style={[S.mysteryCard,{borderColor:mBoxDef.color}]}>
@@ -1419,7 +1339,7 @@ export default function BoardGameScreen({ route, navigation }) {
           {inventory.map(item=>{
             const def=INVENTORY_DEFS[item.type];
             return (
-              <TouchableOpacity key={item.id} style={[S.targetBtn,{width:"100%",marginVertical:4}]} onPress={()=>{removeFromInventory(item.id);setInventory(p=>[...p,{type:invFullItem.type,id:Date.now()}]);showItemToast(invFullItem.type, invFullItem.reason);setInvFullItem(null);}}>
+              <TouchableOpacity key={item.id} style={[S.targetBtn,{width:"100%",marginVertical:4}]} onPress={()=>{removeFromInventory(item.id);setInventory(p=>[...p,{type:invFullItem.type,id:Date.now()}]);showItemToast(invFullItem.type,invFullItem.reason);setInvFullItem(null);}}>
                 <Text style={{fontSize:22,marginRight:8}}>{def?.emoji}</Text>
                 <Text style={{color:"#fff",flex:1}}>{def?.label}</Text>
                 <Text style={{color:"#e74c3c"}}>Discard</Text>
@@ -1430,18 +1350,14 @@ export default function BoardGameScreen({ route, navigation }) {
         </View></View>
       </Modal>
 
-      {/* Roll-1 notification */}
-
-      {/* ── STUN MODAL — top-level field detection mirrors 1v1 duel ── */}
-      <Modal visible={isStunned} transparent animationType="fade">
+      {/* STUN MODAL — 1v1 takes priority: hidden during duel and countdown */}
+      <Modal visible={isStunned && phase !== "duel" && duelCountdown === null} transparent animationType="fade">
         <View style={[S.overlay, {backgroundColor:"rgba(160,80,0,0.97)"}]}>
           <View style={[S.modal, {borderColor:"#f39c12",borderWidth:2.5,backgroundColor:"#2e1500",width:"92%",maxWidth:480}]}>
             <Text style={{fontSize:44,textAlign:"center"}}>😵</Text>
             <Text style={[S.mTtl,{color:"#f39c12",fontSize:26}]}>STUNNED!</Text>
             {stunBy ? <Text style={[S.mDesc,{color:"#ffcc88",fontSize:14,marginTop:-4}]}>by {stunBy}</Text> : null}
-            <Text style={[S.mDesc,{color:"#ffcc88",fontSize:16}]}>
-              Answer {ROLL_AT} questions correctly in a row to break free!
-            </Text>
+            <Text style={[S.mDesc,{color:"#ffcc88",fontSize:16}]}>Answer {ROLL_AT} questions correctly in a row to break free!</Text>
             <View style={{flexDirection:"row",gap:12,marginVertical:8}}>
               {[0,1,2].map(i=>(
                 <View key={i} style={[S.rollDot, i<stunRecovery && {backgroundColor:"#f39c12",borderColor:"#f39c12",width:20,height:20,borderRadius:10}]}/>
@@ -1454,19 +1370,13 @@ export default function BoardGameScreen({ route, navigation }) {
               if (!sq) return <ActivityIndicator color="#f39c12"/>;
               return (
                 <View style={{width:"100%",gap:12}}>
-                  {sq.imageUrl ? (
-                    <TouchableOpacity onPress={()=>setZoomImage(sq.imageUrl)} activeOpacity={0.85}>
-                      <Image source={{uri:sq.imageUrl}} style={[S.qImage,{height:140}]} resizeMode="contain"/>
-                      <Text style={S.zoomHint}>Tap to zoom</Text>
-                    </TouchableOpacity>
-                  ) : null}
+                  {sq.imageUrl ? <TouchableOpacity onPress={()=>setZoomImage(sq.imageUrl)} activeOpacity={0.85}><Image source={{uri:sq.imageUrl}} style={[S.qImage,{height:140}]} resizeMode="contain"/><Text style={S.zoomHint}>Tap to zoom</Text></TouchableOpacity> : null}
                   <Text style={[S.qTxt,{fontSize:22,color:"#fff",marginBottom:4}]}>{sq.question}</Text>
                   {(sq.type==="multipleChoice" ? sq.answers : sq.type==="multiSelect" ? sq.answers : ["True","False"]).map((ans,i) => {
-                    const isSel = stunSelAns===i;
-                    const isCorr = sq.correctAnswers?.[i]===true;
+                    const isSel=stunSelAns===i, isCorr=sq.correctAnswers?.[i]===true;
                     let bg="#3d2000", bc="#6b3a00";
-                    if (isSel) { bg=isCorr?"#003d1a":"#3d0000"; bc=isCorr?"#00c781":"#e74c3c"; }
-                    else if (stunSelAns!==null && isCorr) { bg="#003d1a"; bc="#00c781"; }
+                    if(isSel){bg=isCorr?"#003d1a":"#3d0000";bc=isCorr?"#00c781":"#e74c3c";}
+                    else if(stunSelAns!==null&&isCorr){bg="#003d1a";bc="#00c781";}
                     return (
                       <TouchableOpacity key={i} style={[S.aBtn,{backgroundColor:bg,borderColor:bc}]}
                         onPress={()=>handleStunAnswer(i)} disabled={stunSelAns!==null} activeOpacity={0.75}>
@@ -1481,7 +1391,7 @@ export default function BoardGameScreen({ route, navigation }) {
         </View>
       </Modal>
 
-      {/* Duel countdown (3-2-1 before duel starts) */}
+      {/* Duel countdown */}
       <Modal visible={duelCountdown !== null} transparent animationType="fade">
         <View style={S.overlay}><View style={[S.modal,{borderColor:"#3498db",borderWidth:2}]}>
           <Text style={{fontSize:52}}>⚔️</Text>
@@ -1510,12 +1420,7 @@ export default function BoardGameScreen({ route, navigation }) {
           <Text style={[{color:"#fff",fontSize:40,fontWeight:"bold",textAlign:"center"},trapTimer<=3&&{color:"#e74c3c"}]}>{trapTimer}s</Text>
           {trapEvent?.question && (
             <>
-              {trapEvent.question.imageUrl ? (
-                <TouchableOpacity onPress={()=>setZoomImage(trapEvent.question.imageUrl)} activeOpacity={0.85}>
-                  <Image source={{uri:trapEvent.question.imageUrl}} style={[S.qImage,{height:120}]} resizeMode="contain"/>
-                  <Text style={S.zoomHint}>Tap to zoom</Text>
-                </TouchableOpacity>
-              ) : null}
+              {trapEvent.question.imageUrl?<TouchableOpacity onPress={()=>setZoomImage(trapEvent.question.imageUrl)} activeOpacity={0.85}><Image source={{uri:trapEvent.question.imageUrl}} style={[S.qImage,{height:120}]} resizeMode="contain"/><Text style={S.zoomHint}>Tap to zoom</Text></TouchableOpacity>:null}
               <Text style={S.mDesc}>{trapEvent.question.question}</Text>
               <View style={S.aGrid}>
                 {(trapEvent.question.type==="multipleChoice"?trapEvent.question.answers:trapEvent.question.type==="multiSelect"?trapEvent.question.answers:["True","False"]).map((ans,i)=>(
@@ -1533,7 +1438,6 @@ export default function BoardGameScreen({ route, navigation }) {
       {/* Game over */}
       {session?.status==="ended" && !gameOverDone && <GameOverModal session={session} myPos={myPos} boardEnd={boardEnd} onExit={()=>{ setGameOverDone(true); exitGame(); }}/>}
 
-      {/* Kicked */}
       <Modal visible={!!(myState&&(session?.kickedPlayers||[]).includes(playerName))} transparent animationType="fade">
         <View style={S.overlay}><View style={S.modal}><Text style={S.mTtl}>You've Been Kicked</Text><Text style={S.mDesc}>The host removed you.</Text><TouchableOpacity style={[S.rollBtn,{backgroundColor:"#00c781"}]} onPress={()=>navigation.reset({index:0,routes:[{name:"JoinGameScreen"}]})}><Text style={S.rollTxtBig}>Back</Text></TouchableOpacity></View></View>
       </Modal>
@@ -1541,7 +1445,6 @@ export default function BoardGameScreen({ route, navigation }) {
         <View style={S.overlay}><View style={S.modal}><Text style={S.mTtl}>Game Ended</Text><Text style={S.mDesc}>The host ended the game.</Text><TouchableOpacity style={[S.rollBtn,{backgroundColor:"#00c781"}]} onPress={()=>navigation.reset({index:0,routes:[{name:"JoinGameScreen"}]})}><Text style={S.rollTxtBig}>Back</Text></TouchableOpacity></View></View>
       </Modal>
 
-      {/* Image zoom modal — tap any question image to see it fullscreen */}
       <Modal visible={!!zoomImage} transparent animationType="fade">
         <TouchableOpacity style={S.zoomOverlay} activeOpacity={1} onPress={()=>setZoomImage(null)}>
           <Image source={{uri:zoomImage||""}} style={S.zoomImg} resizeMode="contain"/>
@@ -1549,30 +1452,24 @@ export default function BoardGameScreen({ route, navigation }) {
         </TouchableOpacity>
       </Modal>
 
-      {/* Flash — fully opaque bg, text never fades */}
       {flashData && (
         <Animated.View style={[S.flashOverlay, {opacity: flashOpacity}]}>
           <View style={[S.flashBg, {backgroundColor: flashData.isCorrect ? "#27ae60" : "#c0392b"}]}/>
           <View style={S.flashContent}>
             <Text style={S.flashTtl}>{flashData.isCorrect ? "CORRECT" : "INCORRECT"}</Text>
             {!flashData.isCorrect && showCA && flashData.text ? (
-              <>
-                <Text style={S.flashSubLbl}>Correct answer</Text>
-                <Text style={S.flashSubTxt}>"{flashData.text}"</Text>
-              </>
+              <><Text style={S.flashSubLbl}>Correct answer</Text><Text style={S.flashSubTxt}>"{flashData.text}"</Text></>
             ) : null}
           </View>
         </Animated.View>
       )}
 
-      {/* Item toast */}
       {itemToast && (
         <Animated.View style={[S.toast,{opacity:toastAnim,transform:[{translateY:toastAnim.interpolate({inputRange:[0,1],outputRange:[-60,0]})}]}]}>
           <Text style={S.toastTxt}>{itemToast.emoji} {itemToast.text}</Text>
         </Animated.View>
       )}
 
-      {/* Leave */}
       <TouchableOpacity style={S.leaveBtn} onPress={handleLeave}><Text style={S.leaveBtnTxt}>Leave</Text></TouchableOpacity>
 
     </SafeAreaView>
@@ -1608,79 +1505,62 @@ const S = StyleSheet.create({
   container:        { flex:1, backgroundColor:"#111" },
   containerStunned: { backgroundColor:"#2e200a" },
   center:           { flex:1, backgroundColor:"#111", justifyContent:"center", alignItems:"center" },
-
   hud:        { flexDirection:"row", alignItems:"center", backgroundColor:"#0a0a0a", borderBottomWidth:2, borderBottomColor:"#222", paddingVertical:22, paddingHorizontal:12, flexWrap:"wrap", gap:6 },
   hudStunned: { backgroundColor:"#3d2806" },
   hudCell:    { alignItems:"center", paddingHorizontal:14, minWidth:72 },
   hudLbl:     { color:"#555", fontSize:13, letterSpacing:1.2, fontWeight:"700" },
   hudVal:     { color:"#fff", fontSize:30, fontWeight:"bold", marginTop:4 },
-
-  // Questions panic button
   qBtn:       { paddingHorizontal:18, paddingVertical:14, borderRadius:14, backgroundColor:"#1a1a1a", borderWidth:1.5, borderColor:"#555" },
   qBtnActive: { backgroundColor:"#002200", borderColor:"#00c781" },
   qBtnTxt:    { color:"#aaa", fontSize:13, fontWeight:"700" },
-
   mapBtn:     { paddingHorizontal:18, paddingVertical:14, borderRadius:14, backgroundColor:"#1a1a1a", borderWidth:1.5, borderColor:"#333" },
   mapBtnOn:   { backgroundColor:"#002a1a", borderColor:"#00c781" },
   mapBtnTxt:  { color:"#aaa", fontSize:16, fontWeight:"700" },
   hudEndBtn:  { paddingHorizontal:16, paddingVertical:14, borderRadius:14, backgroundColor:"#3a0000", borderWidth:1.5, borderColor:"#c0392b" },
   hudEndBtnTxt:{ color:"#ff6b6b", fontSize:16, fontWeight:"700" },
-
   timerTrack: { width:"100%", height:7, backgroundColor:"#1a1a1a" },
   timerFill:  { height:7, backgroundColor:"#00c781", alignSelf:"flex-start" },
-
   main: { flex:1 },
-
-  qScroll:      { flexGrow:1, justifyContent:"center", padding:22, paddingRight:100, paddingBottom:80 },
-  qCard:        { gap:16 },
-  stunnedBanner:{ backgroundColor:"#5c3800", borderRadius:12, padding:14, marginBottom:8, borderWidth:1.5, borderColor:"#d68910" },
-  stunnedTxt:   { color:"#f39c12", fontSize:16, fontWeight:"bold", textAlign:"center" },
-  rollBar:      { flexDirection:"row", alignItems:"center", justifyContent:"center", gap:10, marginBottom:14 },
-  rollDot:      { width:16, height:16, borderRadius:8, backgroundColor:"#2a2a2a", borderWidth:2, borderColor:"#444" },
-  rollDotOn:    { backgroundColor:"#00c781", borderColor:"#00c781" },
-  rollTxt2:     { color:"#555", fontSize:13, marginLeft:4 },
-  qImage:       { width:"100%", height:200, borderRadius:12, marginBottom:4, backgroundColor:"#1e1e1e" },
-  zoomHint:     { color:"#555", fontSize:11, textAlign:"center", marginBottom:12 },
-  zoomOverlay:  { flex:1, backgroundColor:"rgba(0,0,0,0.95)", justifyContent:"center", alignItems:"center" },
-  zoomImg:      { width:"100%", height:"80%", borderRadius:8 },
-  zoomClose:    { color:"#666", fontSize:14, marginTop:16 },
-  qTxt:         { color:"#fff", fontSize:28, fontWeight:"700", lineHeight:38, textAlign:"center" },
-  aGrid:        { gap:12 },
-  aBtn:         { borderRadius:14, padding:22, borderWidth:2.5, alignItems:"center" },
-  aTxt:         { color:"#fff", fontSize:20, fontWeight:"600" },
-  waitBox:      { alignItems:"center", paddingVertical:80, gap:14 },
-  waitTxt:      { color:"#555", fontSize:16 },
-
-  legend:       { flexDirection:"row", flexWrap:"wrap", justifyContent:"center", gap:10, paddingVertical:10 },
-  legendItem:   { flexDirection:"row", alignItems:"center", gap:5 },
-  legendSwatch: { width:16, height:16, borderRadius:3, borderWidth:1.5 },
-  legendTxt:    { fontSize:12, fontWeight:"600" },
-
-  diceBox:   { flex:1, alignItems:"center", justifyContent:"center", gap:18, backgroundColor:"#0d0d0d", padding:24, paddingRight:100 },
-  diceTtl:   { color:"#fff", fontSize:26, fontWeight:"bold", textAlign:"center" },
-  luckTxt:   { color:"#888", fontSize:15, textAlign:"center" },
-  diceFace:  { fontSize:96, color:"#fff" },
-  diceRes:   { color:"#00c781", fontSize:24, fontWeight:"bold" },
-  rollBtn:   { backgroundColor:"#00c781", paddingVertical:20, paddingHorizontal:60, borderRadius:18 },
-  rollTxtBig:{ color:"#000", fontSize:24, fontWeight:"bold" },
-
-  movingBox: { flex:1, alignItems:"center", justifyContent:"center", gap:16, backgroundColor:"#0d0d0d" },
-  movingTxt: { color:"#aaa", fontSize:18 },
-
+  qScroll:    { flexGrow:1, justifyContent:"center", padding:22, paddingRight:100, paddingBottom:80 },
+  qCard:      { gap:16 },
+  rollBar:    { flexDirection:"row", alignItems:"center", justifyContent:"center", gap:10, marginBottom:14 },
+  rollDot:    { width:16, height:16, borderRadius:8, backgroundColor:"#2a2a2a", borderWidth:2, borderColor:"#444" },
+  rollDotOn:  { backgroundColor:"#00c781", borderColor:"#00c781" },
+  rollTxt2:   { color:"#555", fontSize:13, marginLeft:4 },
+  qImage:     { width:"100%", height:200, borderRadius:12, marginBottom:4, backgroundColor:"#1e1e1e" },
+  zoomHint:   { color:"#555", fontSize:11, textAlign:"center", marginBottom:12 },
+  zoomOverlay:{ flex:1, backgroundColor:"rgba(0,0,0,0.95)", justifyContent:"center", alignItems:"center" },
+  zoomImg:    { width:"100%", height:"80%", borderRadius:8 },
+  zoomClose:  { color:"#666", fontSize:14, marginTop:16 },
+  qTxt:       { color:"#fff", fontSize:28, fontWeight:"700", lineHeight:38, textAlign:"center" },
+  aGrid:      { gap:12 },
+  aBtn:       { borderRadius:14, padding:22, borderWidth:2.5, alignItems:"center" },
+  aTxt:       { color:"#fff", fontSize:20, fontWeight:"600" },
+  waitBox:    { alignItems:"center", paddingVertical:80, gap:14 },
+  waitTxt:    { color:"#555", fontSize:16 },
+  legend:     { flexDirection:"row", flexWrap:"wrap", justifyContent:"center", gap:10, paddingVertical:10 },
+  legendItem: { flexDirection:"row", alignItems:"center", gap:5 },
+  legendSwatch:{ width:16, height:16, borderRadius:3, borderWidth:1.5 },
+  legendTxt:  { fontSize:12, fontWeight:"600" },
+  diceBox:    { flex:1, alignItems:"center", justifyContent:"center", gap:18, backgroundColor:"#0d0d0d", padding:24, paddingRight:100 },
+  diceTtl:    { color:"#fff", fontSize:26, fontWeight:"bold", textAlign:"center" },
+  luckTxt:    { color:"#888", fontSize:15, textAlign:"center" },
+  diceFace:   { fontSize:96, color:"#fff" },
+  diceRes:    { color:"#00c781", fontSize:24, fontWeight:"bold" },
+  rollBtn:    { backgroundColor:"#00c781", paddingVertical:20, paddingHorizontal:60, borderRadius:18 },
+  rollTxtBig: { color:"#000", fontSize:24, fontWeight:"bold" },
+  movingBox:  { flex:1, alignItems:"center", justifyContent:"center", gap:16, backgroundColor:"#0d0d0d" },
+  movingTxt:  { color:"#aaa", fontSize:18 },
   rolledBox:  { flex:1, alignItems:"center", justifyContent:"center", gap:16, backgroundColor:"#0d0d0d" },
   rolledEmoji:{ fontSize:64 },
   rolledTtl:  { color:"#fff", fontSize:26, fontWeight:"bold" },
-
-  // Hotbar
-  hotbar:      { position:"absolute", right:0, top:"35%", flexDirection:"column", alignItems:"center", gap:6, paddingVertical:12, paddingHorizontal:6, backgroundColor:"rgba(0,0,0,0.85)", borderTopLeftRadius:16, borderBottomLeftRadius:16 },
-  hotbarSlot:  { width:80, height:80, borderRadius:12, backgroundColor:"#1a1a1a", borderWidth:2.5, borderColor:"#333", alignItems:"center", justifyContent:"center", gap:3 },
+  hotbar:     { position:"absolute", right:0, top:"35%", flexDirection:"column", alignItems:"center", gap:6, paddingVertical:12, paddingHorizontal:6, backgroundColor:"rgba(0,0,0,0.85)", borderTopLeftRadius:16, borderBottomLeftRadius:16 },
+  hotbarSlot: { width:80, height:80, borderRadius:12, backgroundColor:"#1a1a1a", borderWidth:2.5, borderColor:"#333", alignItems:"center", justifyContent:"center", gap:3 },
   hotbarSlotFull: { backgroundColor:"#1e1a00" },
-  hotbarEmoji: { fontSize:28 },
-  hotbarLabel: { color:"#fff", fontSize:9, fontWeight:"700", textAlign:"center", paddingHorizontal:2 },
-  hotbarEmpty: { color:"#333", fontSize:22 },
-  hotbarHint:  { color:"#444", fontSize:8, fontWeight:"700", textAlign:"center", marginTop:4 },
-
-  // Mystery overlay
+  hotbarEmoji:{ fontSize:28 },
+  hotbarLabel:{ color:"#fff", fontSize:9, fontWeight:"700", textAlign:"center", paddingHorizontal:2 },
+  hotbarEmpty:{ color:"#333", fontSize:22 },
+  hotbarHint: { color:"#444", fontSize:8, fontWeight:"700", textAlign:"center", marginTop:4 },
   mysteryOverlay: { flex:1, backgroundColor:"rgba(0,0,0,0.82)", justifyContent:"center", alignItems:"center" },
   mysteryPanel:   { backgroundColor:"#160a22", borderRadius:24, borderWidth:2, borderColor:"#8e44ad", padding:28, width:"85%", maxWidth:440, alignItems:"center", gap:14, position:"relative" },
   mysteryBigTtl:  { color:"#8e44ad", fontSize:30, fontWeight:"900", textAlign:"center" },
@@ -1691,24 +1571,17 @@ const S = StyleSheet.create({
   targetBtn:      { flexDirection:"row", alignItems:"center", backgroundColor:"#1a1a1a", borderRadius:14, borderWidth:2, paddingVertical:14, paddingHorizontal:18, marginVertical:3 },
   targetName:     { flex:1, fontSize:18, fontWeight:"600" },
   targetPos:      { color:"#555", fontSize:14 },
-
   duelScroll:     { flexGrow:1, justifyContent:"flex-start", padding:24, paddingBottom:80, alignItems:"center", gap:14 },
-
-  // Close button
   closeBtn:    { position:"absolute", top:12, right:12, width:32, height:32, borderRadius:16, backgroundColor:"rgba(255,255,255,0.1)", alignItems:"center", justifyContent:"center", zIndex:10 },
   closeBtnTxt: { color:"#aaa", fontSize:16, fontWeight:"bold" },
-
-  // Toast
   toast:    { position:"absolute", bottom:24, right:100, backgroundColor:"#1a1a00", borderWidth:1.5, borderColor:"#f39c12", borderRadius:14, paddingVertical:10, paddingHorizontal:16, zIndex:998, maxWidth:260 },
   toastTxt: { color:"#f39c12", fontSize:13, fontWeight:"bold", lineHeight:18 },
-
   flashOverlay: { position:"absolute", top:0, left:0, right:0, bottom:0, zIndex:999 },
   flashBg:      { position:"absolute", top:0, left:0, right:0, bottom:0 },
   flashContent: { flex:1, justifyContent:"center", alignItems:"center" },
   flashTtl:     { color:"#fff", fontSize:72, fontWeight:"900", letterSpacing:2, textAlign:"center" },
   flashSubLbl:  { color:"rgba(255,255,255,0.85)", fontSize:22, marginTop:20 },
   flashSubTxt:  { color:"#fff", fontSize:28, fontWeight:"bold", textAlign:"center", paddingHorizontal:32 },
-
   hostHeader: { flexDirection:"row", justifyContent:"space-between", alignItems:"center", padding:18, backgroundColor:"#0a0a0a", borderBottomWidth:1, borderBottomColor:"#222" },
   hostTitle:  { color:"#00c781", fontSize:20, fontWeight:"bold" },
   timerTxt:   { color:"#fff", fontSize:18, fontWeight:"bold" },
@@ -1722,12 +1595,12 @@ const S = StyleSheet.create({
   lbDot:      { width:26, height:26, borderRadius:13, marginRight:16 },
   lbName:     { color:"#fff", fontSize:26, fontWeight:"500", flex:1 },
   lbPos:      { color:"#aaa", fontSize:24 },
-
   leaveBtn:    { position:"absolute", bottom:12, left:16, backgroundColor:"#2a0000", paddingVertical:12, paddingHorizontal:22, borderRadius:12 },
   leaveBtnTxt: { color:"#ff6b6b", fontSize:15, fontWeight:"bold" },
-
   overlay: { flex:1, backgroundColor:"rgba(0,0,0,0.92)", justifyContent:"center", alignItems:"center" },
   modal:   { backgroundColor:"#1a1a1a", borderRadius:22, padding:28, width:"90%", maxWidth:440, alignItems:"center", borderWidth:1, borderColor:"#2a2a2a", gap:12, position:"relative" },
   mTtl:    { color:"#fff", fontSize:24, fontWeight:"bold", textAlign:"center" },
   mDesc:   { color:"#bbb", fontSize:16, textAlign:"center", lineHeight:22 },
+  stunnedBanner:{ backgroundColor:"#5c3800", borderRadius:12, padding:14, marginBottom:8, borderWidth:1.5, borderColor:"#d68910" },
+  stunnedTxt:   { color:"#f39c12", fontSize:16, fontWeight:"bold", textAlign:"center" },
 });
