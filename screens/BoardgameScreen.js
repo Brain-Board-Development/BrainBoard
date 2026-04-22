@@ -614,15 +614,20 @@ export default function BoardGameScreen({ route, navigation }) {
     else setMBoxStep("apply");
   }, [mBoxRolling]);
 
-  const closeMBox = useCallback(() => {
+  const closeMBox = useCallback((stepAtClose) => {
     setMBoxOpen(false); setMBoxKey(null); setMBoxDef(null);
     const itemId = mBoxInventoryItemId.current;
     mBoxInventoryItemId.current = null;
-    if (itemId) {
+    // Only restore the item if the effect hasn't been revealed yet (still on "roll" step).
+    // Once the player sees the effect, the box is consumed — no fishing for a better roll.
+    if (itemId && stepAtClose === "roll") {
       setInventory(prev => {
         if (prev.find(i => i.id === itemId)) return prev;
         return [...prev, { type: "mystery_box", id: itemId }];
       });
+    } else if (itemId) {
+      // Effect was revealed — consume it regardless of what the player does
+      removeFromInventory(itemId);
     }
     const restore = savedPhaseRef.current;
     savedPhaseRef.current = null;
@@ -633,7 +638,7 @@ export default function BoardGameScreen({ route, navigation }) {
     } else {
       setPhaseSync("questions"); setDiceValue(null); setViewMode("questions");
     }
-  }, [setPhaseSync]);
+  }, [setPhaseSync, removeFromInventory]);
 
   const claimMBoxNoTarget = useCallback(async () => {
     if (!mBoxDef) return;
@@ -1473,7 +1478,8 @@ export default function BoardGameScreen({ route, navigation }) {
       <Modal visible={mBoxOpen} transparent animationType="fade">
         <View style={S.mysteryOverlay}>
           <View style={S.mysteryPanel}>
-            <CloseBtn onPress={closeMBox}/>
+            {/* X closes — restores item only if effect not yet revealed */}
+            <CloseBtn onPress={()=>closeMBox(mBoxStep)}/>
             <Text style={S.mysteryBigTtl}>🎁 Mystery Box!</Text>
             {mBoxStep==="roll" && (
               <>
@@ -1490,7 +1496,10 @@ export default function BoardGameScreen({ route, navigation }) {
                 <Text style={[S.mysteryTitle,{color:mBoxDef.color}]}>{mBoxDef.title}</Text>
                 <Text style={S.mysteryDesc}>{mBoxStep==="inventory"?"Added to your inventory!":mBoxDef.desc}</Text>
                 <TouchableOpacity style={[S.rollBtn,{backgroundColor:mBoxDef.color,marginTop:12}]} onPress={claimMBoxNoTarget}>
-                  <Text style={S.rollTxtBig}>{mBoxStep==="inventory"?"Save to Inventory":"Claim!"}</Text>
+                  <Text style={S.rollTxtBig}>{mBoxStep==="inventory"?"Save to Inventory":"Use It!"}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[S.rollBtn,{backgroundColor:"#444",marginTop:8}]} onPress={()=>closeMBox("decline")}>
+                  <Text style={[S.rollTxtBig,{color:"#bbb"}]}>Decline (lose box)</Text>
                 </TouchableOpacity>
               </View>
             )}
@@ -1509,7 +1518,11 @@ export default function BoardGameScreen({ route, navigation }) {
                     <Text style={S.targetPos}>Space {p.position||0}</Text>
                   </TouchableOpacity>
                 ))}
-                {otherPs.length===0 && <TouchableOpacity style={[S.rollBtn,{backgroundColor:"#555",marginTop:12}]} onPress={closeMBox}><Text style={S.rollTxtBig}>No players — Close</Text></TouchableOpacity>}
+                {otherPs.length===0
+                  // No targets available — restore the box (not the player's fault)
+                  ? <TouchableOpacity style={[S.rollBtn,{backgroundColor:"#555",marginTop:12}]} onPress={()=>closeMBox("roll")}><Text style={S.rollTxtBig}>No players — Close</Text></TouchableOpacity>
+                  : <TouchableOpacity style={[S.rollBtn,{backgroundColor:"#444",marginTop:10}]} onPress={()=>closeMBox("decline")}><Text style={[S.rollTxtBig,{color:"#bbb"}]}>Decline (lose box)</Text></TouchableOpacity>
+                }
               </>
             )}
           </View>
