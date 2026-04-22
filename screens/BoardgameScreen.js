@@ -684,13 +684,41 @@ export default function BoardGameScreen({ route, navigation }) {
     const tDeflect = tPlayer?.deflectorExpires > Date.now();
 
     if (tDeflect) {
-      setNotif(`Your ${mBoxDef?.title} was deflected back at you by ${target.name}! 🪞`);
-      setShowNotif(true);
-      const notifBack = {text:`You deflected ${playerName}'s ${mBoxDef?.title} back at them! 🪞`, id:Date.now()};
-      const upd = (sess.players||[]).map(p =>
+      // Clear defender's deflector and notify them
+      const notifBack = {text:`🪞 You deflected ${playerName}'s ${mBoxDef?.title} back at them!`, id:Date.now()};
+      const updDeflect = (sess.players||[]).map(p =>
         p.name===target.name ? {...p, deflectorExpires:0, notification:notifBack} : p
       );
-      updateDoc(doc(db,"gameSessions",sessionId), {players:upd}).catch(console.error);
+
+      // Actually apply the effect back to the ATTACKER (playerName)
+      if (mBoxKey === "stun") {
+        // Stun bounces back — write activeStuns for the attacker
+        await updateDoc(doc(db,"gameSessions",sessionId), {
+          players: updDeflect,
+          [`activeStuns.${playerName}`]: { by: `${target.name} (deflected)`, id: Date.now() },
+        }).catch(console.error);
+      } else if (mBoxKey === "pushback") {
+        // Pushback bounces back — push the attacker back 3 spaces
+        const myPlayer = (sess.players||[]).find(p => (playerUid&&p.uid===playerUid)||p.name===playerName);
+        const np = Math.max(0, (myPlayer?.position||0) - 3);
+        const updPB = updDeflect.map(p =>
+          (playerUid&&p.uid===playerUid)||p.name===playerName ? {...p, position:np} : p
+        );
+        await updateDoc(doc(db,"gameSessions",sessionId), {players:updPB}).catch(console.error);
+      } else if (mBoxKey === "badluck") {
+        // Bad luck bounces back — curse the attacker
+        const exp = Date.now() + 45000;
+        const updBL = updDeflect.map(p =>
+          (playerUid&&p.uid===playerUid)||p.name===playerName ? {...p, badLuckExpires:exp} : p
+        );
+        await updateDoc(doc(db,"gameSessions",sessionId), {players:updBL}).catch(console.error);
+      } else {
+        // All other effects (duel etc.) — just clear deflector, no bounce
+        updateDoc(doc(db,"gameSessions",sessionId), {players:updDeflect}).catch(console.error);
+      }
+
+      setNotif(`Your ${mBoxDef?.title} was deflected back at you by ${target.name}! 🪞`);
+      setShowNotif(true);
       closeMBox();
       if (willReturnToQ) setQIdx(i => i+1);
       return;
@@ -1043,12 +1071,20 @@ export default function BoardGameScreen({ route, navigation }) {
     for (let p=cur; step>0?p<=np:p>=np; p+=step) { setHighlightPos(p); scrollToPos(p,be); await new Promise(r=>setTimeout(r,280)); }
     setHighlightPos(np);
     try {
+      const finAt = Date.now();
       const upd = (sessionRef.current?.players||[]).map(p =>
         (playerUid&&p.uid===playerUid)||p.name===playerName ? {...p,position:np,color:playerColor} : p
       );
       await updateDoc(doc(db,"gameSessions",sessionId), {players:upd});
       clearTimeout(srSafetyTimer);
-      if (np>=be) { await updateDoc(doc(db,"gameSessions",sessionId),{status:"ended",winner:playerName}); return; }
+      if (np>=be) {
+        // Record finish time on the player entry so GameOver can show ms-accurate times
+        const updFin = upd.map(p =>
+          (playerUid&&p.uid===playerUid)||p.name===playerName ? {...p, finishedAt:finAt} : p
+        );
+        await updateDoc(doc(db,"gameSessions",sessionId),{status:"ended",winner:playerName,players:updFin});
+        return;
+      }
     } catch(e) { clearTimeout(srSafetyTimer); console.error(e); }
     setSrType(null); setSrValue(null); exitMoving();
   }, [playerName,playerColor,playerUid,sessionId,scrollToPos]);
@@ -1063,12 +1099,19 @@ export default function BoardGameScreen({ route, navigation }) {
     setHighlightPos(np);
     try {
       const ls = sessionRef.current;
+      const finAt = Date.now();
       const upd = (ls?.players||[]).map(p =>
         (playerUid&&p.uid===playerUid)||p.name===playerName ? {...p,position:np,color:playerColor} : p
       );
       await updateDoc(doc(db,"gameSessions",sessionId), {players:upd});
       clearTimeout(safetyTimer);
-      if (np>=be) { await updateDoc(doc(db,"gameSessions",sessionId),{status:"ended",winner:playerName}); return; }
+      if (np>=be) {
+        const updFin = upd.map(p =>
+          (playerUid&&p.uid===playerUid)||p.name===playerName ? {...p, finishedAt:finAt} : p
+        );
+        await updateDoc(doc(db,"gameSessions",sessionId),{status:"ended",winner:playerName,players:updFin});
+        return;
+      }
       const space = (() => { const b=ls?.board||[]; const d=b[np]; if(d?.type) return d; return (Array.isArray(b)&&b.find(s=>s?.index===np))||null; })();
       handleLanding(space, np, be, ls?.questions||[]);
     } catch(e) { clearTimeout(safetyTimer); console.error("movePlayer:",e); exitMoving(); }
@@ -1685,8 +1728,32 @@ export default function BoardGameScreen({ route, navigation }) {
 }
 
 function GameOverModal({ session, myPos, boardEnd, onExit }) {
-  const sorted = [...(session?.players||[])].sort((a,b) => (b.position||0)-(a.position||0));
+  const players = session?.players || [];
+  const gameStarted = session?.gameEndsAt ? session.gameEndsAt - ((session?.settings?.gameDuration||10)*60*1000) : null;
+
+  // Sort: highest position first; ties broken by earliest finishedAt
+  const sorted = [...players].sort((a,b) => {
+    const posDiff = (b.position||0) - (a.position||0);
+    if (posDiff !== 0) return posDiff;
+    // Both reached the end — earlier finish time wins
+    if (a.finishedAt && b.finishedAt) return a.finishedAt - b.finishedAt;
+    if (a.finishedAt) return -1;
+    if (b.finishedAt) return 1;
+    return 0;
+  });
   const w = sorted[0];
+
+  const formatFinish = (p) => {
+    if (!p.finishedAt || p.position < boardEnd) return null;
+    if (!gameStarted) return null;
+    const ms = p.finishedAt - gameStarted;
+    const mins = Math.floor(ms / 60000);
+    const secs = Math.floor((ms % 60000) / 1000);
+    const msec = ms % 1000;
+    if (mins > 0) return `${mins}m ${secs}.${String(msec).padStart(3,'0')}s`;
+    return `${secs}.${String(msec).padStart(3,'0')}s`;
+  };
+
   return (
     <Modal visible transparent animationType="fade">
       <View style={S.overlay}><View style={S.modal}>
@@ -1694,14 +1761,23 @@ function GameOverModal({ session, myPos, boardEnd, onExit }) {
         {w&&<Text style={[S.mDesc,{fontSize:20}]}>🏆 <Text style={{color:w.color||"#00c781",fontWeight:"bold"}}>{w.name}</Text> wins! Space {w.position}</Text>}
         {myPos>=0&&<Text style={[S.mDesc,{color:"#666"}]}>You reached space {myPos}/{boardEnd}</Text>}
         <View style={{width:"100%",marginVertical:12}}>
-          {sorted.slice(0,10).map((p,i)=>(
-            <View key={p.name||i} style={S.lbRow}>
-              <Text style={S.lbRank}>#{i+1}</Text>
-              <View style={[S.lbDot,{backgroundColor:p.color||"#888"}]}/>
-              <Text style={[S.lbName,{flex:1}]}>{p.name}</Text>
-              <Text style={S.lbPos}>{p.position||0}/{boardEnd}</Text>
-            </View>
-          ))}
+          {sorted.slice(0,10).map((p,i)=>{
+            const finishStr = formatFinish(p);
+            // Check if this player ties with the one above on position
+            const prevP = sorted[i-1];
+            const isTie = prevP && (p.position||0) === (p.position>=boardEnd ? boardEnd : (p.position||0)) && (prevP.position||0) === (p.position||0) && (p.position||0) >= boardEnd;
+            return (
+              <View key={p.name||i} style={S.lbRow}>
+                <Text style={S.lbRank}>#{i+1}</Text>
+                <View style={[S.lbDot,{backgroundColor:p.color||"#888"}]}/>
+                <View style={{flex:1}}>
+                  <Text style={S.lbName} numberOfLines={1}>{p.name}</Text>
+                  {finishStr && <Text style={{color:"#888",fontSize:12,marginTop:1}}>⏱ {finishStr}</Text>}
+                </View>
+                <Text style={S.lbPos}>{p.position||0}/{boardEnd}</Text>
+              </View>
+            );
+          })}
         </View>
         <TouchableOpacity style={[S.rollBtn,{backgroundColor:"#00c781"}]} onPress={onExit}><Text style={S.rollTxtBig}>Back to Menu</Text></TouchableOpacity>
       </View></View>
