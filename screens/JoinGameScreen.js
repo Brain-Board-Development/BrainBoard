@@ -135,32 +135,32 @@ export default function JoinGameScreen({ navigation }) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#111", alignItems: "center", justifyContent: "center", padding: 24 },
-  title: { fontSize: 38, fontWeight: "bold", color: "#00c781", marginBottom: 8 },
-  subtitle: { fontSize: 16, color: "#888", marginBottom: 40 },
+  title: { fontSize: 28, fontWeight: "bold", color: "#00c781", marginBottom: 8 },
+  subtitle: { fontSize: 15, color: "#888", marginBottom: 24 },
   input: {
-    width: "100%", maxWidth: 340, height: 72,
+    width: "100%", maxWidth: 340, height: 60,
     backgroundColor: "#1e1e1e", borderRadius: 16, color: "#fff",
-    fontSize: 32, marginBottom: 20,
+    fontSize: 26, marginBottom: 14,
     borderWidth: 2, borderColor: "#333",
     textAlign: "center",
-    paddingHorizontal: 20,
+    paddingHorizontal: 14,
   },
   btn: {
-    width: "100%", maxWidth: 340, height: 58, backgroundColor: "#00c781",
+    width: "100%", maxWidth: 340, height: 52, backgroundColor: "#00c781",
     borderRadius: 16, alignItems: "center", justifyContent: "center", marginBottom: 16,
   },
   btnDisabled: { backgroundColor: "#222", opacity: 0.5 },
-  btnText: { color: "#fff", fontSize: 20, fontWeight: "bold" },
+  btnText: { color: "#fff", fontSize: 17, fontWeight: "bold" },
   backLink: { marginTop: 8 },
   backLinkText: { color: "#555", fontSize: 15 },
 
   overlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.88)", justifyContent: "center", alignItems: "center" },
   card: {
-    backgroundColor: "#1e1e1e", borderRadius: 22, padding: 32,
+    backgroundColor: "#1e1e1e", borderRadius: 22, padding: 22,
     width: "85%", maxWidth: 380, alignItems: "center",
     borderWidth: 1, borderColor: "#333",
   },
-  cardTitle: { fontSize: 22, fontWeight: "bold", color: "#fff", marginBottom: 14, textAlign: "center" },
+  cardTitle: { fontSize: 18, fontWeight: "bold", color: "#fff", marginBottom: 14, textAlign: "center" },
   cardMsg: { fontSize: 16, color: "#ccc", textAlign: "center", lineHeight: 24, marginBottom: 28 },
   cardBtn: {
     backgroundColor: "#00c781", paddingVertical: 14, width: "100%",
