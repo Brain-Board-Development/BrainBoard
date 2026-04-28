@@ -35,6 +35,29 @@ const SPACE_POOL = [
 const calcBoardSize = (n) =>
   Math.min(150, Math.round(9.14 * Math.pow(Math.max(1, n - 1), 0.714) + 25));
 
+function Pawn({ color, size = 14 }) {
+  const c = color || "#888";
+  const s = size;
+  return (
+    <View style={{ width: s, height: s * 1.25, alignItems: "center", justifyContent: "flex-end" }}>
+      <View style={{ width: s * 0.44, height: s * 0.44, borderRadius: s * 0.22,
+          backgroundColor: c, borderWidth: 1.5, borderColor: "rgba(0,0,0,0.55)" }}>
+        <View style={{ position:"absolute", top: s*0.06, left: s*0.09,
+            width: s*0.13, height: s*0.11, borderRadius: s*0.06,
+            backgroundColor: "rgba(255,255,255,0.35)" }} />
+      </View>
+      <View style={{ width: s * 0.14, height: s * 0.1, backgroundColor: c,
+          borderLeftWidth: 1.5, borderRightWidth: 1.5, borderColor: "rgba(0,0,0,0.55)" }} />
+      <View style={{ width: s * 0.62, height: s * 0.22,
+          borderTopLeftRadius: s * 0.04, borderTopRightRadius: s * 0.04,
+          borderBottomLeftRadius: s * 0.12, borderBottomRightRadius: s * 0.12,
+          backgroundColor: c, borderWidth: 1.5, borderColor: "rgba(0,0,0,0.55)" }} />
+      <View style={{ width: s * 0.78, height: s * 0.14, borderRadius: s * 0.04,
+          backgroundColor: c, borderWidth: 1.5, borderColor: "rgba(0,0,0,0.55)" }} />
+    </View>
+  );
+}
+
 function buildSnakeRows(total) {
   const rows = [];
   for (let r = 0; r <= total; r += BOARD_COLS) {
@@ -97,7 +120,7 @@ function BoardPreview({ players, boardSize }) {
                   {here.length > 0 && (
                     <View style={brd.tokens}>
                       {here.slice(0, 4).map((p, i) => (
-                        <View key={i} style={[brd.token, { backgroundColor: p.color || "#888" }]} />
+                        <Pawn key={i} color={p.color || "#888"} size={sz * 0.55}/>
                       ))}
                     </View>
                   )}
@@ -432,7 +455,8 @@ export default function Lobby({ route, navigation }) {
           <View style={S.playerGrid}>
             {players.map((item, index) => (
               <View key={item.uid || index} style={S.playerCard}>
-                <View style={[S.playerDot, { backgroundColor: item.color || "#888" }]} />
+                <Pawn color={item.color || "#888"} size={18}/>
+                <View style={{width:8}}/>
                 <Text style={S.playerName} numberOfLines={1}>{item.name || "Player"}</Text>
                 {isHost ? (
                   <TouchableOpacity style={S.kickBtn} onPress={() => setKickTarget(item)}>

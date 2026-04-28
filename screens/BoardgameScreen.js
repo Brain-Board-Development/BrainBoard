@@ -12,14 +12,12 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
   Animated, Dimensions, ActivityIndicator, SafeAreaView, Modal, Image,
+  useWindowDimensions,
 } from "react-native";
 import { db, auth } from "../firebaseConfig";
 import { doc, onSnapshot, updateDoc, runTransaction, getDoc, deleteField } from "firebase/firestore";
 
-const { width: SCREEN_W } = Dimensions.get("window");
 const BOARD_COLS = 10;
-const BASE_TILE  = Math.min(96, Math.max(44, Math.floor((SCREEN_W - 32) / BOARD_COLS)));
-const HOST_TILE  = Math.min(96, Math.max(48, Math.floor((SCREEN_W * 0.65 - 32) / BOARD_COLS)));
 
 // ── Module-level shuffle helpers — defined here so onSnapshot closure is NEVER stale ──
 function fyShuffleArr(arr) {
@@ -101,8 +99,402 @@ function buildSnakeRows(be) {
   return rows.reverse();
 }
 
+// ── Pawn piece — rendered as pure View shapes (no SVG dependency) ───────────
+function Pawn({ color, size = 20 }) {
+  const c = color || "#888";
+  const s = size;
+  return (
+    <View style={{ width: s, height: s * 1.25, alignItems: "center", justifyContent: "flex-end" }}>
+      {/* Head orb */}
+      <View style={{ width: s * 0.44, height: s * 0.44, borderRadius: s * 0.22,
+          backgroundColor: c, borderWidth: 1.5, borderColor: "rgba(0,0,0,0.55)" }}>
+        <View style={{ position:"absolute", top: s*0.06, left: s*0.09,
+            width: s*0.13, height: s*0.11, borderRadius: s*0.06,
+            backgroundColor: "rgba(255,255,255,0.35)" }} />
+      </View>
+      {/* Neck */}
+      <View style={{ width: s * 0.14, height: s * 0.1, backgroundColor: c,
+          borderLeftWidth: 1.5, borderRightWidth: 1.5, borderColor: "rgba(0,0,0,0.55)" }} />
+      {/* Skirt */}
+      <View style={{ width: s * 0.62, height: s * 0.22,
+          borderTopLeftRadius: s * 0.04, borderTopRightRadius: s * 0.04,
+          borderBottomLeftRadius: s * 0.12, borderBottomRightRadius: s * 0.12,
+          backgroundColor: c, borderWidth: 1.5, borderColor: "rgba(0,0,0,0.55)" }} />
+      {/* Base */}
+      <View style={{ width: s * 0.78, height: s * 0.14, borderRadius: s * 0.04,
+          backgroundColor: c, borderWidth: 1.5, borderColor: "rgba(0,0,0,0.55)" }} />
+    </View>
+  );
+}
+
+// ── Snake head — bird's eye view, facing LEFT ────────────────────────────────
+// Coordinate system: left = snout, right = neck connection
+// Head is a wide flat oval. Eyes are on top (dorsal view). Tongue exits left.
+// ── Snake head — bird's-eye, fills the entire tile, no neck ─────────────────
+function SnakeHead({ size = 40 }) {
+  const s = size;
+  return (
+    <View style={{ width: s, height: s, overflow: "visible" }}>
+      {/* ── Head oval — fills tile wall to wall ── */}
+      <View style={{
+        position: "absolute",
+        top: s * 0.04, left: s * 0.02,
+        width: s * 0.96, height: s * 0.92,
+        // Pointed snout on the left, blunt back on the right
+        borderTopLeftRadius:    s * 0.42,
+        borderBottomLeftRadius: s * 0.42,
+        borderTopRightRadius:   s * 0.18,
+        borderBottomRightRadius:s * 0.18,
+        backgroundColor: "#2e8b2e",
+        borderWidth: 2, borderColor: "#1a5c1a",
+      }}>
+        {/* Dorsal ridge / midline */}
+        <View style={{ position:"absolute", top: s*0.14, left: s*0.18,
+            right: s*0.18, height: s*0.64,
+            borderRadius: s*0.04,
+            backgroundColor: "#3cb83c", opacity: 0.45 }} />
+
+        {/* Scale rows — overlapping semicircle shapes */}
+        {[{t:0.1,l:0.22},{t:0.1,l:0.46},{t:0.1,l:0.68},
+          {t:0.36,l:0.28},{t:0.36,l:0.52},{t:0.36,l:0.72},
+          {t:0.62,l:0.22},{t:0.62,l:0.46},{t:0.62,l:0.68},
+        ].map((sc,i)=>(
+          <View key={i} style={{ position:"absolute", top:s*sc.t, left:s*sc.l,
+              width:s*0.18, height:s*0.18, borderRadius:s*0.09,
+              backgroundColor:"#45d445", opacity:0.28 }} />
+        ))}
+
+        {/* ── Eyes — top and bottom of head (bird's eye) ── */}
+        {/* Top eye */}
+        <View style={{ position:"absolute", top: s*0.04, left: s*0.22,
+            width: s*0.22, height: s*0.22, borderRadius: s*0.11,
+            backgroundColor: "#f5c518", borderWidth: 1.5, borderColor: "#1a0a00" }}>
+          {/* Vertical slit pupil */}
+          <View style={{ position:"absolute", top: s*0.04, left: s*0.08,
+              width: s*0.06, height: s*0.14, borderRadius: s*0.03,
+              backgroundColor: "#050505" }} />
+          {/* Highlight */}
+          <View style={{ position:"absolute", top: 2, right: 2,
+              width: s*0.06, height: s*0.06, borderRadius: s*0.03,
+              backgroundColor:"rgba(255,255,255,0.7)" }} />
+        </View>
+        {/* Bottom eye */}
+        <View style={{ position:"absolute", bottom: s*0.04, left: s*0.22,
+            width: s*0.22, height: s*0.22, borderRadius: s*0.11,
+            backgroundColor: "#f5c518", borderWidth: 1.5, borderColor: "#1a0a00" }}>
+          <View style={{ position:"absolute", top: s*0.04, left: s*0.08,
+              width: s*0.06, height: s*0.14, borderRadius: s*0.03,
+              backgroundColor: "#050505" }} />
+          <View style={{ position:"absolute", top: 2, right: 2,
+              width: s*0.06, height: s*0.06, borderRadius: s*0.03,
+              backgroundColor:"rgba(255,255,255,0.7)" }} />
+        </View>
+
+        {/* Nostril pits — near snout */}
+        <View style={{ position:"absolute", top: s*0.2, left: s*0.03,
+            width: s*0.07, height: s*0.07, borderRadius: s*0.035,
+            backgroundColor: "#1a4a1a" }} />
+        <View style={{ position:"absolute", bottom: s*0.2, left: s*0.03,
+            width: s*0.07, height: s*0.07, borderRadius: s*0.035,
+            backgroundColor: "#1a4a1a" }} />
+      </View>
+
+      {/* ── Forked tongue — exits snout (left), horizontal stem then two prongs ── */}
+      {/* Stem */}
+      <View style={{ position:"absolute", top: s*0.44, left: -s*0.2,
+          width: s*0.24, height: 4,
+          backgroundColor: "#c0392b", borderRadius: 2 }} />
+      {/* Upper fork */}
+      <View style={{ position:"absolute",
+          top: s*0.28, left: -s*0.28,
+          width: 3.5, height: s*0.22,
+          backgroundColor: "#c0392b", borderRadius: 2,
+          transform:[{rotate:"-28deg"}] }} />
+      {/* Lower fork */}
+      <View style={{ position:"absolute",
+          top: s*0.5, left: -s*0.28,
+          width: 3.5, height: s*0.22,
+          backgroundColor: "#c0392b", borderRadius: 2,
+          transform:[{rotate:"28deg"}] }} />
+    </View>
+  );
+}
+
+// ── Lava tile — top-down molten rock with glowing fissures ─────────────────
+function LavaTile({ sz }) {
+  // Use SVG-style layering: dark rock slabs, glowing orange cracks between them,
+  // bright yellow lava pools at crack nodes
+  const rock = "#1c0800";
+  const darkCrust = "#2e0d02";
+  const glowOrange = "#ff5500";
+  const glowYellow = "#ffbb00";
+  return (
+    <View style={{ width:sz, height:sz, borderRadius:7, overflow:"hidden", backgroundColor:rock }}>
+
+      {/* ── Rock slab chunks — irregular dark polygons ── */}
+      {[
+        {t:0,    l:0,    w:0.44, h:0.42, br:[6,2,8,4],  c:"#280c01"},
+        {t:0,    l:0.48, w:0.52, h:0.36, br:[2,6,4,8],  c:"#2e0e02"},
+        {t:0.45, l:0,    w:0.38, h:0.55, br:[4,8,6,2],  c:"#240b01"},
+        {t:0.4,  l:0.42, w:0.58, h:0.6,  br:[8,4,2,6],  c:"#2a0d02"},
+        {t:0.2,  l:0.2,  w:0.28, h:0.26, br:[4,4,4,4],  c:"#321002"},
+      ].map((r,i)=>(
+        <View key={i} style={{ position:"absolute",
+            top:sz*r.t, left:sz*r.l, width:sz*r.w, height:sz*r.h,
+            borderTopLeftRadius:r.br[0], borderTopRightRadius:r.br[1],
+            borderBottomRightRadius:r.br[2], borderBottomLeftRadius:r.br[3],
+            backgroundColor:r.c }} />
+      ))}
+
+      {/* ── Lava fissures — glowing orange lines between slabs ── */}
+      {/* Horizontal main crack */}
+      <View style={{ position:"absolute", top:sz*0.41, left:0, right:0,
+          height:sz*0.07, backgroundColor:glowOrange }} />
+      {/* Vertical main crack */}
+      <View style={{ position:"absolute", left:sz*0.43, top:0, bottom:0,
+          width:sz*0.07, backgroundColor:glowOrange }} />
+      {/* Diagonal sub-crack top-right */}
+      <View style={{ position:"absolute", top:sz*0.04, left:sz*0.62,
+          width:sz*0.06, height:sz*0.38,
+          backgroundColor:"#e04a00",
+          transform:[{rotate:"20deg"}] }} />
+      {/* Diagonal sub-crack bottom-left */}
+      <View style={{ position:"absolute", top:sz*0.55, left:sz*0.08,
+          width:sz*0.06, height:sz*0.36,
+          backgroundColor:"#e04a00",
+          transform:[{rotate:"-15deg"}] }} />
+
+      {/* ── Glow bleed — soft halo around cracks ── */}
+      <View style={{ position:"absolute", top:sz*0.35, left:0, right:0,
+          height:sz*0.19, backgroundColor:"rgba(255,80,0,0.18)" }} />
+      <View style={{ position:"absolute", left:sz*0.37, top:0, bottom:0,
+          width:sz*0.19, backgroundColor:"rgba(255,80,0,0.18)" }} />
+
+      {/* ── Lava pools at crack intersections ── */}
+      {/* Centre node — brightest */}
+      <View style={{ position:"absolute", top:sz*0.36, left:sz*0.38,
+          width:sz*0.18, height:sz*0.18, borderRadius:sz*0.09,
+          backgroundColor:glowYellow }} />
+      {/* Top-centre node */}
+      <View style={{ position:"absolute", top:sz*0.0, left:sz*0.39,
+          width:sz*0.13, height:sz*0.13, borderRadius:sz*0.065,
+          backgroundColor:glowYellow, opacity:0.9 }} />
+      {/* Left-centre node */}
+      <View style={{ position:"absolute", top:sz*0.38, left:sz*0.0,
+          width:sz*0.13, height:sz*0.13, borderRadius:sz*0.065,
+          backgroundColor:glowYellow, opacity:0.85 }} />
+      {/* Right-centre node */}
+      <View style={{ position:"absolute", top:sz*0.38, right:0,
+          width:sz*0.13, height:sz*0.13, borderRadius:sz*0.065,
+          backgroundColor:glowYellow, opacity:0.85 }} />
+      {/* Bottom-centre node */}
+      <View style={{ position:"absolute", bottom:0, left:sz*0.39,
+          width:sz*0.13, height:sz*0.13, borderRadius:sz*0.065,
+          backgroundColor:glowYellow, opacity:0.9 }} />
+      {/* Small secondary bubbles */}
+      {[{t:0.14,l:0.62},{t:0.68,l:0.16},{t:0.72,l:0.64},{t:0.08,l:0.15}].map((b,i)=>(
+        <View key={i} style={{ position:"absolute", top:sz*b.t, left:sz*b.l,
+            width:sz*0.07, height:sz*0.07, borderRadius:sz*0.035,
+            backgroundColor:"#ff8800", opacity:0.8 }} />
+      ))}
+    </View>
+  );
+}
+
+// ── Trap tile — stone floor with a spiked pit trap ─────────────────────────
+function TrapTile({ sz }) {
+  return (
+    <View style={{ width:sz, height:sz, borderRadius:7, overflow:"hidden",
+        backgroundColor:"#2a2520" }}>
+
+      {/* ── Stone floor — four cobblestone blocks with mortar lines ── */}
+      {[
+        {t:0,    l:0,    w:0.47, h:0.47, c:"#3d3530"},
+        {t:0,    l:0.53, w:0.47, h:0.47, c:"#362f28"},
+        {t:0.53, l:0,    w:0.47, h:0.47, c:"#383028"},
+        {t:0.53, l:0.53, w:0.47, h:0.47, c:"#3a3228"},
+      ].map((r,i)=>(
+        <View key={i} style={{ position:"absolute", top:sz*r.t, left:sz*r.l,
+            width:sz*r.w, height:sz*r.h, backgroundColor:r.c,
+            borderWidth:0.5, borderColor:"#1a1510" }} />
+      ))}
+      {/* Mortar cross */}
+      <View style={{ position:"absolute", top:sz*0.47, left:0, right:0,
+          height:sz*0.06, backgroundColor:"#1a1510" }} />
+      <View style={{ position:"absolute", left:sz*0.47, top:0, bottom:0,
+          width:sz*0.06, backgroundColor:"#1a1510" }} />
+
+      {/* Stone surface texture — small pits */}
+      {[{t:0.08,l:0.1},{t:0.16,l:0.34},{t:0.08,l:0.64},{t:0.28,l:0.72},
+        {t:0.62,l:0.08},{t:0.72,l:0.3},{t:0.65,l:0.66},{t:0.78,l:0.8},
+      ].map((p,i)=>(
+        <View key={i} style={{ position:"absolute", top:sz*p.t, left:sz*p.l,
+            width:sz*0.06, height:sz*0.04, borderRadius:sz*0.02,
+            backgroundColor:"rgba(0,0,0,0.25)" }} />
+      ))}
+
+      {/* ── Pit — dark rectangular hole in floor centre ── */}
+      <View style={{ position:"absolute", top:sz*0.19, left:sz*0.18,
+          width:sz*0.64, height:sz*0.62,
+          borderRadius:sz*0.04,
+          backgroundColor:"#0a0806",
+          borderWidth:2, borderColor:"#111" }}>
+        {/* Pit depth shadow */}
+        <View style={{ position:"absolute", top:2, left:2, right:2, bottom:2,
+            borderRadius:sz*0.03, backgroundColor:"#050303" }} />
+        {/* Pit inner edge highlight (near side lit) */}
+        <View style={{ position:"absolute", top:0, left:0, right:0,
+            height:sz*0.05, borderTopLeftRadius:sz*0.04, borderTopRightRadius:sz*0.04,
+            backgroundColor:"rgba(255,255,255,0.06)" }} />
+      </View>
+
+      {/* ── Spikes — sharp triangles pointing up inside pit ── */}
+      {[0.26, 0.40, 0.54, 0.68].map((l,i)=>(
+        <View key={i} style={{ position:"absolute", bottom:sz*0.21, left:sz*l,
+            width:0, height:0,
+            borderLeftWidth:sz*0.05, borderRightWidth:sz*0.05, borderBottomWidth:sz*0.22,
+            borderLeftColor:"transparent", borderRightColor:"transparent",
+            borderBottomColor: i%2===0 ? "#9e9e9e" : "#bdbdbd" }} />
+      ))}
+
+      {/* ── Worn cracks extending from pit corners ── */}
+      {[{t:0.14,l:0.12,rot:"-40deg",h:0.1},{t:0.16,l:0.76,rot:"40deg",h:0.1},
+        {t:0.78,l:0.1, rot:"35deg", h:0.1},{t:0.78,l:0.78,rot:"-35deg",h:0.1},
+      ].map((c,i)=>(
+        <View key={i} style={{ position:"absolute", top:sz*c.t, left:sz*c.l,
+            width:2, height:sz*c.h, backgroundColor:"#0a0806",
+            transform:[{rotate:c.rot}] }} />
+      ))}
+    </View>
+  );
+}
+
+// ── Cannon tile — top-down view of a cannon pointing LEFT ─────────────────
+function CannonTile({ sz }) {
+  return (
+    <View style={{ width:sz, height:sz, borderRadius:7, overflow:"hidden",
+        backgroundColor:"#0e1620" }}>
+
+      {/* ── Stone/brick floor ── */}
+      {[{t:0,l:0,w:0.5,h:0.5,c:"#16202c"},{t:0,l:0.5,w:0.5,h:0.5,c:"#131d28"},
+        {t:0.5,l:0,w:0.5,h:0.5,c:"#14202a"},{t:0.5,l:0.5,w:0.5,h:0.5,c:"#16222e"},
+      ].map((r,i)=>(
+        <View key={i} style={{ position:"absolute", top:sz*r.t, left:sz*r.l,
+            width:sz*r.w, height:sz*r.h, backgroundColor:r.c,
+            borderWidth:0.5, borderColor:"#0a1218" }} />
+      ))}
+
+      {/* ── Wooden carriage platform ── */}
+      <View style={{ position:"absolute", top:sz*0.28, left:sz*0.16,
+          width:sz*0.74, height:sz*0.44,
+          borderRadius:sz*0.04,
+          backgroundColor:"#4a3520",
+          borderWidth:1.5, borderColor:"#2c1e10" }}>
+        {/* Wood grain lines */}
+        {[0.2,0.4,0.6,0.8].map((t,i)=>(
+          <View key={i} style={{ position:"absolute", top:`${t*100}%`, left:0, right:0,
+              height:0.5, backgroundColor:"rgba(0,0,0,0.2)" }} />
+        ))}
+        {/* Corner bolts */}
+        {[[0.06,0.1],[0.88,0.1],[0.06,0.74],[0.88,0.74]].map(([x,y],i)=>(
+          <View key={i} style={{ position:"absolute",
+              top:sz*y*0.44, left:sz*x*0.74,
+              width:sz*0.07, height:sz*0.07, borderRadius:sz*0.035,
+              backgroundColor:"#6e5030", borderWidth:1, borderColor:"#2c1e10" }} />
+        ))}
+      </View>
+
+      {/* ── Barrel — viewed top-down, thick cylinder pointing left ── */}
+      {/* Drop shadow */}
+      <View style={{ position:"absolute", top:sz*0.37, left:sz*0.04,
+          width:sz*0.66, height:sz*0.28,
+          borderRadius:sz*0.14,
+          backgroundColor:"rgba(0,0,0,0.45)" }} />
+      {/* Barrel body */}
+      <View style={{ position:"absolute", top:sz*0.34, left:sz*0.06,
+          width:sz*0.64, height:sz*0.26,
+          borderRadius:sz*0.13,
+          backgroundColor:"#546e7a",
+          borderWidth:1.5, borderColor:"#263238" }}>
+        {/* Top specular highlight */}
+        <View style={{ position:"absolute", top:2, left:sz*0.08, right:sz*0.14,
+            height:sz*0.07, borderRadius:sz*0.04,
+            backgroundColor:"rgba(255,255,255,0.15)" }} />
+        {/* Reinforcement rings */}
+        {[0.12, 0.34, 0.58, 0.78].map((l,i)=>(
+          <View key={i} style={{ position:"absolute", top:0, left:sz*l*0.64,
+              width:sz*0.05, height:"100%",
+              backgroundColor: i===0||i===3 ? "#455a64" : "#4a6572",
+              borderLeftWidth:0.5, borderRightWidth:0.5,
+              borderColor:"#263238" }} />
+        ))}
+      </View>
+      {/* Muzzle — wider darker opening at LEFT end */}
+      <View style={{ position:"absolute", top:sz*0.36, left:sz*0.04,
+          width:sz*0.12, height:sz*0.22,
+          borderRadius:sz*0.11,
+          backgroundColor:"#37474f",
+          borderWidth:1.5, borderColor:"#1c2d36" }}>
+        {/* Bore hole */}
+        <View style={{ position:"absolute", top:sz*0.03, left:sz*0.02,
+            width:sz*0.08, height:sz*0.15,
+            borderRadius:sz*0.075, backgroundColor:"#0a1018" }} />
+      </View>
+      {/* Breech cap — thicker right end */}
+      <View style={{ position:"absolute", top:sz*0.31, left:sz*0.62,
+          width:sz*0.13, height:sz*0.32,
+          borderRadius:sz*0.07,
+          backgroundColor:"#546e7a",
+          borderWidth:1.5, borderColor:"#263238" }}>
+        {/* Touch-hole */}
+        <View style={{ position:"absolute", top:sz*0.03, left:sz*0.04,
+            width:sz*0.05, height:sz*0.05, borderRadius:sz*0.025,
+            backgroundColor:"#1c2d36" }} />
+      </View>
+
+      {/* ── Wheels — top-down circles, lower half of tile ── */}
+      {[{side:"left",l:sz*0.14},{side:"right",l:sz*0.56}].map(({side,l},wi)=>(
+        <View key={wi} style={{ position:"absolute", bottom:sz*0.04, left:l,
+            width:sz*0.3, height:sz*0.3, borderRadius:sz*0.15,
+            backgroundColor:"#5d4037", borderWidth:2, borderColor:"#3e2723" }}>
+          {/* Hub */}
+          <View style={{ position:"absolute", top:sz*0.08, left:sz*0.08,
+              width:sz*0.14, height:sz*0.14, borderRadius:sz*0.07,
+              backgroundColor:"#8d6e63", borderWidth:1, borderColor:"#3e2723" }} />
+          {/* Spokes */}
+          {[0,45,90,135].map(deg=>(
+            <View key={deg} style={{ position:"absolute", top:"50%", left:"50%",
+                width:sz*0.26, height:1.5, backgroundColor:"#4e342e",
+                marginLeft:-sz*0.13, marginTop:-0.75,
+                transform:[{rotate:`${deg}deg`}] }} />
+          ))}
+        </View>
+      ))}
+
+      {/* ── Cannonball resting beside carriage ── */}
+      <View style={{ position:"absolute", top:sz*0.1, left:sz*0.74,
+          width:sz*0.18, height:sz*0.18, borderRadius:sz*0.09,
+          backgroundColor:"#424242",
+          borderWidth:1, borderColor:"#212121" }}>
+        <View style={{ position:"absolute", top:2, left:3,
+            width:sz*0.06, height:sz*0.06, borderRadius:sz*0.03,
+            backgroundColor:"rgba(255,255,255,0.2)" }} />
+      </View>
+
+      {/* ── Smoke puffs at muzzle ── */}
+      {[{t:0.3, l:-0.05,r:0.1,o:0.4},{t:0.2,l:-0.04,r:0.08,o:0.25},
+        {t:0.44,l:-0.06,r:0.07,o:0.3}].map((b,i)=>(
+        <View key={i} style={{ position:"absolute", top:sz*b.t, left:sz*b.l,
+            width:sz*b.r*2, height:sz*b.r*2, borderRadius:sz*b.r,
+            backgroundColor:"#b0bec5", opacity:b.o }} />
+      ))}
+    </View>
+  );
+}
+
 function SnakeBoard({ board, players, myPosition, highlightPos, boardEnd, tileSize }) {
-  const sz = tileSize || BASE_TILE;
+  const { width: winW } = useWindowDimensions();
+  const sz = tileSize || Math.min(96, Math.max(44, Math.floor((winW - 32) / BOARD_COLS)));
   const rows = buildSnakeRows(boardEnd);
   const playersAt = (i) => players.filter(p => (p.position||0) === i);
   const spaceType = (i) => {
@@ -113,7 +505,15 @@ function SnakeBoard({ board, players, myPosition, highlightPos, boardEnd, tileSi
   const tileStyle = (i) => {
     const cfg = SPACE_CFG[spaceType(i)] || SPACE_CFG.normal;
     const isMe = i === myPosition, isHL = i === highlightPos;
-    return { backgroundColor:cfg.bg, borderColor:isHL||isMe?"#fff":cfg.border, borderWidth:isHL||isMe?3:1.5, transform:[{scale:isHL?1.12:1}] };
+    const artTypes = ["lava","trap","cannon"];
+    const isArt = artTypes.includes(spaceType(i)) || i === boardEnd;
+    return {
+      backgroundColor: isArt ? "transparent" : cfg.bg,
+      borderColor: isHL||isMe ? "#fff" : cfg.border,
+      borderWidth: isHL||isMe ? 3 : 1.5,
+      transform: [{scale: isHL ? 1.12 : 1}],
+      overflow: "visible",
+    };
   };
   return (
     <View style={bS.board}>
@@ -123,17 +523,17 @@ function SnakeBoard({ board, players, myPosition, highlightPos, boardEnd, tileSi
             const here = playersAt(i), type = spaceType(i), cfg = SPACE_CFG[type]||SPACE_CFG.normal;
             return (
               <View key={i} style={[bS.tile, {width:sz,height:sz}, tileStyle(i)]}>
-                {i===boardEnd ? <Text style={{fontSize:sz*0.46}}>🐍</Text>
+                {i===boardEnd ? <SnakeHead size={sz}/>
                  : i===0     ? <Text style={{fontSize:sz*0.38}}>🏁</Text>
-                 : type!=="normal" ? (
-                    type==="mystery"
-                      ? <View style={[bS.mysteryBadge,{width:sz*0.52,height:sz*0.52}]}><Text style={[bS.mysteryBadgeTxt,{fontSize:sz*0.34}]}>?</Text></View>
-                      : <Text style={{fontSize:sz*0.36,fontWeight:"bold",color:cfg.border}}>{cfg.label}</Text>
-                  )
-                 : <Text style={{fontSize:sz*0.26,color:"#4a6a4a",fontWeight:"bold"}}>{i}</Text>}
+                 : type==="lava"    ? <LavaTile sz={sz}/>
+                 : type==="trap"    ? <TrapTile sz={sz}/>
+                 : type==="cannon"  ? <CannonTile sz={sz}/>
+                 : type==="mystery"
+                    ? <View style={[bS.mysteryBadge,{width:sz*0.52,height:sz*0.52}]}><Text style={[bS.mysteryBadgeTxt,{fontSize:sz*0.34}]}>?</Text></View>
+                    : <Text style={{fontSize:sz*0.26,color:"#4a6a4a",fontWeight:"bold"}}>{i}</Text>}
                 <View style={bS.tokenRow}>
                   {here.slice(0,3).map((p,pi) => (
-                    <View key={pi} style={[bS.token, {backgroundColor:p.color||"#888",width:sz*0.28,height:sz*0.28,borderRadius:sz*0.14}]}/>
+                    <Pawn key={pi} color={p.color||"#888"} size={sz*0.3}/>
                   ))}
                 </View>
               </View>
@@ -187,6 +587,13 @@ export default function BoardGameScreen({ route, navigation }) {
     // so we render null and navigate in a useEffect below
   }
   const { sessionId, playerName, playerColor="#00c781", playerUid, isHost, hostIsPlaying, gameId } = route?.params || {};
+
+  // Dynamic tile sizes — recalculate when window resizes (tab minimize/restore)
+  const { width: winW, height: winH } = useWindowDimensions();
+  const BASE_TILE = Math.min(96, Math.max(44, Math.floor((winW - 32) / BOARD_COLS)));
+  const HOST_TILE = Math.min(96, Math.max(48, Math.floor((winW * 0.65 - 32) / BOARD_COLS)));
+  // Responsive scale: 1.0 on a comfortable 480×800 window, scales down linearly for smaller
+  const rs = Math.min(1, Math.max(0.55, winH / 800, winW / 480));
 
   const [session,  setSession]  = useState(null);
   const [loading,  setLoading]  = useState(true);
@@ -1228,7 +1635,7 @@ export default function BoardGameScreen({ route, navigation }) {
             {sorted.slice(0,10).map((p,i)=>(
               <View key={p.name} style={S.lbRow}>
                 <Text style={S.lbRank}>#{i+1}</Text>
-                <View style={[S.lbDot,{backgroundColor:p.color||"#888"}]}/>
+                <Pawn color={p.color||"#888"} size={26}/>
                 <Text style={S.lbName} numberOfLines={1}>{p.name}</Text>
                 <Text style={S.lbPos}>{p.position||0}/{boardEnd}</Text>
               </View>
@@ -1246,21 +1653,27 @@ export default function BoardGameScreen({ route, navigation }) {
   return (
     <SafeAreaView style={[S.container, isStunned&&S.containerStunned]}>
 
-      <View style={[S.hud, isStunned&&S.hudStunned]}>
-        <View style={S.hudCell}><Text style={S.hudLbl}>STREAK</Text><Text style={[S.hudVal,streak>0&&{color:"#f39c12"}]}>{streak>0?`🔥${streak}`:streak}</Text></View>
-        <View style={S.hudCell}><Text style={S.hudLbl}>LUCK</Text><Text style={[S.hudVal,badLuck&&{color:"#e74c3c"}]}>{dispLuck}%</Text></View>
-        <View style={S.hudCell}><Text style={S.hudLbl}>SPACE</Text><Text style={[S.hudVal,{color:playerColor}]}>{myPos}/{boardEnd}</Text></View>
-        {immunityLeft>0&&<View style={S.hudCell}><Text style={S.hudLbl}>SHIELD</Text><Text style={[S.hudVal,{color:"#2ecc71"}]}>🛡️{immunityLeft} · {immunitySecsLeft}s</Text></View>}
-        {deflectorActive&&<View style={S.hudCell}><Text style={S.hudLbl}>REFLECT</Text><Text style={[S.hudVal,{color:"#00bcd4"}]}>🪞{deflectorSecsLeft}s</Text></View>}
-        {doubleRollsLeft>0&&<View style={S.hudCell}><Text style={S.hudLbl}>2×ROLL</Text><Text style={[S.hudVal,{color:"#9b59b6"}]}>×{doubleRollsLeft}</Text></View>}
-        {gameLeft!=null&&<View style={S.hudCell}><Text style={S.hudLbl}>TIME</Text><Text style={[S.hudVal,gameLeft<=30&&{color:"#e74c3c"}]}>{formatTime(gameLeft)}</Text></View>}
-        <TouchableOpacity style={[S.qBtn, phase==="questions"&&!showMap&&S.qBtnActive]} onPress={forceQuestions}>
-          <Text style={S.qBtnTxt}>Questions</Text>
+      <View style={[S.hud, isStunned&&S.hudStunned, {paddingVertical:Math.max(6,12*rs),paddingHorizontal:Math.max(6,10*rs),gap:Math.max(4,6*rs)}]}>
+        {[["STREAK",streak>0?`🔥${streak}`:String(streak),streak>0?"#f39c12":null],
+          ["LUCK",`${dispLuck}%`,badLuck?"#e74c3c":null],
+          ["SPACE",`${myPos}/${boardEnd}`,playerColor],
+        ].map(([lbl,val,col])=>(
+          <View key={lbl} style={{alignItems:"center",paddingHorizontal:Math.max(5,9*rs),minWidth:Math.max(44,52*rs)}}>
+            <Text style={{color:"#555",fontSize:Math.max(8,10*rs),letterSpacing:1,fontWeight:"700"}}>{lbl}</Text>
+            <Text style={{color:col||"#fff",fontSize:Math.max(16,22*rs),fontWeight:"bold",marginTop:2}}>{val}</Text>
+          </View>
+        ))}
+        {immunityLeft>0&&<View style={{alignItems:"center",paddingHorizontal:Math.max(4,7*rs)}}><Text style={{color:"#555",fontSize:Math.max(8,10*rs),fontWeight:"700"}}>SHIELD</Text><Text style={{color:"#2ecc71",fontSize:Math.max(12,18*rs),fontWeight:"bold",marginTop:2}}>🛡️{immunityLeft}·{immunitySecsLeft}s</Text></View>}
+        {deflectorActive&&<View style={{alignItems:"center",paddingHorizontal:Math.max(4,7*rs)}}><Text style={{color:"#555",fontSize:Math.max(8,10*rs),fontWeight:"700"}}>REFLECT</Text><Text style={{color:"#00bcd4",fontSize:Math.max(12,18*rs),fontWeight:"bold",marginTop:2}}>🪞{deflectorSecsLeft}s</Text></View>}
+        {doubleRollsLeft>0&&<View style={{alignItems:"center",paddingHorizontal:Math.max(4,7*rs)}}><Text style={{color:"#555",fontSize:Math.max(8,10*rs),fontWeight:"700"}}>2×ROLL</Text><Text style={{color:"#9b59b6",fontSize:Math.max(12,18*rs),fontWeight:"bold",marginTop:2}}>×{doubleRollsLeft}</Text></View>}
+        {gameLeft!=null&&<View style={{alignItems:"center",paddingHorizontal:Math.max(4,7*rs)}}><Text style={{color:"#555",fontSize:Math.max(8,10*rs),fontWeight:"700"}}>TIME</Text><Text style={{color:gameLeft<=30?"#e74c3c":"#fff",fontSize:Math.max(12,18*rs),fontWeight:"bold",marginTop:2}}>{formatTime(gameLeft)}</Text></View>}
+        <TouchableOpacity style={[S.qBtn,phase==="questions"&&!showMap&&S.qBtnActive,{paddingHorizontal:Math.max(8,13*rs),paddingVertical:Math.max(6,10*rs)}]} onPress={forceQuestions}>
+          <Text style={[S.qBtnTxt,{fontSize:Math.max(9,11*rs)}]}>Questions</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={[S.mapBtn, showMap&&S.mapBtnOn]} onPress={()=>setViewMode(v=>v==="map"?"questions":"map")}>
-          <Text style={S.mapBtnTxt}>Map</Text>
+        <TouchableOpacity style={[S.mapBtn,showMap&&S.mapBtnOn,{paddingHorizontal:Math.max(8,13*rs),paddingVertical:Math.max(6,10*rs)}]} onPress={()=>setViewMode(v=>v==="map"?"questions":"map")}>
+          <Text style={[S.mapBtnTxt,{fontSize:Math.max(10,13*rs)}]}>Map</Text>
         </TouchableOpacity>
-        {hostIsPlaying&&<TouchableOpacity style={S.hudEndBtn} onPress={async()=>{await updateDoc(doc(db,"gameSessions",sessionId),{status:"ended"}).catch(console.error);exitGame();}}><Text style={S.hudEndBtnTxt}>End</Text></TouchableOpacity>}
+        {hostIsPlaying&&<TouchableOpacity style={[S.hudEndBtn,{paddingHorizontal:Math.max(8,12*rs),paddingVertical:Math.max(6,10*rs)}]} onPress={async()=>{await updateDoc(doc(db,"gameSessions",sessionId),{status:"ended"}).catch(console.error);exitGame();}}><Text style={[S.hudEndBtnTxt,{fontSize:Math.max(10,13*rs)}]}>End</Text></TouchableOpacity>}
       </View>
 
       {!!(curQ?.timeLimit||session?.settings?.timePerQuestion) && phase==="questions" && !showMap && (
@@ -1338,36 +1751,45 @@ export default function BoardGameScreen({ route, navigation }) {
         )}
 
         {phase==="rolling" && (
-          <View style={S.diceBox}>
-            <Text style={S.diceTtl}>Roll the Dice!</Text>
-            {doubleRollsLeft>0&&<Text style={[S.luckTxt,{color:"#9b59b6"}]}>🎯 Double Roll active!</Text>}
-            {effLuck>0&&doubleRollsLeft===0&&<Text style={S.luckTxt}>🍀 Luck {dispLuck}%</Text>}
-            <Animated.View style={{transform:[{translateX:diceAnim}]}}><DiceFace value={diceValue} style={S.diceFace}/></Animated.View>
-            {diceValue ? <Text style={S.diceRes}>Rolled {diceValue}!</Text>
-            : <TouchableOpacity style={S.rollBtn} onPress={handleRoll}><Text style={S.rollTxtBig}>Roll!</Text></TouchableOpacity>}
-          </View>
+          <ScrollView contentContainerStyle={{flexGrow:1,alignItems:"center",justifyContent:"center",
+              gap:Math.max(10,16*rs),padding:Math.max(14,22*rs),
+              paddingRight:Math.max(70,100*rs),backgroundColor:"#0d0d0d"}}>
+            <Text style={{color:"#fff",fontSize:Math.max(18,24*rs),fontWeight:"bold",textAlign:"center"}}>Roll the Dice!</Text>
+            {doubleRollsLeft>0&&<Text style={[S.luckTxt,{color:"#9b59b6",fontSize:Math.max(12,15*rs)}]}>🎯 Double Roll active!</Text>}
+            {effLuck>0&&doubleRollsLeft===0&&<Text style={[S.luckTxt,{fontSize:Math.max(12,15*rs)}]}>🍀 Luck {dispLuck}%</Text>}
+            <Animated.View style={{transform:[{translateX:diceAnim}]}}><DiceFace value={diceValue} style={{fontSize:Math.max(56,88*rs),color:"#fff"}}/></Animated.View>
+            {diceValue ? <Text style={{color:"#00c781",fontSize:Math.max(16,22*rs),fontWeight:"bold"}}>Rolled {diceValue}!</Text>
+            : <TouchableOpacity style={[S.rollBtn,{paddingVertical:Math.max(12,18*rs),paddingHorizontal:Math.max(30,52*rs)}]} onPress={handleRoll}><Text style={[S.rollTxtBig,{fontSize:Math.max(16,22*rs)}]}>Roll!</Text></TouchableOpacity>}
+          </ScrollView>
         )}
 
         {phase==="space_roll" && srType && (
-          <View style={S.diceBox}>
-            <Text style={[S.diceTtl,{color:srType==="lava"?"#e74c3c":"#3498db",fontSize:28}]}>{srType==="lava"?"🌋 Lava!":"💥 Cannon!"}</Text>
-            <Text style={S.luckTxt}>{srType==="lava"?"Roll to see how far you're pushed BACK":"Roll to see how far you're LAUNCHED forward"}</Text>
-            <Animated.View style={{transform:[{translateX:srAnim}]}}><DiceFace value={srValue} style={S.diceFace}/></Animated.View>
-            {srValue ? <Text style={[S.diceRes,{color:srType==="lava"?"#e74c3c":"#3498db"}]}>{srType==="lava"?`Back ${srValue} spaces!`:`Forward ${srValue} spaces!`}</Text>
-            : <TouchableOpacity style={[S.rollBtn,{backgroundColor:srType==="lava"?"#c0392b":"#2980b9"}]} onPress={handleSpaceRoll} disabled={srRolling}><Text style={S.rollTxtBig}>{srRolling?"Rolling…":"Roll!"}</Text></TouchableOpacity>}
-          </View>
+          <ScrollView contentContainerStyle={{flexGrow:1,alignItems:"center",justifyContent:"center",
+              gap:Math.max(10,16*rs),padding:Math.max(14,22*rs),
+              paddingRight:Math.max(70,100*rs),backgroundColor:"#0d0d0d"}}>
+            <Text style={{color:srType==="lava"?"#e74c3c":"#3498db",fontSize:Math.max(18,26*rs),fontWeight:"bold",textAlign:"center"}}>{srType==="lava"?"🌋 Lava!":"💥 Cannon!"}</Text>
+            <Text style={[S.luckTxt,{fontSize:Math.max(12,14*rs)}]}>{srType==="lava"?"Roll to see how far you're pushed BACK":"Roll to see how far you're LAUNCHED forward"}</Text>
+            <Animated.View style={{transform:[{translateX:srAnim}]}}><DiceFace value={srValue} style={{fontSize:Math.max(56,88*rs),color:"#fff"}}/></Animated.View>
+            {srValue ? <Text style={{color:srType==="lava"?"#e74c3c":"#3498db",fontSize:Math.max(16,22*rs),fontWeight:"bold"}}>{srType==="lava"?`Back ${srValue} spaces!`:`Forward ${srValue} spaces!`}</Text>
+            : <TouchableOpacity style={[S.rollBtn,{backgroundColor:srType==="lava"?"#c0392b":"#2980b9",paddingVertical:Math.max(12,18*rs),paddingHorizontal:Math.max(28,48*rs)}]} onPress={handleSpaceRoll} disabled={srRolling}><Text style={[S.rollTxtBig,{fontSize:Math.max(16,22*rs)}]}>{srRolling?"Rolling…":"Roll!"}</Text></TouchableOpacity>}
+          </ScrollView>
         )}
 
         {phase==="moving" && <View style={S.movingBox}><ActivityIndicator color="#00c781" size="large"/><Text style={S.movingTxt}>Moving…</Text></View>}
 
         {phase==="rolled" && (
-          <View style={S.rolledBox}>
-            <Text style={S.rolledEmoji}>✅</Text>
-            <Text style={S.rolledTtl}>Move done!</Text>
-            <TouchableOpacity style={[S.rollBtn,{backgroundColor:"#00c781",marginTop:8}]} onPress={()=>{ setPhaseSync("questions"); setQIdx(i=>i+1); }}>
-              <Text style={S.rollTxtBig}>Back to Questions</Text>
+          <ScrollView contentContainerStyle={{flexGrow:1,alignItems:"center",justifyContent:"center",
+              padding:Math.max(16,24*rs),paddingRight:Math.max(70,100*rs),gap:Math.max(10,16*rs),
+              backgroundColor:"#0d0d0d"}}>
+            <Text style={{fontSize:Math.max(36,52*rs)}}>✅</Text>
+            <Text style={{color:"#fff",fontSize:Math.max(18,22*rs),fontWeight:"bold"}}>Move done!</Text>
+            <TouchableOpacity style={[S.rollBtn,{backgroundColor:"#00c781",
+                paddingVertical:Math.max(12,18*rs),paddingHorizontal:Math.max(28,48*rs),
+                borderRadius:Math.max(12,16*rs)}]}
+              onPress={()=>{ setPhaseSync("questions"); setQIdx(i=>i+1); }}>
+              <Text style={[S.rollTxtBig,{fontSize:Math.max(16,22*rs)}]}>Back to Questions</Text>
             </TouchableOpacity>
-          </View>
+          </ScrollView>
         )}
 
         {phase==="duel" && activeDuel && (
@@ -1499,7 +1921,7 @@ export default function BoardGameScreen({ route, navigation }) {
                   <Text style={S.rollTxtBig}>{mBoxStep==="inventory"?"Save to Inventory":"Use It!"}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={[S.rollBtn,{backgroundColor:"#444",marginTop:8}]} onPress={()=>closeMBox("decline")}>
-                  <Text style={[S.rollTxtBig,{color:"#bbb"}]}>Decline (lose box)</Text>
+                  <Text style={[S.rollTxtBig,{color:"#bbb"}]}>Decline</Text>
                 </TouchableOpacity>
               </View>
             )}
@@ -1513,7 +1935,8 @@ export default function BoardGameScreen({ route, navigation }) {
                 <Text style={[S.luckTxt,{marginTop:14,fontSize:16}]}>Choose a player:</Text>
                 {otherPs.map(p=>(
                   <TouchableOpacity key={p.name} style={[S.targetBtn,{borderColor:p.color||"#888"}]} onPress={()=>claimMBoxTarget(p)}>
-                    <View style={{width:16,height:16,borderRadius:8,backgroundColor:p.color||"#888",marginRight:10}}/>
+                    <Pawn color={p.color||"#888"} size={22}/>
+                    <View style={{width:8}}/>
                     <Text style={[S.targetName,{color:p.color||"#fff"}]}>{p.name}</Text>
                     <Text style={S.targetPos}>Space {p.position||0}</Text>
                   </TouchableOpacity>
@@ -1521,7 +1944,7 @@ export default function BoardGameScreen({ route, navigation }) {
                 {otherPs.length===0
                   // No targets available — restore the box (not the player's fault)
                   ? <TouchableOpacity style={[S.rollBtn,{backgroundColor:"#555",marginTop:12}]} onPress={()=>closeMBox("roll")}><Text style={S.rollTxtBig}>No players — Close</Text></TouchableOpacity>
-                  : <TouchableOpacity style={[S.rollBtn,{backgroundColor:"#444",marginTop:10}]} onPress={()=>closeMBox("decline")}><Text style={[S.rollTxtBig,{color:"#bbb"}]}>Decline (lose box)</Text></TouchableOpacity>
+                  : <TouchableOpacity style={[S.rollBtn,{backgroundColor:"#444",marginTop:10}]} onPress={()=>closeMBox("decline")}><Text style={[S.rollTxtBig,{color:"#bbb"}]}>Decline</Text></TouchableOpacity>
                 }
               </>
             )}
@@ -1782,7 +2205,8 @@ function GameOverModal({ session, myPos, boardEnd, onExit }) {
             return (
               <View key={p.name||i} style={S.lbRow}>
                 <Text style={S.lbRank}>#{i+1}</Text>
-                <View style={[S.lbDot,{backgroundColor:p.color||"#888"}]}/>
+                <Pawn color={p.color||"#888"} size={22}/>
+                <View style={{width:8}}/>
                 <View style={{flex:1}}>
                   <Text style={S.lbName} numberOfLines={1}>{p.name}</Text>
                   {finishStr && <Text style={{color:"#888",fontSize:12,marginTop:1}}>⏱ {finishStr}</Text>}
@@ -1802,7 +2226,7 @@ const S = StyleSheet.create({
   container:        { flex:1, backgroundColor:"#111" },
   containerStunned: { backgroundColor:"#2e200a" },
   center:           { flex:1, backgroundColor:"#111", justifyContent:"center", alignItems:"center" },
-  hud:        { flexDirection:"row", alignItems:"center", backgroundColor:"#0a0a0a", borderBottomWidth:2, borderBottomColor:"#222", paddingVertical:22, paddingHorizontal:12, flexWrap:"wrap", gap:6 },
+  hud:        { flexDirection:"row", alignItems:"center", backgroundColor:"#0a0a0a", borderBottomWidth:2, borderBottomColor:"#222", paddingVertical:8, paddingHorizontal:8, flexWrap:"wrap", gap:4 },
   hudStunned: { backgroundColor:"#3d2806" },
   hudCell:    { alignItems:"center", paddingHorizontal:14, minWidth:72 },
   hudLbl:     { color:"#555", fontSize:13, letterSpacing:1.2, fontWeight:"700" },
@@ -1818,7 +2242,7 @@ const S = StyleSheet.create({
   timerTrack: { width:"100%", height:7, backgroundColor:"#1a1a1a" },
   timerFill:  { height:7, backgroundColor:"#00c781", alignSelf:"flex-start" },
   main: { flex:1 },
-  qScroll:    { flexGrow:1, justifyContent:"center", padding:22, paddingRight:100, paddingBottom:80 },
+  qScroll:    { flexGrow:1, justifyContent:"center", padding:16, paddingRight:96, paddingBottom:60 },
   qCard:      { gap:16 },
   rollBar:    { flexDirection:"row", alignItems:"center", justifyContent:"center", gap:10, marginBottom:14 },
   rollDot:    { width:16, height:16, borderRadius:8, backgroundColor:"#2a2a2a", borderWidth:2, borderColor:"#444" },
@@ -1829,10 +2253,10 @@ const S = StyleSheet.create({
   zoomOverlay:{ flex:1, backgroundColor:"rgba(0,0,0,0.95)", justifyContent:"center", alignItems:"center" },
   zoomImg:    { width:"100%", height:"80%", borderRadius:8 },
   zoomClose:  { color:"#666", fontSize:14, marginTop:16 },
-  qTxt:       { color:"#fff", fontSize:28, fontWeight:"700", lineHeight:38, textAlign:"center" },
+  qTxt:       { color:"#fff", fontSize:22, fontWeight:"700", lineHeight:30, textAlign:"center" },
   aGrid:      { gap:12 },
-  aBtn:       { borderRadius:14, padding:22, borderWidth:2.5, alignItems:"center" },
-  aTxt:       { color:"#fff", fontSize:20, fontWeight:"600" },
+  aBtn:       { borderRadius:12, padding:14, borderWidth:2.5, alignItems:"center" },
+  aTxt:       { color:"#fff", fontSize:17, fontWeight:"600" },
   waitBox:    { alignItems:"center", paddingVertical:80, gap:14 },
   waitTxt:    { color:"#555", fontSize:16 },
   legend:     { flexDirection:"row", flexWrap:"wrap", justifyContent:"center", gap:10, paddingVertical:10 },
@@ -1844,18 +2268,18 @@ const S = StyleSheet.create({
   luckTxt:    { color:"#888", fontSize:15, textAlign:"center" },
   diceFace:   { fontSize:96, color:"#fff" },
   diceRes:    { color:"#00c781", fontSize:24, fontWeight:"bold" },
-  rollBtn:    { backgroundColor:"#00c781", paddingVertical:20, paddingHorizontal:60, borderRadius:18 },
-  rollTxtBig: { color:"#000", fontSize:24, fontWeight:"bold" },
+  rollBtn:    { backgroundColor:"#00c781", paddingVertical:16, paddingHorizontal:44, borderRadius:16 },
+  rollTxtBig: { color:"#000", fontSize:20, fontWeight:"bold" },
   movingBox:  { flex:1, alignItems:"center", justifyContent:"center", gap:16, backgroundColor:"#0d0d0d" },
   movingTxt:  { color:"#aaa", fontSize:18 },
   rolledBox:  { flex:1, alignItems:"center", justifyContent:"center", gap:16, backgroundColor:"#0d0d0d" },
   rolledEmoji:{ fontSize:64 },
   rolledTtl:  { color:"#fff", fontSize:26, fontWeight:"bold" },
   hotbar:     { position:"absolute", right:0, top:"35%", flexDirection:"column", alignItems:"center", gap:6, paddingVertical:12, paddingHorizontal:6, backgroundColor:"rgba(0,0,0,0.85)", borderTopLeftRadius:16, borderBottomLeftRadius:16 },
-  hotbarSlot: { width:80, height:80, borderRadius:12, backgroundColor:"#1a1a1a", borderWidth:2.5, borderColor:"#333", alignItems:"center", justifyContent:"center", gap:3 },
+  hotbarSlot: { width:64, height:64, borderRadius:10, backgroundColor:"#1a1a1a", borderWidth:2, borderColor:"#333", alignItems:"center", justifyContent:"center", gap:2 },
   hotbarSlotFull: { backgroundColor:"#1e1a00" },
-  hotbarEmoji:{ fontSize:28 },
-  hotbarLabel:{ color:"#fff", fontSize:9, fontWeight:"700", textAlign:"center", paddingHorizontal:2 },
+  hotbarEmoji:{ fontSize:22 },
+  hotbarLabel:{ color:"#fff", fontSize:8, fontWeight:"700", textAlign:"center", paddingHorizontal:2 },
   hotbarEmpty:{ color:"#333", fontSize:22 },
   hotbarHint: { color:"#444", fontSize:8, fontWeight:"700", textAlign:"center", marginTop:4 },
   mysteryOverlay: { flex:1, backgroundColor:"rgba(0,0,0,0.82)", justifyContent:"center", alignItems:"center" },
