@@ -1,55 +1,37 @@
 /**
- * Dashboard.js - FIXED SQUARE CARDS + DYNAMIC DOWNWARD 3-DOTS MENU
- * - Square cards consistent across ALL tabs
- * - 3-dots menu positioned dynamically right below the clicked icon
- * - No background dimming when menu is open
- * - Three dots placed right below the placeholder picture
+ * Dashboard.js — mobile-responsive
+ * Portrait iPhone: bottom tab bar replaces sidebar, 2-column card grid
+ * Landscape / desktop: original sidebar layout
  */
 
 import React, { useState, useEffect } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  TextInput,
-  FlatList,
-  Modal,
-  Image,
-  ScrollView,
-  Dimensions,
-  Switch,
+  View, Text, StyleSheet, TouchableOpacity, TextInput,
+  FlatList, Modal, Image, ScrollView, Switch,
+  useWindowDimensions, SafeAreaView, Platform,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { db, auth } from '../firebaseConfig';
 import {
-  collection,
-  query,
-  where,
-  getDocs,
-  doc,
-  getDoc,
-  deleteDoc,
-  updateDoc,
+  collection, query, where, getDocs,
+  doc, getDoc, deleteDoc, updateDoc,
 } from 'firebase/firestore';
 import { signOut } from 'firebase/auth';
 
-// Reusable Confirmation Modal
 const ConfirmationModal = ({ isOpen, title, message, onConfirm, onCancel, confirmText = 'Confirm', cancelText = 'Cancel' }) => {
   if (!isOpen) return null;
-
   return (
     <Modal visible={isOpen} transparent animationType="fade">
-      <View style={styles.modalOverlay}>
-        <View style={styles.confirmModal}>
-          <Text style={styles.confirmModalTitle}>{title}</Text>
-          <Text style={styles.confirmModalText}>{message}</Text>
-          <View style={styles.confirmModalButtons}>
-            <TouchableOpacity style={styles.confirmModalCancel} onPress={onCancel}>
-              <Text style={styles.confirmModalCancelText}>{cancelText}</Text>
+      <View style={S.modalOverlay}>
+        <View style={S.confirmModal}>
+          <Text style={S.confirmTitle}>{title}</Text>
+          <Text style={S.confirmText}>{message}</Text>
+          <View style={S.confirmBtns}>
+            <TouchableOpacity style={S.confirmCancel} onPress={onCancel}>
+              <Text style={S.confirmCancelTxt}>{cancelText}</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.confirmModalConfirm} onPress={onConfirm}>
-              <Text style={styles.confirmModalConfirmText}>{confirmText}</Text>
+            <TouchableOpacity style={S.confirmConfirm} onPress={onConfirm}>
+              <Text style={S.confirmConfirmTxt}>{confirmText}</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -59,82 +41,64 @@ const ConfirmationModal = ({ isOpen, title, message, onConfirm, onCancel, confir
 };
 
 export default function Dashboard({ navigation, route }) {
-  const [hoveredButton, setHoveredButton] = useState(null);
-  const [myGames, setMyGames] = useState([]);
-  const [publicGames, setPublicGames] = useState([]);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [userData, setUserData] = useState(null);
-  const [deletingIds, setDeletingIds] = useState(new Set());
-  const [currentTab, setCurrentTab] = useState('home');
-  const [filter, setFilter] = useState('all');
-  const [openedMenuId, setOpenedMenuId] = useState(null);
-  const [menuPosition, setMenuPosition] = useState(null); // {pageX, pageY}
+  const { width: winW, height: winH } = useWindowDimensions();
+  const isMobile = winW < 700;
+  // Responsive scale
+  const rs = Math.min(1, winW / 700);
 
-  const [titleModal, setTitleModal] = useState({ isOpen: false, currentTitle: '', onSave: () => {} });
-  const [confirmModal, setConfirmModal] = useState({
-    isOpen: false,
-    title: '',
-    message: '',
-    onConfirm: () => {},
-    onCancel: () => {},
-    confirmText: 'Confirm',
-    cancelText: 'Cancel',
-  });
+  const [myGames,       setMyGames]      = useState([]);
+  const [publicGames,   setPublicGames]  = useState([]);
+  const [searchQuery,   setSearchQuery]  = useState('');
+  const [userData,      setUserData]     = useState(null);
+  const [deletingIds,   setDeletingIds]  = useState(new Set());
+  const [currentTab,    setCurrentTab]   = useState('home');
+  const [filter,        setFilter]       = useState('all');
+  const [openedMenuId,  setOpenedMenuId] = useState(null);
+  const [menuPosition,  setMenuPosition] = useState(null);
 
+  const [titleModal,   setTitleModal]   = useState({ isOpen: false, currentTitle: '', onSave: () => {} });
+  const [confirmModal, setConfirmModal] = useState({ isOpen: false, title: '', message: '', onConfirm: () => {}, onCancel: () => {}, confirmText: 'Confirm', cancelText: 'Cancel' });
   const [previewModal, setPreviewModal] = useState({ isOpen: false, game: null });
   const [showAnswersInPreview, setShowAnswersInPreview] = useState(false);
 
   const cardRefs = React.useRef({});
 
+  // Dynamic card size
+  const sidebarW = isMobile ? 0 : 260;
+  const cols     = isMobile ? 2 : 4;
+  const gap      = 12;
+  const hPad     = isMobile ? 12 : 30;
+  const cardSize = Math.min(
+    280,
+    Math.floor((winW - sidebarW - hPad * 2 - gap * (cols + 1)) / cols)
+  );
+
   useEffect(() => {
     const fetchData = async () => {
       const userToken = await AsyncStorage.getItem('userToken');
-      if (!userToken) {
-        navigation.replace('Home');
-        return;
-      }
+      if (!userToken) { navigation.replace('Home'); return; }
 
       const userDoc = await getDoc(doc(db, 'users', userToken));
       if (userDoc.exists()) setUserData(userDoc.data());
 
       const myQ = query(collection(db, 'games'), where('creatorId', '==', userToken));
-      const mySnapshot = await getDocs(myQ);
-      const fetchedMy = mySnapshot.docs.map(d => ({
-        id: d.id,
-        ...d.data(),
-        isPublished: d.data().isPublished || false,
-      }));
-      setMyGames(fetchedMy);
+      const mySnap = await getDocs(myQ);
+      setMyGames(mySnap.docs.map(d => ({ id: d.id, ...d.data(), isPublished: d.data().isPublished || false })));
 
-      const publicQ = query(collection(db, 'games'), where('isPublished', '==', true));
-      const publicSnapshot = await getDocs(publicQ);
-      const publicRaw = publicSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      const pubQ = query(collection(db, 'games'), where('isPublished', '==', true));
+      const pubSnap = await getDocs(pubQ);
+      const pubRaw = pubSnap.docs.map(d => ({ id: d.id, ...d.data() }));
 
-      const creatorIds = Array.from(new Set(publicRaw.map(g => g.creatorId).filter(Boolean)));
+      const creatorIds = Array.from(new Set(pubRaw.map(g => g.creatorId).filter(Boolean)));
       const usersMap = {};
-
-      if (creatorIds.length > 0) {
+      if (creatorIds.length) {
         try {
-          const userSnaps = await Promise.all(creatorIds.map(id => getDoc(doc(db, 'users', id))));
-          userSnaps.forEach(s => {
-            if (s.exists()) {
-              const u = s.data();
-              usersMap[s.id] = u.username || u.displayName || u.email || 'Unknown';
-            }
-          });
-        } catch (err) {
-          console.warn('Failed to fetch creators:', err);
-        }
+          const snaps = await Promise.all(creatorIds.map(id => getDoc(doc(db, 'users', id))));
+          snaps.forEach(s => { if (s.exists()) { const u = s.data(); usersMap[s.id] = u.username || u.displayName || u.email || 'Unknown'; } });
+        } catch {}
       }
-
-      const annotatedPublic = publicRaw.map(g => ({
-        ...g,
-        creatorName: usersMap[g.creatorId] || 'Unknown',
-      }));
-
-      setPublicGames(annotatedPublic);
+      setPublicGames(pubRaw.map(g => ({ ...g, creatorName: usersMap[g.creatorId] || 'Unknown' })));
     };
-
     fetchData();
   }, [navigation]);
 
@@ -145,177 +109,106 @@ export default function Dashboard({ navigation, route }) {
     }
   }, [route.params, navigation]);
 
-  const totalQuestions = myGames.reduce((acc, g) => acc + (g.numQuestions || 0), 0);
-  const recentGames = myGames.slice(0, 8);
+  const totalQuestions = myGames.reduce((a, g) => a + (g.numQuestions || 0), 0);
+  const recentGames    = myGames.slice(0, 8);
 
   const handleCreateGame = () => {
     setTitleModal({
-      isOpen: true,
-      currentTitle: '',
+      isOpen: true, currentTitle: '',
       onSave: (title) => {
         navigation.navigate('CreateGameMenu', { initialTitle: title });
-        setTitleModal(prev => ({ ...prev, isOpen: false }));
+        setTitleModal(p => ({ ...p, isOpen: false }));
       },
     });
   };
 
   const handleLogout = () => {
     setConfirmModal({
-      isOpen: true,
-      title: 'Log out?',
-      message: 'Are you sure you want to log out of Brain Board?',
-      onConfirm: async () => {
-        await signOut(auth);
-        await AsyncStorage.removeItem('userToken');
-        navigation.reset({ index: 0, routes: [{ name: 'Home' }] });
-      },
-      onCancel: () => setConfirmModal(prev => ({ ...prev, isOpen: false })),
+      isOpen: true, title: 'Log out?', message: 'Are you sure you want to log out?',
+      onConfirm: async () => { await signOut(auth); await AsyncStorage.removeItem('userToken'); navigation.reset({ index: 0, routes: [{ name: 'Home' }] }); },
+      onCancel: () => setConfirmModal(p => ({ ...p, isOpen: false })),
       confirmText: 'Log out',
     });
   };
 
   const confirmDelete = (gameId, gameTitle) => {
     setConfirmModal({
-      isOpen: true,
-      title: 'Delete Game?',
-      message: `Are you sure you want to delete "${gameTitle}"? This cannot be undone.`,
+      isOpen: true, title: 'Delete Game?', message: `Delete "${gameTitle}"? This cannot be undone.`,
       onConfirm: async () => {
-        if (deletingIds.has(gameId)) return;
-        setDeletingIds(prev => new Set([...prev, gameId]));
-
-        try {
-          const gameDocRef = doc(db, 'games', gameId);
-          await deleteDoc(gameDocRef);
-          setMyGames(prev => prev.filter(g => g.id !== gameId));
-        } catch (error) {
-          console.error('Delete failed:', error);
-        } finally {
-          setDeletingIds(prev => {
-            const s = new Set(prev);
-            s.delete(gameId);
-            return s;
-          });
-          setConfirmModal(prev => ({ ...prev, isOpen: false }));
-        }
+        setDeletingIds(p => new Set([...p, gameId]));
+        try { await deleteDoc(doc(db, 'games', gameId)); setMyGames(p => p.filter(g => g.id !== gameId)); }
+        catch (e) { console.error(e); }
+        finally { setDeletingIds(p => { const s = new Set(p); s.delete(gameId); return s; }); setConfirmModal(p => ({ ...p, isOpen: false })); }
       },
-      onCancel: () => setConfirmModal(prev => ({ ...prev, isOpen: false })),
+      onCancel: () => setConfirmModal(p => ({ ...p, isOpen: false })),
       confirmText: 'Delete',
     });
   };
 
-  const confirmPublishToggle = (gameId, gameTitle, currentPublished) => {
+  const confirmPublishToggle = (gameId, gameTitle, current) => {
     setConfirmModal({
-      isOpen: true,
-      title: currentPublished ? 'Unpublish Game?' : 'Publish Game?',
-      message: currentPublished
-        ? `"${gameTitle}" will no longer be public.`
-        : `"${gameTitle}" will be visible in Discover.`,
+      isOpen: true, title: current ? 'Unpublish?' : 'Publish?',
+      message: current ? `"${gameTitle}" will no longer be public.` : `"${gameTitle}" will be visible in Discover.`,
       onConfirm: async () => {
-        try {
-          await updateDoc(doc(db, 'games', gameId), { isPublished: !currentPublished });
-          setMyGames(prev => prev.map(g => g.id === gameId ? { ...g, isPublished: !currentPublished } : g));
-        } catch (error) {
-          console.error('Publish toggle failed:', error);
-        } finally {
-          setConfirmModal(prev => ({ ...prev, isOpen: false }));
-        }
+        try { await updateDoc(doc(db, 'games', gameId), { isPublished: !current }); setMyGames(p => p.map(g => g.id === gameId ? { ...g, isPublished: !current } : g)); }
+        catch (e) { console.error(e); }
+        finally { setConfirmModal(p => ({ ...p, isOpen: false })); }
       },
-      onCancel: () => setConfirmModal(prev => ({ ...prev, isOpen: false })),
-      confirmText: currentPublished ? 'Unpublish' : 'Publish',
+      onCancel: () => setConfirmModal(p => ({ ...p, isOpen: false })),
+      confirmText: current ? 'Unpublish' : 'Publish',
     });
   };
 
-  const openPreview = (game) => {
-    setPreviewModal({ isOpen: true, game });
-    setShowAnswersInPreview(false);
-  };
+  const openPreview = (game) => { setPreviewModal({ isOpen: true, game }); setShowAnswersInPreview(false); };
 
   const getDisplayedGames = () => {
     let list = currentTab === 'library' ? myGames : publicGames;
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
-      list = list.filter(g =>
-        g.title.toLowerCase().includes(q) ||
-        (g.tags && g.tags.some(t => t.toLowerCase().includes(q))) ||
-        (g.creatorName && g.creatorName.toLowerCase().includes(q))
-      );
+      list = list.filter(g => g.title?.toLowerCase().includes(q) || (g.tags || []).some(t => t.toLowerCase().includes(q)) || g.creatorName?.toLowerCase().includes(q));
     }
-    if (currentTab === 'library' && filter !== 'all') {
-      list = list.filter(g => filter === 'published' ? g.isPublished : !g.isPublished);
-    }
+    if (currentTab === 'library' && filter !== 'all') list = list.filter(g => filter === 'published' ? g.isPublished : !g.isPublished);
     return list;
   };
 
   const handleThreeDotsPress = (gameId) => {
     const ref = cardRefs.current[gameId];
     if (!ref) return;
-
-    if (openedMenuId === gameId) {
-      setOpenedMenuId(null);
-      setMenuPosition(null);
-      return;
-    }
-
+    if (openedMenuId === gameId) { setOpenedMenuId(null); setMenuPosition(null); return; }
     ref.measureInWindow((x, y, width, height) => {
-      // Position menu directly below the three dots (right-aligned)
-      setMenuPosition({
-        pageX: x + width - 160,          // menu width 140 + margin
-        pageY: y + (cardSize * 0.6) + 20, // cover height (~60%) + some gap
-      });
+      setMenuPosition({ pageX: Math.min(x + width - 150, winW - 160), pageY: y + cardSize * 0.6 + 20 });
       setOpenedMenuId(gameId);
     });
   };
 
   const renderGameCard = ({ item }) => {
     const isMine = currentTab === 'library';
-    const isDiscover = currentTab === 'discover';
-    const isHome = currentTab === 'home';
     const isMenuOpen = openedMenuId === item.id;
-
+    const cs = cardSize;
     return (
       <TouchableOpacity
-        style={[
-          styles.gameCard,
-          hoveredButton === item.id && styles.gameCardHover,
-          styles.squareCard,
-        ]}
-        onPress={() => {
-          if (!isMine) openPreview(item);
-          if (isMenuOpen) {
-            setOpenedMenuId(null);
-            setMenuPosition(null);
-          }
-        }}
-        onMouseEnter={() => setHoveredButton(item.id)}
-        onMouseLeave={() => setHoveredButton(null)}
+        style={[S.gameCard, { width: cs, marginHorizontal: gap / 2, marginBottom: gap }]}
+        onPress={() => { if (!isMine) openPreview(item); if (isMenuOpen) { setOpenedMenuId(null); setMenuPosition(null); } }}
         disabled={isMine}
-        ref={(ref) => { cardRefs.current[item.id] = ref; }}
+        ref={ref => { cardRefs.current[item.id] = ref; }}
+        activeOpacity={0.85}
       >
-        <View style={[styles.gameCoverPlaceholder, styles.squareCover]}>
-          <Text style={{ fontSize: 40 }}>🎯</Text>
+        <View style={[S.gameCover, { height: cs * 0.55 }]}>
+          <Text style={{ fontSize: Math.max(28, cs * 0.3) }}>🎯</Text>
         </View>
-
-        {item.isPublished && !isDiscover && !isHome && (
-          <View style={styles.publishedBadge}>
-            <Text style={styles.badgeText}>Published</Text>
-          </View>
+        {item.isPublished && currentTab === 'library' && (
+          <View style={S.publishedBadge}><Text style={S.badgeTxt}>Published</Text></View>
         )}
-
-        <Text style={styles.gameTitle} numberOfLines={2}>{item.title}</Text>
-        <Text style={styles.creatorText}>{item.creatorName || 'Unknown'}</Text>
-        <Text style={styles.gameDetails}>{item.numQuestions || 0} questions</Text>
-
+        <Text style={[S.gameTitle, { fontSize: Math.max(12, 14 * rs) }]} numberOfLines={2}>{item.title}</Text>
+        <Text style={[S.creatorTxt, { fontSize: Math.max(10, 12 * rs) }]} numberOfLines={1}>{item.creatorName || 'Unknown'}</Text>
+        <Text style={[S.gameDetails, { fontSize: Math.max(10, 12 * rs) }]}>{item.numQuestions || 0} questions</Text>
         {isMine && (
           <TouchableOpacity
-            style={styles.threeDotsBtn}
+            style={[S.threeDotsBtn, { top: cs * 0.55 + 4 }]}
             onPress={() => handleThreeDotsPress(item.id)}
-            hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
           >
-            <Image
-              source={require('../assets/threeDots.png')}
-              style={styles.threeDotsIcon}
-              resizeMode="contain"
-            />
+            <Text style={{ color: '#aaa', fontSize: 18, letterSpacing: 1 }}>···</Text>
           </TouchableOpacity>
         )}
       </TouchableOpacity>
@@ -324,345 +217,207 @@ export default function Dashboard({ navigation, route }) {
 
   const renderDropdownMenu = () => {
     if (!openedMenuId || !menuPosition) return null;
-
     const game = myGames.find(g => g.id === openedMenuId);
     if (!game) return null;
-
     return (
-      <TouchableOpacity
-        style={styles.menuBackdrop}
-        activeOpacity={1}
-        onPress={() => {
-          setOpenedMenuId(null);
-          setMenuPosition(null);
-        }}
-      >
-        <View
-          style={[
-            styles.menuDropdown,
-            {
-              position: 'absolute',
-              left: menuPosition.pageX,
-              top: menuPosition.pageY,
-            },
-          ]}
-        >
-          <TouchableOpacity
-            style={styles.menuItem}
-            onPress={() => {
-              setOpenedMenuId(null);
-              setMenuPosition(null);
-              navigation.navigate('HostGameMenu', { gameId: game.id });
-            }}
-          >
-            <Text style={styles.menuItemText}>Host</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.menuItem}
-            onPress={() => {
-              setOpenedMenuId(null);
-              setMenuPosition(null);
-              navigation.navigate('CreateGameMenu', { gameId: game.id, gameData: game });
-            }}
-          >
-            <Text style={styles.menuItemText}>Edit</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.menuItem}
-            onPress={() => {
-              setOpenedMenuId(null);
-              setMenuPosition(null);
-              confirmPublishToggle(game.id, game.title, game.isPublished);
-            }}
-          >
-            <Text style={styles.menuItemText}>
-              {game.isPublished ? 'Unpublish' : 'Publish'}
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.menuItem, styles.menuItemDanger]}
-            onPress={() => {
-              setOpenedMenuId(null);
-              setMenuPosition(null);
-              confirmDelete(game.id, game.title);
-            }}
-          >
-            <Text style={styles.menuItemTextDanger}>Delete</Text>
-          </TouchableOpacity>
+      <TouchableOpacity style={S.menuBackdrop} activeOpacity={1} onPress={() => { setOpenedMenuId(null); setMenuPosition(null); }}>
+        <View style={[S.menuDropdown, { left: menuPosition.pageX, top: menuPosition.pageY }]}>
+          {[
+            { label: 'Host',    onPress: () => { setOpenedMenuId(null); setMenuPosition(null); navigation.navigate('HostGameMenu', { gameId: game.id }); } },
+            { label: 'Edit',    onPress: () => { setOpenedMenuId(null); setMenuPosition(null); navigation.navigate('CreateGameMenu', { gameId: game.id, gameData: game }); } },
+            { label: game.isPublished ? 'Unpublish' : 'Publish', onPress: () => { setOpenedMenuId(null); setMenuPosition(null); confirmPublishToggle(game.id, game.title, game.isPublished); } },
+            { label: 'Delete',  onPress: () => { setOpenedMenuId(null); setMenuPosition(null); confirmDelete(game.id, game.title); }, danger: true },
+          ].map(item => (
+            <TouchableOpacity key={item.label} style={[S.menuItem, item.danger && S.menuItemDanger]} onPress={item.onPress}>
+              <Text style={item.danger ? S.menuItemTxtDanger : S.menuItemTxt}>{item.label}</Text>
+            </TouchableOpacity>
+          ))}
         </View>
       </TouchableOpacity>
     );
   };
 
-  return (
-    <View style={styles.container}>
-      {/* Sidebar */}
-      <View style={styles.sidebar}>
-        <Text style={styles.logo}>Brain Board</Text>
+  // ── SIDEBAR TABS (desktop) ──────────────────────────────────────────────────
+  const TAB_ITEMS = [
+    { id: 'home',     label: 'Home',        icon: '🏠' },
+    { id: 'library',  label: 'Library',     icon: '📚' },
+    { id: 'discover', label: 'Discover',    icon: '🔍' },
+  ];
 
-        <TouchableOpacity
-          style={[
-            styles.tabRow,
-            (currentTab === 'home' || hoveredButton === 'home') && styles.tabRowActive,
-          ]}
-          onPress={() => setCurrentTab('home')}
-          onMouseEnter={() => setHoveredButton('home')}
-          onMouseLeave={() => setHoveredButton(null)}
-        >
-          <Image
-            source={require('../assets/home.png')}
-            style={[
-              styles.tabIcon,
-              currentTab === 'home' && styles.tabIconActive
-            ]}
-            resizeMode="contain"
-          />
-          <Text style={[
-            styles.tabLabel,
-            currentTab === 'home' && styles.tabLabelActive
-          ]}>Home</Text>
-        </TouchableOpacity>
+  const SidebarTab = ({ tab }) => (
+    <TouchableOpacity
+      style={[S.tabRow, currentTab === tab.id && S.tabRowActive]}
+      onPress={() => setCurrentTab(tab.id)}
+    >
+      <Text style={[S.tabIcon, currentTab === tab.id && S.tabIconActive]}>{tab.icon}</Text>
+      <Text style={[S.tabLabel, currentTab === tab.id && S.tabLabelActive]}>{tab.label}</Text>
+    </TouchableOpacity>
+  );
 
-        <TouchableOpacity
-          style={[
-            styles.tabRow,
-            (currentTab === 'library' || hoveredButton === 'library') && styles.tabRowActive,
-          ]}
-          onPress={() => setCurrentTab('library')}
-          onMouseEnter={() => setHoveredButton('library')}
-          onMouseLeave={() => setHoveredButton(null)}
-        >
-          <Image
-            source={require('../assets/library.png')}
-            style={[
-              styles.tabIcon,
-              currentTab === 'library' && styles.tabIconActive
-            ]}
-            resizeMode="contain"
-          />
-          <Text style={[
-            styles.tabLabel,
-            currentTab === 'library' && styles.tabLabelActive
-          ]}>Your Library</Text>
-        </TouchableOpacity>
+  // ── MAIN CONTENT ─────────────────────────────────────────────────────────────
+  const MainContent = () => {
+    const pad = isMobile ? 14 : 40;
+    if (currentTab === 'home') {
+      return (
+        <ScrollView contentContainerStyle={{ padding: pad }}>
+          <Text style={[S.welcome, { fontSize: Math.max(20, 28 * rs) }]}>
+            Welcome, {userData?.username || 'Teacher'}!
+          </Text>
+          <Text style={[S.subtitle, { fontSize: Math.max(13, 16 * rs), marginBottom: Math.max(20, 32 * rs) }]}>
+            {myGames.length} games · {totalQuestions} questions
+          </Text>
 
-        <TouchableOpacity
-          style={[
-            styles.tabRow,
-            (currentTab === 'discover' || hoveredButton === 'discover') && styles.tabRowActive,
-          ]}
-          onPress={() => setCurrentTab('discover')}
-          onMouseEnter={() => setHoveredButton('discover')}
-          onMouseLeave={() => setHoveredButton(null)}
-        >
-          <Image
-            source={require('../assets/discover.png')}
-            style={[
-              styles.tabIcon,
-              currentTab === 'discover' && styles.tabIconActive
-            ]}
-            resizeMode="contain"
-          />
-          <Text style={[
-            styles.tabLabel,
-            currentTab === 'discover' && styles.tabLabelActive
-          ]}>Discover</Text>
-        </TouchableOpacity>
+          <View style={[S.actionRow, { flexDirection: isMobile ? 'column' : 'row', gap: 12, marginBottom: Math.max(24, 40 * rs) }]}>
+            <TouchableOpacity style={[S.bigCreateBtn, isMobile && { minWidth: 0 }]} onPress={handleCreateGame}>
+              <Text style={[S.bigCreateTxt, { fontSize: Math.max(15, 18 * rs) }]}>+ Create New Game</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[S.joinBtn, isMobile && { minWidth: 0 }]} onPress={() => navigation.navigate('JoinGameScreen')}>
+              <Text style={[S.joinBtnTxt, { fontSize: Math.max(15, 18 * rs) }]}>Join Game</Text>
+            </TouchableOpacity>
+          </View>
 
-        <TouchableOpacity
-          style={[
-            styles.tabRow,
-            hoveredButton === 'shop' && styles.tabRowActive,
-          ]}
-          onPress={() => navigation.navigate('Shop')}
-          onMouseEnter={() => setHoveredButton('shop')}
-          onMouseLeave={() => setHoveredButton(null)}
-        >
-          <Image
-            source={require('../assets/shop.png')}
-            style={styles.tabIcon}
-            resizeMode="contain"
-          />
-          <Text style={styles.tabLabel}>Shop</Text>
-        </TouchableOpacity>
+          {recentGames.length > 0 && (
+            <>
+              <Text style={[S.section, { fontSize: Math.max(16, 20 * rs) }]}>Your Recent Games</Text>
+              <FlatList
+                data={recentGames}
+                renderItem={renderGameCard}
+                keyExtractor={item => item.id}
+                numColumns={cols}
+                key={`cols-${cols}`}
+                scrollEnabled={false}
+                contentContainerStyle={{ paddingHorizontal: gap / 2 }}
+              />
+            </>
+          )}
+        </ScrollView>
+      );
+    }
 
-        <TouchableOpacity
-          style={[
-            styles.tabRow,
-            hoveredButton === 'inventory' && styles.tabRowActive,
-          ]}
-          onPress={() => navigation.navigate('Inventory')}
-          onMouseEnter={() => setHoveredButton('inventory')}
-          onMouseLeave={() => setHoveredButton(null)}
-        >
-          <Image
-            source={require('../assets/inventory.png')}
-            style={styles.tabIcon}
-            resizeMode="contain"
-          />
-          <Text style={styles.tabLabel}>Inventory</Text>
-        </TouchableOpacity>
+    return (
+      <View style={{ flex: 1 }}>
+        <View style={[S.header, { padding: Math.max(10, 16 * rs), gap: 10 }]}>
+          <View style={[S.searchBox, { height: Math.max(40, 48 * rs) }]}>
+            <Text style={{ fontSize: 16, marginRight: 8 }}>🔍</Text>
+            <TextInput
+              style={[S.searchInput, { fontSize: Math.max(13, 15 * rs) }]}
+              placeholder={`Search ${currentTab === 'library' ? 'library' : 'discover'}...`}
+              placeholderTextColor="#666"
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+            />
+          </View>
+          {!isMobile && (
+            <TouchableOpacity style={S.createBtn} onPress={handleCreateGame}>
+              <Text style={S.createBtnTxt}>+ Create</Text>
+            </TouchableOpacity>
+          )}
+        </View>
 
-        <View style={{ flex: 1 }} />
-
-        <TouchableOpacity
-          style={[
-            styles.tabRow,
-            hoveredButton === 'settings' && styles.tabRowActive,
-          ]}
-          onPress={() => navigation.navigate('Settings')}
-          onMouseEnter={() => setHoveredButton('settings')}
-          onMouseLeave={() => setHoveredButton(null)}
-        >
-          <Image source={require('../assets/settings.png')} style={styles.tabIcon} resizeMode="contain" />
-          <Text style={styles.tabLabel}>Settings</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[
-            styles.tabRow,
-            hoveredButton === 'logout' && styles.tabRowActive,
-          ]}
-          onPress={handleLogout}
-          onMouseEnter={() => setHoveredButton('logout')}
-          onMouseLeave={() => setHoveredButton(null)}
-        >
-          <Image source={require('../assets/logout.png')} style={styles.tabIcon} resizeMode="contain" />
-          <Text style={styles.tabLabel}>Logout</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Main Content */}
-      <View style={styles.main}>
-        {currentTab === 'home' ? (
-          <View style={{ flex: 1, padding: 40 }}>
-            <Text style={styles.welcome}>Welcome back, {userData?.username || 'Teacher'}!</Text>
-            <Text style={styles.subtitle}>You have {myGames.length} games • {totalQuestions} questions created</Text>
-
-            <View style={styles.actionButtonsRow}>
-              <TouchableOpacity
-                style={[
-                  styles.bigCreateBtn,
-                  hoveredButton === 'create' && styles.bigCreateBtnHover
-                ]}
-                onPress={handleCreateGame}
-                onMouseEnter={() => setHoveredButton('create')}
-                onMouseLeave={() => setHoveredButton(null)}
-              >
-                <Text style={styles.bigCreateText}>+ Create New Game</Text>
+        {currentTab === 'library' && (
+          <View style={[S.filters, { paddingHorizontal: Math.max(10, 16 * rs) }]}>
+            {['all', 'drafts', 'published'].map(f => (
+              <TouchableOpacity key={f} onPress={() => setFilter(f)} style={[S.filterBtn, filter === f && S.filterActive]}>
+                <Text style={[S.filterTxt, { fontSize: Math.max(12, 14 * rs) }]}>{f.charAt(0).toUpperCase() + f.slice(1)}</Text>
               </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[
-                  styles.joinGameBtn,
-                  hoveredButton === 'join' && styles.joinGameBtnHover
-                ]}
-                onPress={() => navigation.navigate('JoinGameScreen')}
-                onMouseEnter={() => setHoveredButton('join')}
-                onMouseLeave={() => setHoveredButton(null)}
-              >
-                <Text style={styles.joinGameText}>Join Game</Text>
+            ))}
+            {isMobile && (
+              <TouchableOpacity style={S.createBtn} onPress={handleCreateGame}>
+                <Text style={S.createBtnTxt}>+ New</Text>
               </TouchableOpacity>
-            </View>
-
-            {recentGames.length > 0 && (
-              <>
-                <Text style={styles.section}>Your Recent Games</Text>
-                <FlatList
-                  data={recentGames}
-                  renderItem={renderGameCard}
-                  keyExtractor={item => item.id}
-                  numColumns={4}
-                  columnWrapperStyle={{ justifyContent: 'flex-start' }}
-                />
-              </>
             )}
           </View>
-        ) : (
-          <>
-            <View style={styles.header}>
-              <View style={styles.searchBox}>
-                <Image
-                  source={require('../assets/search.png')}
-                  style={styles.searchIconImage}
-                  resizeMode="contain"
-                />
-                <TextInput
-                  style={styles.searchInput}
-                  placeholder={`Search ${currentTab === 'library' ? 'your library' : 'discover'}...`}
-                  placeholderTextColor="#666"
-                  value={searchQuery}
-                  onChangeText={setSearchQuery}
-                />
-              </View>
-
-              {(currentTab === 'library' || currentTab === 'discover') && (
-                <TouchableOpacity
-                  style={[styles.createBtn, { marginLeft: 20 }]}
-                  onPress={handleCreateGame}
-                >
-                  <Text style={styles.createBtnText}>+ Create New Game</Text>
-                </TouchableOpacity>
-              )}
-            </View>
-
-            {currentTab === 'library' && (
-              <View style={styles.filters}>
-                <TouchableOpacity onPress={() => setFilter('all')} style={[styles.filterBtn, filter === 'all' && styles.filterActive]}>
-                  <Text style={styles.filterText}>All</Text>
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => setFilter('drafts')} style={[styles.filterBtn, filter === 'drafts' && styles.filterActive]}>
-                  <Text style={styles.filterText}>Drafts</Text>
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => setFilter('published')} style={[styles.filterBtn, filter === 'published' && styles.filterActive]}>
-                  <Text style={styles.filterText}>Published</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-
-            <FlatList
-              data={getDisplayedGames()}
-              renderItem={renderGameCard}
-              keyExtractor={item => item.id}
-              numColumns={4}
-              columnWrapperStyle={{ justifyContent: 'flex-start' }}
-              ListEmptyComponent={<Text style={styles.emptyText}>
-                {currentTab === 'library' ? 'No games yet. Create your first one!' : 'No public games found.'}
-              </Text>}
-            />
-          </>
         )}
+
+        <FlatList
+          data={getDisplayedGames()}
+          renderItem={renderGameCard}
+          keyExtractor={item => item.id}
+          numColumns={cols}
+          key={`cols-${cols}`}
+          contentContainerStyle={{ paddingHorizontal: gap / 2, paddingTop: 8, paddingBottom: 80 }}
+          ListEmptyComponent={<Text style={S.emptyTxt}>{currentTab === 'library' ? 'No games yet. Create your first one!' : 'No public games found.'}</Text>}
+        />
+      </View>
+    );
+  };
+
+  // ── BOTTOM TAB BAR (mobile) ────────────────────────────────────────────────
+  const BottomTabBar = () => (
+    <View style={S.bottomBar}>
+      {TAB_ITEMS.map(tab => (
+        <TouchableOpacity key={tab.id} style={S.bottomTab} onPress={() => setCurrentTab(tab.id)}>
+          <Text style={[S.bottomTabIcon, currentTab === tab.id && S.bottomTabIconActive]}>{tab.icon}</Text>
+          <Text style={[S.bottomTabLabel, currentTab === tab.id && S.bottomTabLabelActive]}>{tab.label}</Text>
+        </TouchableOpacity>
+      ))}
+      <TouchableOpacity style={S.bottomTab} onPress={handleLogout}>
+        <Text style={S.bottomTabIcon}>🚪</Text>
+        <Text style={S.bottomTabLabel}>Logout</Text>
+      </TouchableOpacity>
+    </View>
+  );
+
+  return (
+    <SafeAreaView style={S.container}>
+      <View style={{ flex: 1, flexDirection: 'row' }}>
+        {/* Sidebar — desktop only */}
+        {!isMobile && (
+          <View style={S.sidebar}>
+            <Text style={S.logo}>Brain Board</Text>
+            {TAB_ITEMS.map(tab => <SidebarTab key={tab.id} tab={tab} />)}
+            <View style={{ flex: 1 }} />
+            <TouchableOpacity style={S.tabRow} onPress={handleLogout}>
+              <Text style={S.tabIcon}>🚪</Text>
+              <Text style={S.tabLabel}>Logout</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Main */}
+        <View style={{ flex: 1 }}>
+          {/* Mobile header */}
+          {isMobile && (
+            <View style={S.mobileHeader}>
+              <Text style={S.mobileHeaderTitle}>Brain Board</Text>
+              <TouchableOpacity onPress={handleCreateGame} style={S.mobileCreateBtn}>
+                <Text style={S.mobileCreateBtnTxt}>+ Create</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+          <MainContent />
+        </View>
       </View>
 
-      {/* Dynamic Dropdown Menu */}
+      {/* Bottom nav — mobile only */}
+      {isMobile && <BottomTabBar />}
+
+      {/* Dropdown menu */}
       {renderDropdownMenu()}
 
-      {/* Modals */}
+      {/* Title modal */}
       <Modal visible={titleModal.isOpen} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
-          <View style={styles.titleModal}>
-            <Text style={styles.titleModalHeader}>New Game Title</Text>
+        <View style={S.modalOverlay}>
+          <View style={S.titleModal}>
+            <Text style={S.titleModalHdr}>New Game Title</Text>
             <TextInput
-              style={styles.titleInput}
+              style={S.titleInput}
               placeholder="Enter a title..."
               placeholderTextColor="#888"
               value={titleModal.currentTitle}
-              onChangeText={t => setTitleModal(prev => ({ ...prev, currentTitle: t }))}
+              onChangeText={t => setTitleModal(p => ({ ...p, currentTitle: t }))}
               autoFocus
             />
-            <View style={styles.titleModalButtons}>
-              <TouchableOpacity style={styles.titleModalCancel} onPress={() => setTitleModal(prev => ({ ...prev, isOpen: false }))}>
-                <Text style={styles.titleModalCancelText}>Cancel</Text>
+            <View style={S.titleModalBtns}>
+              <TouchableOpacity style={S.titleCancel} onPress={() => setTitleModal(p => ({ ...p, isOpen: false }))}>
+                <Text style={S.titleCancelTxt}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.titleModalSave, !titleModal.currentTitle.trim() && styles.disabledBtn]}
+                style={[S.titleSave, !titleModal.currentTitle.trim() && { opacity: 0.5 }]}
                 onPress={() => titleModal.currentTitle.trim() && titleModal.onSave(titleModal.currentTitle.trim())}
                 disabled={!titleModal.currentTitle.trim()}
               >
-                <Text style={styles.titleModalSaveText}>Create</Text>
+                <Text style={S.titleSaveTxt}>Create</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -670,98 +425,50 @@ export default function Dashboard({ navigation, route }) {
       </Modal>
 
       <ConfirmationModal
-        isOpen={confirmModal.isOpen}
-        title={confirmModal.title}
-        message={confirmModal.message}
-        onConfirm={confirmModal.onConfirm}
-        onCancel={confirmModal.onCancel}
-        confirmText={confirmModal.confirmText}
-        cancelText={confirmModal.cancelText}
+        isOpen={confirmModal.isOpen} title={confirmModal.title} message={confirmModal.message}
+        onConfirm={confirmModal.onConfirm} onCancel={confirmModal.onCancel}
+        confirmText={confirmModal.confirmText} cancelText={confirmModal.cancelText}
       />
 
+      {/* Preview modal */}
       <Modal visible={previewModal.isOpen} transparent animationType="slide">
-        <View style={styles.previewModalOverlay}>
-          <View style={styles.previewModal}>
+        <View style={S.previewOverlay}>
+          <View style={[S.previewModal, { width: isMobile ? '96%' : '75%', padding: isMobile ? 18 : 30 }]}>
             {previewModal.game && (
               <>
-                <View style={styles.previewHeader}>
-                  <Text style={styles.previewTitle}>{previewModal.game.title}</Text>
+                <View style={S.previewHdr}>
+                  <Text style={[S.previewTitle, { fontSize: isMobile ? 20 : 26 }]} numberOfLines={2}>{previewModal.game.title}</Text>
                   <TouchableOpacity onPress={() => setPreviewModal({ isOpen: false, game: null })}>
-                    <Text style={styles.closePreview}>×</Text>
+                    <Text style={S.closePreview}>×</Text>
                   </TouchableOpacity>
                 </View>
-                <Text style={styles.previewCreator}>{previewModal.game.creatorName || 'Unknown'}</Text>
-                <Text style={styles.previewQuestions}>{previewModal.game.numQuestions || 0} questions</Text>
-
-                <View style={styles.previewToggleRow}>
-                  <Switch
-                    value={showAnswersInPreview}
-                    onValueChange={setShowAnswersInPreview}
-                    trackColor={{ false: '#333', true: '#00c781' }}
-                    thumbColor={showAnswersInPreview ? '#fff' : '#ccc'}
-                  />
-                  <Text style={styles.previewToggleLabel}>Reveal Answers</Text>
+                <Text style={S.previewCreator}>{previewModal.game.creatorName || 'Unknown'}</Text>
+                <Text style={S.previewQCount}>{previewModal.game.numQuestions || 0} questions</Text>
+                <View style={S.previewToggleRow}>
+                  <Switch value={showAnswersInPreview} onValueChange={setShowAnswersInPreview} trackColor={{ false: '#333', true: '#00c781' }} thumbColor={showAnswersInPreview ? '#fff' : '#ccc'} />
+                  <Text style={S.previewToggleLbl}>Reveal Answers</Text>
                 </View>
-
-                <ScrollView style={styles.previewQuestionsList}>
-                  {previewModal.game.questions.map((q, idx) => (
-                    <View key={idx} style={styles.previewQuestionBlock}>
-                      <Text style={styles.previewQText}>{q.question}</Text>
-                      {q.imageUrl && (
-                        <Image source={{ uri: q.imageUrl }} style={styles.previewQImage} />
-                      )}
-                      <View style={styles.previewAnswersList}>
-                        {q.type === 'multipleChoice' ? (
-                          q.answers.map((ans, i) => (
-                            <View
-                              key={i}
-                              style={[
-                                styles.previewAnswerItem,
-                                showAnswersInPreview && q.correctAnswers[i] && styles.previewCorrectAnswer
-                              ]}
-                            >
-                              <Text style={styles.previewAnswerText}>
-                                {ans || `Answer ${i + 1}`}
-                              </Text>
-                            </View>
-                          ))
-                        ) : (
-                          ['True', 'False'].map((label, i) => (
-                            <View
-                              key={i}
-                              style={[
-                                styles.previewAnswerItem,
-                                showAnswersInPreview && q.correctAnswers[i] && styles.previewCorrectAnswer
-                              ]}
-                            >
-                              <Text style={styles.previewAnswerText}>{label}</Text>
-                            </View>
-                          ))
-                        )}
+                <ScrollView style={{ flex: 1, marginBottom: 16 }}>
+                  {(previewModal.game.questions || []).map((q, idx) => (
+                    <View key={idx} style={S.previewQBlock}>
+                      <Text style={[S.previewQTxt, { fontSize: isMobile ? 15 : 18 }]}>{q.question}</Text>
+                      {q.imageUrl && <Image source={{ uri: q.imageUrl }} style={S.previewQImg} />}
+                      <View style={{ gap: 6 }}>
+                        {(q.type === 'multipleChoice' ? q.answers : ['True', 'False']).map((ans, i) => (
+                          <View key={i} style={[S.previewAns, showAnswersInPreview && q.correctAnswers?.[i] && S.previewCorrect]}>
+                            <Text style={S.previewAnsTxt}>{ans || `Answer ${i + 1}`}</Text>
+                          </View>
+                        ))}
                       </View>
                     </View>
                   ))}
                 </ScrollView>
-
-                <View style={styles.previewActionButtons}>
-                  <TouchableOpacity
-                    style={styles.hostGameBtn}
-                    onPress={() => {
-                      setPreviewModal({ isOpen: false, game: null });
-                      navigation.navigate('HostGameMenu', { gameId: previewModal.game.id });
-                    }}
-                  >
-                    <Text style={styles.hostGameBtnText}>Host This Game</Text>
+                <View style={[S.previewActions, isMobile && { flexDirection: 'column' }]}>
+                  <TouchableOpacity style={S.hostGameBtn} onPress={() => { setPreviewModal({ isOpen: false, game: null }); navigation.navigate('HostGameMenu', { gameId: previewModal.game.id }); }}>
+                    <Text style={S.hostGameBtnTxt}>Host This Game</Text>
                   </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={styles.soloBtn}
-                    onPress={() => {
-                      setPreviewModal({ isOpen: false, game: null });
-                      navigation.navigate('SoloGameScreen', { gameId: previewModal.game.id });
-                    }}
-                  >
-                    <Text style={styles.soloBtnText}>Play Solo</Text>
+                  <TouchableOpacity style={S.soloBtn} onPress={() => { setPreviewModal({ isOpen: false, game: null }); navigation.navigate('SoloGameMenu', { gameId: previewModal.game.id }); }}>
+                    <Text style={S.soloBtnTxt}>Play Solo</Text>
                   </TouchableOpacity>
                 </View>
               </>
@@ -769,340 +476,107 @@ export default function Dashboard({ navigation, route }) {
           </View>
         </View>
       </Modal>
-    </View>
+    </SafeAreaView>
   );
 }
 
-const { width } = Dimensions.get('window');
-const sidebarWidth = 260;
-const paddingHorizontal = 30 * 2 + 12 * 2 * 4; // approximate
-const cardSize = Math.min((width - sidebarWidth - paddingHorizontal) / 4, 280);
+const S = StyleSheet.create({
+  container:  { flex: 1, backgroundColor: '#111' },
+  sidebar:    { width: 260, backgroundColor: '#0d0d0d', paddingVertical: 36, paddingHorizontal: 16, borderRightWidth: 1, borderRightColor: '#222' },
+  logo:       { fontSize: 24, fontWeight: 'bold', color: '#00c781', marginBottom: 40, marginLeft: 8 },
+  tabRow:     { flexDirection: 'row', alignItems: 'center', paddingVertical: 13, paddingHorizontal: 14, borderRadius: 14, marginBottom: 6 },
+  tabRowActive: { backgroundColor: '#003322' },
+  tabIcon:    { fontSize: 20, marginRight: 14 },
+  tabIconActive: {},
+  tabLabel:   { fontSize: 15, color: '#ccc', fontWeight: '500' },
+  tabLabelActive: { color: '#00c781', fontWeight: 'bold' },
 
-const styles = StyleSheet.create({
-  container: { flex: 1, flexDirection: 'row', backgroundColor: '#111' },
-  sidebar: {
-    width: 260,
-    backgroundColor: '#0d0d0d',
-    paddingVertical: 40,
-    paddingHorizontal: 20,
-    borderRightWidth: 1,
-    borderRightColor: '#222'
-  },
-  logo: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#00c781',
-    marginBottom: 60,
-    marginLeft: 8
-  },
-  tabRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 16,
-    paddingHorizontal: 16,
-    borderRadius: 16,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: 'transparent',
-  },
-  tabRowActive: {
-    backgroundColor: '#003322',
-  },
-  tabIcon: {
-    width: 24,
-    height: 24,
-    marginRight: 16,
-    tintColor: '#ccc',
-  },
-  tabIconActive: {
-    tintColor: '#00c781',
-  },
-  tabLabel: {
-    fontSize: 16,
-    color: '#ccc',
-    fontWeight: '500',
-  },
-  tabLabelActive: {
-    color: '#00c781',
-    fontWeight: 'bold',
-  },
-  main: { flex: 1, padding: 30, backgroundColor: '#111' },
-  welcome: { fontSize: 36, fontWeight: 'bold', color: '#fff', marginBottom: 10 },
-  subtitle: { fontSize: 18, color: '#aaa', marginBottom: 40 },
+  mobileHeader:    { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, backgroundColor: '#0d0d0d', borderBottomWidth: 1, borderBottomColor: '#222' },
+  mobileHeaderTitle: { fontSize: 20, fontWeight: 'bold', color: '#00c781' },
+  mobileCreateBtn:   { backgroundColor: '#00c781', paddingVertical: 8, paddingHorizontal: 14, borderRadius: 10 },
+  mobileCreateBtnTxt:{ color: '#fff', fontWeight: 'bold', fontSize: 14 },
 
-  actionButtonsRow: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    gap: 20,
-    marginBottom: 50,
-    flexWrap: 'wrap',
-  },
-  bigCreateBtn: {
-    backgroundColor: '#00c781',
-    padding: 24,
-    borderRadius: 16,
-    alignItems: 'center',
-    flex: 1,
-    minWidth: 300,
-    maxWidth: "100%",
-  },
-  bigCreateBtnHover: {
-    backgroundColor: '#00e092',
-    transform: [{ scale: 1.02 }],
-  },
-  bigCreateText: {
-    color: '#fff',
-    fontSize: 20,
-    fontWeight: 'bold',
-  },
-  joinGameBtn: {
-    backgroundColor: '#3498db',
-    padding: 24,
-    borderRadius: 16,
-    alignItems: 'center',
-    flex: 1,
-    minWidth: 300,
-    maxWidth: "100%",
-  },
-  joinGameBtnHover: {
-    backgroundColor: '#3baffc',
-    transform: [{ scale: 1.02 }],
-  },
-  joinGameText: {
-    color: '#fff',
-    fontSize: 20,
-    fontWeight: 'bold',
-  },
+  bottomBar:       { flexDirection: 'row', backgroundColor: '#0d0d0d', borderTopWidth: 1, borderTopColor: '#222', paddingBottom: 4 },
+  bottomTab:       { flex: 1, alignItems: 'center', paddingVertical: 8 },
+  bottomTabIcon:   { fontSize: 22, marginBottom: 2 },
+  bottomTabIconActive: {},
+  bottomTabLabel:  { fontSize: 10, color: '#666', fontWeight: '600' },
+  bottomTabLabelActive: { color: '#00c781' },
 
-  section: { fontSize: 24, fontWeight: 'bold', color: '#fff', marginBottom: 20 },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 20
-  },
-  searchBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#222',
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    flex: 1,
-    height: 52,
-    borderWidth: 1,
-    borderColor: '#333'
-  },
-  searchInput: {
-    flex: 1,
-    color: '#fff',
-    fontSize: 16,
-    marginLeft: 10
-  },
-  createBtn: {
-    backgroundColor: '#00c781',
-    paddingVertical: 16,
-    paddingHorizontal: 30,
-    borderRadius: 12,
-    marginLeft: 20,
-  },
-  createBtnText: {
-    color: '#fff',
-    fontWeight: 'bold',
-    fontSize: 16
-  },
-  filters: { flexDirection: 'row', gap: 12, marginBottom: 20 },
-  filterBtn: { paddingHorizontal: 20, paddingVertical: 10, borderRadius: 10, backgroundColor: '#222' },
-  filterActive: { backgroundColor: '#003322', borderWidth: 1, borderColor: '#00c781' },
-  filterText: { color: '#fff', fontWeight: 'bold' },
-  gameCard: {
-    backgroundColor: '#1e1e1e',
-    borderRadius: 16,
-    padding: 12,
-    margin: 12,
-    borderWidth: 1,
-    borderColor: '#333',
-    position: 'relative',
-    overflow: 'hidden',
-  },
-  squareCard: {
-    width: cardSize,
-    aspectRatio: 1,
-    justifyContent: 'space-between',
-  },
-  gameCardHover: {
-    borderColor: '#00c781',
-  },
-  gameCoverPlaceholder: {
-    backgroundColor: '#2a2a2a',
-    borderRadius: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-    height: '60%', // consistent with squareCover
-    marginBottom: 8,
-  },
-  squareCover: {
-    height: '60%',
-    marginBottom: 8,
-  },
-  publishedBadge: {
-    position: 'absolute',
-    top: 12,
-    right: 12,
-    backgroundColor: '#00c781',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 20,
-    zIndex: 5,
-  },
-  badgeText: { color: '#fff', fontSize: 11, fontWeight: 'bold' },
-  gameTitle: { fontSize: 18, fontWeight: 'bold', color: '#fff', marginBottom: 6 },
-  creatorText: { fontSize: 14, color: '#aaa', marginBottom: 6 },
-  gameDetails: { fontSize: 14, color: '#aaa', marginBottom: 16 },
-  threeDotsBtn: {
-    position: 'absolute',
-    top: cardSize * 0.6 + 1,   // right after cover image + margin
-    right: 2,
-    padding: 4,
-    zIndex: 10,
-  },
-  threeDotsIcon: {
-    width: 24,
-    height: 24,
-    tintColor: '#ccc',
-  },
-  menuBackdrop: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'transparent',
-    zIndex: 50,
-  },
-  menuDropdown: {
-    backgroundColor: '#1e1e1e',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#444',
-    paddingVertical: 8,
-    width: 140,
-    zIndex: 60,
-    elevation: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
-    shadowRadius: 8,
-  },
-  menuItem: {
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-  },
-  menuItemText: {
-    color: '#fff',
-    fontSize: 14,
-  },
-  menuItemDanger: {
-    borderTopWidth: 1,
-    borderTopColor: '#444',
-  },
-  menuItemTextDanger: {
-    color: '#ff4d4d',
-    fontSize: 14,
-    fontWeight: 'bold',
-  },
-  emptyText: { color: '#666', fontSize: 18, textAlign: 'center', marginTop: 100 },
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.8)', justifyContent: 'center', alignItems: 'center' },
-  confirmModal: { backgroundColor: '#1e1e1e', borderRadius: 16, padding: 24, width: 360, borderWidth: 1, borderColor: '#333' },
-  confirmModalTitle: { fontSize: 20, fontWeight: 'bold', color: '#fff', marginBottom: 12, textAlign: 'center' },
-  confirmModalText: { fontSize: 15, color: '#ccc', marginBottom: 24, textAlign: 'center', lineHeight: 22 },
-  confirmModalButtons: { flexDirection: 'row', justifyContent: 'space-between', gap: 12 },
-  confirmModalCancel: { flex: 1, backgroundColor: '#444', paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
-  confirmModalCancelText: { color: '#fff', fontWeight: 'bold' },
-  confirmModalConfirm: { flex: 1, backgroundColor: '#c0392b', paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
-  confirmModalConfirmText: { color: '#fff', fontWeight: 'bold' },
-  titleModal: { backgroundColor: '#1e1e1e', borderRadius: 16, padding: 24, width: 380, borderWidth: 1, borderColor: '#333' },
-  titleModalHeader: { fontSize: 22, fontWeight: 'bold', color: '#fff', marginBottom: 16, textAlign: 'center' },
-  titleInput: { backgroundColor: '#2a2a2a', color: '#fff', padding: 14, borderRadius: 12, fontSize: 16, marginBottom: 20, borderWidth: 1, borderColor: '#444' },
-  titleModalButtons: { flexDirection: 'row', justifyContent: 'space-between', gap: 12 },
-  titleModalCancel: { flex: 1, backgroundColor: '#444', paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
-  titleModalCancelText: { color: '#fff', fontWeight: 'bold' },
-  titleModalSave: { flex: 1, backgroundColor: '#00c781', paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
-  titleModalSaveText: { color: '#fff', fontWeight: 'bold' },
-  disabledBtn: { opacity: 0.5 },
+  welcome:  { fontWeight: 'bold', color: '#fff', marginBottom: 8 },
+  subtitle: { color: '#aaa' },
+  actionRow:{ flexWrap: 'wrap' },
+  bigCreateBtn: { backgroundColor: '#00c781', padding: 18, borderRadius: 14, alignItems: 'center', flex: 1, minWidth: 200 },
+  bigCreateTxt: { color: '#fff', fontWeight: 'bold' },
+  joinBtn:      { backgroundColor: '#3498db', padding: 18, borderRadius: 14, alignItems: 'center', flex: 1, minWidth: 200 },
+  joinBtnTxt:   { color: '#fff', fontWeight: 'bold' },
+  section:      { fontWeight: 'bold', color: '#fff', marginBottom: 14, marginTop: 4 },
 
-  // Preview Modal Styles
-  previewModalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'center', alignItems: 'center' },
-  previewModal: {
-    backgroundColor: '#1e1e1e',
-    borderRadius: 20,
-    width: '75%',
-    maxHeight: '85%',
-    padding: 30,
-    borderWidth: 1,
-    borderColor: '#333',
-  },
-  previewHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
-  previewTitle: { fontSize: 28, fontWeight: 'bold', color: '#fff' },
-  closePreview: { fontSize: 40, color: '#fff', fontWeight: 'bold' },
-  previewCreator: { fontSize: 18, color: '#aaa', marginBottom: 8 },
-  previewQuestions: { fontSize: 16, color: '#ccc', marginBottom: 20 },
-  previewToggleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-    marginBottom: 20,
-    gap: 12,
-  },
-  previewToggleLabel: {
-    fontSize: 16,
-    color: '#ddd',
-    fontWeight: '500',
-  },
-  previewQuestionsList: { flex: 1, marginBottom: 24 },
-  previewQuestionBlock: {
-    backgroundColor: '#222',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#333'
-  },
-  previewQText: { fontSize: 20, fontWeight: 'bold', color: '#fff', marginBottom: 12 },
-  previewQImage: { width: '100%', height: 180, borderRadius: 12, marginBottom: 12 },
-  previewAnswersList: { gap: 8 },
-  previewAnswerItem: {
-    backgroundColor: '#333',
-    padding: 12,
-    borderRadius: 10,
-  },
-  previewCorrectAnswer: { backgroundColor: '#004d26' },
-  previewAnswerText: { color: '#fff', fontSize: 16 },
-  previewActionButtons: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 16,
-    marginTop: 16
-  },
-  soloBtn: {
-    flex: 1,
-    backgroundColor: '#3498db',
-    padding: 18,
-    borderRadius: 12,
-    alignItems: 'center'
-  },
-  soloBtnText: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: 'bold'
-  },
-  hostGameBtn: {
-    flex: 1,
-    backgroundColor: '#00c781',
-    padding: 18,
-    borderRadius: 12,
-    alignItems: 'center'
-  },
-  hostGameBtnText: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
-  searchIconImage: {
-    width: 25,
-    height: 25,
-    marginRight: 10,
-    tintColor: '#ffffff',
-  },
+  header:    { flexDirection: 'row', alignItems: 'center', backgroundColor: '#111' },
+  searchBox: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#222', borderRadius: 12, paddingHorizontal: 12, flex: 1, borderWidth: 1, borderColor: '#333' },
+  searchInput: { flex: 1, color: '#fff' },
+  createBtn:   { backgroundColor: '#00c781', paddingVertical: 10, paddingHorizontal: 16, borderRadius: 10 },
+  createBtnTxt:{ color: '#fff', fontWeight: 'bold', fontSize: 13 },
+  filters:     { flexDirection: 'row', gap: 8, paddingVertical: 8, flexWrap: 'wrap' },
+  filterBtn:   { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10, backgroundColor: '#222' },
+  filterActive:{ backgroundColor: '#003322', borderWidth: 1, borderColor: '#00c781' },
+  filterTxt:   { color: '#fff', fontWeight: 'bold' },
+
+  gameCard:    { backgroundColor: '#1e1e1e', borderRadius: 14, padding: 10, borderWidth: 1, borderColor: '#333', position: 'relative', overflow: 'hidden' },
+  gameCover:   { backgroundColor: '#2a2a2a', borderRadius: 10, justifyContent: 'center', alignItems: 'center', marginBottom: 8 },
+  publishedBadge: { position: 'absolute', top: 8, right: 8, backgroundColor: '#00c781', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 20, zIndex: 5 },
+  badgeTxt:    { color: '#fff', fontSize: 10, fontWeight: 'bold' },
+  gameTitle:   { fontWeight: 'bold', color: '#fff', marginBottom: 3 },
+  creatorTxt:  { color: '#aaa', marginBottom: 2 },
+  gameDetails: { color: '#aaa' },
+  threeDotsBtn:{ position: 'absolute', right: 4, padding: 4, zIndex: 10 },
+
+  menuBackdrop:{ ...StyleSheet.absoluteFillObject, backgroundColor: 'transparent', zIndex: 50 },
+  menuDropdown:{ position: 'absolute', backgroundColor: '#1e1e1e', borderRadius: 12, borderWidth: 1, borderColor: '#444', paddingVertical: 6, width: 140, zIndex: 60, elevation: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.4, shadowRadius: 8 },
+  menuItem:    { paddingVertical: 10, paddingHorizontal: 16 },
+  menuItemDanger: { borderTopWidth: 1, borderTopColor: '#444' },
+  menuItemTxt: { color: '#fff', fontSize: 14 },
+  menuItemTxtDanger: { color: '#ff4d4d', fontSize: 14, fontWeight: 'bold' },
+
+  emptyTxt:    { color: '#666', fontSize: 16, textAlign: 'center', marginTop: 80, padding: 20 },
+  modalOverlay:{ flex: 1, backgroundColor: 'rgba(0,0,0,0.8)', justifyContent: 'center', alignItems: 'center' },
+
+  confirmModal: { backgroundColor: '#1e1e1e', borderRadius: 16, padding: 24, width: '88%', maxWidth: 360, borderWidth: 1, borderColor: '#333' },
+  confirmTitle: { fontSize: 18, fontWeight: 'bold', color: '#fff', marginBottom: 10, textAlign: 'center' },
+  confirmText:  { fontSize: 14, color: '#ccc', marginBottom: 20, textAlign: 'center', lineHeight: 20 },
+  confirmBtns:  { flexDirection: 'row', gap: 10 },
+  confirmCancel: { flex: 1, backgroundColor: '#444', paddingVertical: 13, borderRadius: 12, alignItems: 'center' },
+  confirmCancelTxt: { color: '#fff', fontWeight: 'bold' },
+  confirmConfirm: { flex: 1, backgroundColor: '#c0392b', paddingVertical: 13, borderRadius: 12, alignItems: 'center' },
+  confirmConfirmTxt: { color: '#fff', fontWeight: 'bold' },
+
+  titleModal:    { backgroundColor: '#1e1e1e', borderRadius: 16, padding: 24, width: '90%', maxWidth: 380, borderWidth: 1, borderColor: '#333' },
+  titleModalHdr: { fontSize: 20, fontWeight: 'bold', color: '#fff', marginBottom: 14, textAlign: 'center' },
+  titleInput:    { backgroundColor: '#2a2a2a', color: '#fff', padding: 13, borderRadius: 12, fontSize: 15, marginBottom: 18, borderWidth: 1, borderColor: '#444' },
+  titleModalBtns:{ flexDirection: 'row', gap: 10 },
+  titleCancel:   { flex: 1, backgroundColor: '#444', paddingVertical: 13, borderRadius: 12, alignItems: 'center' },
+  titleCancelTxt:{ color: '#fff', fontWeight: 'bold' },
+  titleSave:     { flex: 1, backgroundColor: '#00c781', paddingVertical: 13, borderRadius: 12, alignItems: 'center' },
+  titleSaveTxt:  { color: '#fff', fontWeight: 'bold' },
+
+  previewOverlay:{ flex: 1, backgroundColor: 'rgba(0,0,0,0.88)', justifyContent: 'center', alignItems: 'center' },
+  previewModal:  { backgroundColor: '#1e1e1e', borderRadius: 18, maxHeight: '90%', borderWidth: 1, borderColor: '#333' },
+  previewHdr:    { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 },
+  previewTitle:  { fontWeight: 'bold', color: '#fff', flex: 1, marginRight: 12 },
+  closePreview:  { fontSize: 36, color: '#fff', fontWeight: 'bold', lineHeight: 38 },
+  previewCreator:{ fontSize: 15, color: '#aaa', marginBottom: 6 },
+  previewQCount: { fontSize: 13, color: '#ccc', marginBottom: 16 },
+  previewToggleRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 16, gap: 10 },
+  previewToggleLbl: { fontSize: 14, color: '#ddd' },
+  previewQBlock: { backgroundColor: '#222', borderRadius: 10, padding: 14, marginBottom: 12, borderWidth: 1, borderColor: '#333' },
+  previewQTxt:   { fontWeight: 'bold', color: '#fff', marginBottom: 10 },
+  previewQImg:   { width: '100%', height: 140, borderRadius: 10, marginBottom: 10 },
+  previewAns:    { backgroundColor: '#333', padding: 10, borderRadius: 8 },
+  previewCorrect:{ backgroundColor: '#004d26' },
+  previewAnsTxt: { color: '#fff', fontSize: 14 },
+  previewActions:{ flexDirection: 'row', gap: 12, marginTop: 8 },
+  hostGameBtn:   { flex: 1, backgroundColor: '#00c781', padding: 16, borderRadius: 12, alignItems: 'center' },
+  hostGameBtnTxt:{ color: '#fff', fontSize: 16, fontWeight: 'bold' },
+  soloBtn:       { flex: 1, backgroundColor: '#3498db', padding: 16, borderRadius: 12, alignItems: 'center' },
+  soloBtnTxt:    { color: '#fff', fontSize: 16, fontWeight: 'bold' },
 });
