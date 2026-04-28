@@ -66,6 +66,13 @@ const MYSTERY_DEFS = {
 };
 const MYSTERY_KEYS = Object.keys(MYSTERY_DEFS);
 
+// Solo mode: only helpful effects, no player-targeting
+const SOLO_MYSTERY_DEFS = {
+  immunity:   MYSTERY_DEFS.immunity,
+  doubleroll: MYSTERY_DEFS.doubleroll,
+};
+const SOLO_MYSTERY_KEYS = Object.keys(SOLO_MYSTERY_DEFS);
+
 const INVENTORY_DEFS = {
   mystery_box: { emoji:"🎁", label:"Mystery Box", desc:"Open for a random effect" },
   deflector:   { emoji:"🪞", label:"Deflector",   desc:"Reflect next effect (30 s)" },
@@ -586,7 +593,7 @@ export default function BoardGameScreen({ route, navigation }) {
     // Use a simple effect-free redirect since hooks haven't run yet is not possible,
     // so we render null and navigate in a useEffect below
   }
-  const { sessionId, playerName, playerColor="#00c781", playerUid, isHost, hostIsPlaying, gameId } = route?.params || {};
+  const { sessionId, playerName, playerColor="#00c781", playerUid, isHost, hostIsPlaying, gameId, isSolo=false } = route?.params || {};
 
   // Dynamic tile sizes — recalculate when window resizes (tab minimize/restore)
   const { width: winW, height: winH } = useWindowDimensions();
@@ -594,6 +601,7 @@ export default function BoardGameScreen({ route, navigation }) {
   const HOST_TILE = Math.min(96, Math.max(48, Math.floor((winW * 0.65 - 32) / BOARD_COLS)));
   // Responsive scale: 1.0 on a comfortable 480×800 window, scales down linearly for smaller
   const rs = Math.min(1, Math.max(0.55, winH / 800, winW / 480));
+  const isMobile = winW < 500;
 
   const [session,  setSession]  = useState(null);
   const [loading,  setLoading]  = useState(true);
@@ -1013,8 +1021,10 @@ export default function BoardGameScreen({ route, navigation }) {
       Animated.timing(mBoxAnim, {toValue:0, duration:80, useNativeDriver:false}),
     ]).start();
     await new Promise(r => setTimeout(r, 500));
-    const key = MYSTERY_KEYS[Math.floor(Math.random() * MYSTERY_KEYS.length)];
-    const def = MYSTERY_DEFS[key];
+    const keys = isSolo ? SOLO_MYSTERY_KEYS : MYSTERY_KEYS;
+    const defs = isSolo ? SOLO_MYSTERY_DEFS : MYSTERY_DEFS;
+    const key = keys[Math.floor(Math.random() * keys.length)];
+    const def = defs[key];
     setMBoxKey(key); setMBoxDef(def); setMBoxRolling(false);
     if (def.inventoryType) setMBoxStep("inventory");
     else if (def.needsTarget) setMBoxStep("target");
@@ -1323,7 +1333,7 @@ export default function BoardGameScreen({ route, navigation }) {
     if (correct) {
       const ns = streak+1, nc = cc+1;
       setStreak(ns); setLuck(Math.min(40, ns>=2 ? luck+5 : luck));
-      setTotal(prev => { const next=prev+1; if(next%6===0) addToInventory("mystery_box","6 correct answers in a row"); return next; });
+      setTotal(prev => { const next=prev+1; const trigger=isSolo?(Math.random()<0.30):(next%6===0); if(trigger) addToInventory("mystery_box","mystery box"); return next; });
       if (nc >= ROLL_AT) { setCc(0); setTimeout(() => { setPhaseSync("rolling"); setDiceValue(null); }, 1400); }
       else { setCc(nc); setTimeout(() => setQIdx(i => i+1), 1400); }
     } else {
@@ -1658,15 +1668,15 @@ export default function BoardGameScreen({ route, navigation }) {
           ["LUCK",`${dispLuck}%`,badLuck?"#e74c3c":null],
           ["SPACE",`${myPos}/${boardEnd}`,playerColor],
         ].map(([lbl,val,col])=>(
-          <View key={lbl} style={{alignItems:"center",paddingHorizontal:Math.max(5,9*rs),minWidth:Math.max(44,52*rs)}}>
+          <View key={lbl} style={{alignItems:"center",paddingHorizontal:Math.max(4,7*rs),minWidth:Math.max(36,44*rs)}}>
             <Text style={{color:"#555",fontSize:Math.max(8,10*rs),letterSpacing:1,fontWeight:"700"}}>{lbl}</Text>
             <Text style={{color:col||"#fff",fontSize:Math.max(16,22*rs),fontWeight:"bold",marginTop:2}}>{val}</Text>
           </View>
         ))}
-        {immunityLeft>0&&<View style={{alignItems:"center",paddingHorizontal:Math.max(4,7*rs)}}><Text style={{color:"#555",fontSize:Math.max(8,10*rs),fontWeight:"700"}}>SHIELD</Text><Text style={{color:"#2ecc71",fontSize:Math.max(12,18*rs),fontWeight:"bold",marginTop:2}}>🛡️{immunityLeft}·{immunitySecsLeft}s</Text></View>}
-        {deflectorActive&&<View style={{alignItems:"center",paddingHorizontal:Math.max(4,7*rs)}}><Text style={{color:"#555",fontSize:Math.max(8,10*rs),fontWeight:"700"}}>REFLECT</Text><Text style={{color:"#00bcd4",fontSize:Math.max(12,18*rs),fontWeight:"bold",marginTop:2}}>🪞{deflectorSecsLeft}s</Text></View>}
-        {doubleRollsLeft>0&&<View style={{alignItems:"center",paddingHorizontal:Math.max(4,7*rs)}}><Text style={{color:"#555",fontSize:Math.max(8,10*rs),fontWeight:"700"}}>2×ROLL</Text><Text style={{color:"#9b59b6",fontSize:Math.max(12,18*rs),fontWeight:"bold",marginTop:2}}>×{doubleRollsLeft}</Text></View>}
-        {gameLeft!=null&&<View style={{alignItems:"center",paddingHorizontal:Math.max(4,7*rs)}}><Text style={{color:"#555",fontSize:Math.max(8,10*rs),fontWeight:"700"}}>TIME</Text><Text style={{color:gameLeft<=30?"#e74c3c":"#fff",fontSize:Math.max(12,18*rs),fontWeight:"bold",marginTop:2}}>{formatTime(gameLeft)}</Text></View>}
+        {immunityLeft>0&&<View style={{alignItems:"center",paddingHorizontal:Math.max(3,6*rs)}}><Text style={{color:"#555",fontSize:Math.max(8,10*rs),fontWeight:"700"}}>SHIELD</Text><Text style={{color:"#2ecc71",fontSize:Math.max(12,18*rs),fontWeight:"bold",marginTop:2}}>🛡️{immunityLeft}·{immunitySecsLeft}s</Text></View>}
+        {deflectorActive&&<View style={{alignItems:"center",paddingHorizontal:Math.max(3,6*rs)}}><Text style={{color:"#555",fontSize:Math.max(8,10*rs),fontWeight:"700"}}>REFLECT</Text><Text style={{color:"#00bcd4",fontSize:Math.max(12,18*rs),fontWeight:"bold",marginTop:2}}>🪞{deflectorSecsLeft}s</Text></View>}
+        {doubleRollsLeft>0&&<View style={{alignItems:"center",paddingHorizontal:Math.max(3,6*rs)}}><Text style={{color:"#555",fontSize:Math.max(8,10*rs),fontWeight:"700"}}>2×ROLL</Text><Text style={{color:"#9b59b6",fontSize:Math.max(12,18*rs),fontWeight:"bold",marginTop:2}}>×{doubleRollsLeft}</Text></View>}
+        {gameLeft!=null&&<View style={{alignItems:"center",paddingHorizontal:Math.max(3,6*rs)}}><Text style={{color:"#555",fontSize:Math.max(8,10*rs),fontWeight:"700"}}>TIME</Text><Text style={{color:gameLeft<=30?"#e74c3c":"#fff",fontSize:Math.max(12,18*rs),fontWeight:"bold",marginTop:2}}>{formatTime(gameLeft)}</Text></View>}
         <TouchableOpacity style={[S.qBtn,phase==="questions"&&!showMap&&S.qBtnActive,{paddingHorizontal:Math.max(8,13*rs),paddingVertical:Math.max(6,10*rs)}]} onPress={forceQuestions}>
           <Text style={[S.qBtnTxt,{fontSize:Math.max(9,11*rs)}]}>Questions</Text>
         </TouchableOpacity>
@@ -1684,7 +1694,7 @@ export default function BoardGameScreen({ route, navigation }) {
 
       <View style={S.main}>
         {showMap && (
-          <ScrollView ref={boardRef} contentContainerStyle={{padding:10}}>
+          <ScrollView ref={boardRef} contentContainerStyle={{padding:10, paddingBottom:64}}>
             <SnakeBoard board={board} players={players} myPosition={myPos} highlightPos={highlightPos} boardEnd={boardEnd} tileSize={BASE_TILE}/>
             <Legend/>
           </ScrollView>
@@ -1751,45 +1761,37 @@ export default function BoardGameScreen({ route, navigation }) {
         )}
 
         {phase==="rolling" && (
-          <ScrollView contentContainerStyle={{flexGrow:1,alignItems:"center",justifyContent:"center",
-              gap:Math.max(10,16*rs),padding:Math.max(14,22*rs),
-              paddingBottom:72,backgroundColor:"#0d0d0d"}}>
-            <Text style={{color:"#fff",fontSize:Math.max(18,24*rs),fontWeight:"bold",textAlign:"center"}}>Roll the Dice!</Text>
-            {doubleRollsLeft>0&&<Text style={[S.luckTxt,{color:"#9b59b6",fontSize:Math.max(12,15*rs)}]}>🎯 Double Roll active!</Text>}
-            {effLuck>0&&doubleRollsLeft===0&&<Text style={[S.luckTxt,{fontSize:Math.max(12,15*rs)}]}>🍀 Luck {dispLuck}%</Text>}
-            <Animated.View style={{transform:[{translateX:diceAnim}]}}><DiceFace value={diceValue} style={{fontSize:Math.max(56,88*rs),color:"#fff"}}/></Animated.View>
-            {diceValue ? <Text style={{color:"#00c781",fontSize:Math.max(16,22*rs),fontWeight:"bold"}}>Rolled {diceValue}!</Text>
-            : <TouchableOpacity style={[S.rollBtn,{paddingVertical:Math.max(12,18*rs),paddingHorizontal:Math.max(30,52*rs)}]} onPress={handleRoll}><Text style={[S.rollTxtBig,{fontSize:Math.max(16,22*rs)}]}>Roll!</Text></TouchableOpacity>}
-          </ScrollView>
+          <View style={S.diceBox}>
+            <Text style={{color:"#fff",fontSize:Math.max(16,20*rs),fontWeight:"bold",textAlign:"center"}}>Roll the Dice!</Text>
+            {doubleRollsLeft>0&&<Text style={[S.luckTxt,{color:"#9b59b6",fontSize:Math.max(11,14*rs)}]}>🎯 Double Roll active!</Text>}
+            {effLuck>0&&doubleRollsLeft===0&&<Text style={[S.luckTxt,{fontSize:Math.max(11,14*rs)}]}>🍀 Luck {dispLuck}%</Text>}
+            <Animated.View style={{transform:[{translateX:diceAnim}]}}><DiceFace value={diceValue} style={S.diceFace}/></Animated.View>
+            {diceValue ? <Text style={{color:"#00c781",fontSize:Math.max(16,20*rs),fontWeight:"bold"}}>Rolled {diceValue}!</Text>
+            : <TouchableOpacity style={S.rollBtn} onPress={handleRoll}><Text style={S.rollTxtBig}>Roll!</Text></TouchableOpacity>}
+          </View>
         )}
 
         {phase==="space_roll" && srType && (
-          <ScrollView contentContainerStyle={{flexGrow:1,alignItems:"center",justifyContent:"center",
-              gap:Math.max(10,16*rs),padding:Math.max(14,22*rs),
-              paddingBottom:72,backgroundColor:"#0d0d0d"}}>
-            <Text style={{color:srType==="lava"?"#e74c3c":"#3498db",fontSize:Math.max(18,26*rs),fontWeight:"bold",textAlign:"center"}}>{srType==="lava"?"🌋 Lava!":"💥 Cannon!"}</Text>
-            <Text style={[S.luckTxt,{fontSize:Math.max(12,14*rs)}]}>{srType==="lava"?"Roll to see how far you're pushed BACK":"Roll to see how far you're LAUNCHED forward"}</Text>
-            <Animated.View style={{transform:[{translateX:srAnim}]}}><DiceFace value={srValue} style={{fontSize:Math.max(56,88*rs),color:"#fff"}}/></Animated.View>
-            {srValue ? <Text style={{color:srType==="lava"?"#e74c3c":"#3498db",fontSize:Math.max(16,22*rs),fontWeight:"bold"}}>{srType==="lava"?`Back ${srValue} spaces!`:`Forward ${srValue} spaces!`}</Text>
-            : <TouchableOpacity style={[S.rollBtn,{backgroundColor:srType==="lava"?"#c0392b":"#2980b9",paddingVertical:Math.max(12,18*rs),paddingHorizontal:Math.max(28,48*rs)}]} onPress={handleSpaceRoll} disabled={srRolling}><Text style={[S.rollTxtBig,{fontSize:Math.max(16,22*rs)}]}>{srRolling?"Rolling…":"Roll!"}</Text></TouchableOpacity>}
-          </ScrollView>
+          <View style={S.diceBox}>
+            <Text style={{color:srType==="lava"?"#e74c3c":"#3498db",fontSize:Math.max(16,22*rs),fontWeight:"bold",textAlign:"center"}}>{srType==="lava"?"🌋 Lava!":"💥 Cannon!"}</Text>
+            <Text style={[S.luckTxt,{fontSize:Math.max(11,13*rs),textAlign:"center",paddingHorizontal:16}]}>{srType==="lava"?"Roll to see how far you're pushed BACK":"Roll to see how far you're LAUNCHED forward"}</Text>
+            <Animated.View style={{transform:[{translateX:srAnim}]}}><DiceFace value={srValue} style={S.diceFace}/></Animated.View>
+            {srValue ? <Text style={{color:srType==="lava"?"#e74c3c":"#3498db",fontSize:Math.max(16,20*rs),fontWeight:"bold"}}>{srType==="lava"?`Back ${srValue} spaces!`:`Forward ${srValue} spaces!`}</Text>
+            : <TouchableOpacity style={[S.rollBtn,{backgroundColor:srType==="lava"?"#c0392b":"#2980b9"}]} onPress={handleSpaceRoll} disabled={srRolling}><Text style={S.rollTxtBig}>{srRolling?"Rolling…":"Roll!"}</Text></TouchableOpacity>}
+          </View>
         )}
 
         {phase==="moving" && <View style={S.movingBox}><ActivityIndicator color="#00c781" size="large"/><Text style={S.movingTxt}>Moving…</Text></View>}
 
         {phase==="rolled" && (
-          <ScrollView contentContainerStyle={{flexGrow:1,alignItems:"center",justifyContent:"center",
-              padding:Math.max(16,24*rs),paddingBottom:72,gap:Math.max(10,16*rs),
-              backgroundColor:"#0d0d0d"}}>
-            <Text style={{fontSize:Math.max(36,52*rs)}}>✅</Text>
-            <Text style={{color:"#fff",fontSize:Math.max(18,22*rs),fontWeight:"bold"}}>Move done!</Text>
-            <TouchableOpacity style={[S.rollBtn,{backgroundColor:"#00c781",
-                paddingVertical:Math.max(12,18*rs),paddingHorizontal:Math.max(28,48*rs),
-                borderRadius:Math.max(12,16*rs)}]}
+          <View style={S.diceBox}>
+            <Text style={{fontSize:Math.max(36,48*rs)}}>✅</Text>
+            <Text style={{color:"#fff",fontSize:Math.max(16,20*rs),fontWeight:"bold"}}>Move done!</Text>
+            <TouchableOpacity style={[S.rollBtn,{backgroundColor:"#00c781"}]}
               onPress={()=>{ setPhaseSync("questions"); setQIdx(i=>i+1); }}>
-              <Text style={[S.rollTxtBig,{fontSize:Math.max(16,22*rs)}]}>Back to Questions</Text>
+              <Text style={S.rollTxtBig}>Back to Questions</Text>
             </TouchableOpacity>
-          </ScrollView>
+          </View>
         )}
 
         {phase==="duel" && activeDuel && (
@@ -1882,7 +1884,7 @@ export default function BoardGameScreen({ route, navigation }) {
       </View>
 
       {/* Hotbar */}
-      <View style={S.hotbar}>
+      {!isSolo && <View style={S.hotbar}>
         {[0,1,2].map(i => {
           const item = inventory[i];
           const def  = item ? INVENTORY_DEFS[item.type] : null;
@@ -1894,7 +1896,7 @@ export default function BoardGameScreen({ route, navigation }) {
           );
         })}
         <Text style={S.hotbarHint}>TAP{"\n"}TO{"\n"}USE</Text>
-      </View>
+      </View>}
 
       {/* Mystery box */}
       <Modal visible={mBoxOpen} transparent animationType="fade">
@@ -2040,8 +2042,8 @@ export default function BoardGameScreen({ route, navigation }) {
         </View>
       </Modal>
 
-      {/* Duel countdown */}
-      <Modal visible={duelCountdown !== null} transparent animationType="fade">
+      {/* Duel countdown — multiplayer only */}
+      {!isSolo && <Modal visible={duelCountdown !== null} transparent animationType="fade">
         <View style={[S.overlay,{backgroundColor:"rgba(0,10,30,0.97)"}]}>
           <View style={[S.modal,{borderColor:"#3498db",borderWidth:3,backgroundColor:"#060e1e",
             shadowColor:"#3498db",shadowOffset:{width:0,height:0},shadowOpacity:0.7,shadowRadius:28}]}>
@@ -2051,10 +2053,10 @@ export default function BoardGameScreen({ route, navigation }) {
           <Text style={[S.mDesc,{color:"#88ccff",fontSize:18}]}>Get ready…</Text>
           </View>
         </View>
-      </Modal>
+      </Modal>}
 
-      {/* Effect notification — hidden during duel countdown so it can't cover it */}
-      <Modal visible={showNotif && duelCountdown === null} transparent animationType="fade">
+      {/* Effect notification — multiplayer only */}
+      {!isSolo && <Modal visible={showNotif && duelCountdown === null} transparent animationType="fade">
         <View style={[S.overlay,{backgroundColor:"rgba(20,8,0,0.97)"}]}>
           <View style={[S.modal,{borderColor:"#f39c12",borderWidth:3,backgroundColor:"#1e1000",
             shadowColor:"#f39c12",shadowOffset:{width:0,height:0},shadowOpacity:0.7,shadowRadius:28}]}>
@@ -2065,7 +2067,7 @@ export default function BoardGameScreen({ route, navigation }) {
           <TouchableOpacity style={[S.rollBtn,{backgroundColor:"#e67e22",marginTop:8,paddingVertical:18,paddingHorizontal:52}]} onPress={()=>{ setShowNotif(false); if(interruptedPhase){setPhaseSync(interruptedPhase);setInterruptedPhase(null);} }}><Text style={[S.rollTxtBig,{fontSize:22}]}>Got it</Text></TouchableOpacity>
           </View>
         </View>
-      </Modal>
+      </Modal>}
 
       {/* Trap */}
       <Modal visible={phase==="space_event" && !!trapEvent} transparent animationType="fade">
@@ -2236,22 +2238,22 @@ const S = StyleSheet.create({
   center:           { flex:1, backgroundColor:"#111", justifyContent:"center", alignItems:"center" },
   hud:        { flexDirection:"row", alignItems:"center", backgroundColor:"#0a0a0a", borderBottomWidth:2, borderBottomColor:"#222", paddingVertical:8, paddingHorizontal:8, flexWrap:"wrap", gap:4 },
   hudStunned: { backgroundColor:"#3d2806" },
-  hudCell:    { alignItems:"center", paddingHorizontal:14, minWidth:72 },
-  hudLbl:     { color:"#555", fontSize:13, letterSpacing:1.2, fontWeight:"700" },
-  hudVal:     { color:"#fff", fontSize:30, fontWeight:"bold", marginTop:4 },
-  qBtn:       { paddingHorizontal:18, paddingVertical:14, borderRadius:14, backgroundColor:"#1a1a1a", borderWidth:1.5, borderColor:"#555" },
+  hudCell:    { alignItems:"center", paddingHorizontal:6, minWidth:44 },
+  hudLbl:     { color:"#555", fontSize:10, letterSpacing:0.8, fontWeight:"700" },
+  hudVal:     { color:"#fff", fontSize:18, fontWeight:"bold", marginTop:2 },
+  qBtn:       { paddingHorizontal:10, paddingVertical:8, borderRadius:10, backgroundColor:"#1a1a1a", borderWidth:1.5, borderColor:"#555" },
   qBtnActive: { backgroundColor:"#002200", borderColor:"#00c781" },
-  qBtnTxt:    { color:"#aaa", fontSize:13, fontWeight:"700" },
-  mapBtn:     { paddingHorizontal:18, paddingVertical:14, borderRadius:14, backgroundColor:"#1a1a1a", borderWidth:1.5, borderColor:"#333" },
+  qBtnTxt:    { color:"#aaa", fontSize:11, fontWeight:"700" },
+  mapBtn:     { paddingHorizontal:10, paddingVertical:8, borderRadius:10, backgroundColor:"#1a1a1a", borderWidth:1.5, borderColor:"#333" },
   mapBtnOn:   { backgroundColor:"#002a1a", borderColor:"#00c781" },
-  mapBtnTxt:  { color:"#aaa", fontSize:16, fontWeight:"700" },
+  mapBtnTxt:  { color:"#aaa", fontSize:12, fontWeight:"700" },
   hudEndBtn:  { paddingHorizontal:16, paddingVertical:14, borderRadius:14, backgroundColor:"#3a0000", borderWidth:1.5, borderColor:"#c0392b" },
   hudEndBtnTxt:{ color:"#ff6b6b", fontSize:16, fontWeight:"700" },
   timerTrack: { width:"100%", height:7, backgroundColor:"#1a1a1a" },
   timerFill:  { height:7, backgroundColor:"#00c781", alignSelf:"flex-start" },
   main: { flex:1 },
-  qScroll:    { flexGrow:1, justifyContent:"center", padding:16, paddingBottom:72 },
-  qCard:      { gap:16 },
+  qScroll:    { flexGrow:1, justifyContent:"center", padding:12, paddingBottom:80 },
+  qCard:      { gap:10 },
   rollBar:    { flexDirection:"row", alignItems:"center", justifyContent:"center", gap:10, marginBottom:14 },
   rollDot:    { width:16, height:16, borderRadius:8, backgroundColor:"#2a2a2a", borderWidth:2, borderColor:"#444" },
   rollDotOn:  { backgroundColor:"#00c781", borderColor:"#00c781" },
@@ -2261,35 +2263,35 @@ const S = StyleSheet.create({
   zoomOverlay:{ flex:1, backgroundColor:"rgba(0,0,0,0.95)", justifyContent:"center", alignItems:"center" },
   zoomImg:    { width:"100%", height:"80%", borderRadius:8 },
   zoomClose:  { color:"#666", fontSize:14, marginTop:16 },
-  qTxt:       { color:"#fff", fontSize:22, fontWeight:"700", lineHeight:30, textAlign:"center" },
-  aGrid:      { gap:12 },
-  aBtn:       { borderRadius:12, padding:14, borderWidth:2.5, alignItems:"center" },
-  aTxt:       { color:"#fff", fontSize:17, fontWeight:"600" },
+  qTxt:       { color:"#fff", fontSize:18, fontWeight:"700", lineHeight:26, textAlign:"center" },
+  aGrid:      { gap:8 },
+  aBtn:       { borderRadius:10, paddingVertical:11, paddingHorizontal:12, borderWidth:2, alignItems:"center" },
+  aTxt:       { color:"#fff", fontSize:15, fontWeight:"600" },
   waitBox:    { alignItems:"center", paddingVertical:80, gap:14 },
   waitTxt:    { color:"#555", fontSize:16 },
   legend:     { flexDirection:"row", flexWrap:"wrap", justifyContent:"center", gap:10, paddingVertical:10 },
   legendItem: { flexDirection:"row", alignItems:"center", gap:5 },
   legendSwatch:{ width:16, height:16, borderRadius:3, borderWidth:1.5 },
   legendTxt:  { fontSize:12, fontWeight:"600" },
-  diceBox:    { flex:1, alignItems:"center", justifyContent:"center", gap:14, backgroundColor:"#0d0d0d", padding:16 },
+  diceBox:    { flex:1, alignItems:"center", justifyContent:"center", gap:10, backgroundColor:"#0d0d0d", padding:14 },
   diceTtl:    { color:"#fff", fontSize:26, fontWeight:"bold", textAlign:"center" },
-  luckTxt:    { color:"#888", fontSize:15, textAlign:"center" },
-  diceFace:   { fontSize:96, color:"#fff" },
+  luckTxt:    { color:"#888", fontSize:13, textAlign:"center" },
+  diceFace:   { fontSize:72, color:"#fff" },
   diceRes:    { color:"#00c781", fontSize:24, fontWeight:"bold" },
-  rollBtn:    { backgroundColor:"#00c781", paddingVertical:16, paddingHorizontal:44, borderRadius:16 },
-  rollTxtBig: { color:"#000", fontSize:20, fontWeight:"bold" },
+  rollBtn:    { backgroundColor:"#00c781", paddingVertical:13, paddingHorizontal:32, borderRadius:14 },
+  rollTxtBig: { color:"#000", fontSize:17, fontWeight:"bold" },
   movingBox:  { flex:1, alignItems:"center", justifyContent:"center", gap:16, backgroundColor:"#0d0d0d" },
   movingTxt:  { color:"#aaa", fontSize:18 },
   rolledBox:  { flex:1, alignItems:"center", justifyContent:"center", gap:16, backgroundColor:"#0d0d0d" },
   rolledEmoji:{ fontSize:64 },
   rolledTtl:  { color:"#fff", fontSize:26, fontWeight:"bold" },
-  hotbar:     { position:"absolute", bottom:0, left:0, right:0, flexDirection:"row", alignItems:"center", justifyContent:"center", gap:8, paddingVertical:6, paddingHorizontal:10, backgroundColor:"rgba(0,0,0,0.9)", borderTopWidth:1, borderTopColor:"#222" },
-  hotbarSlot: { flex:1, maxWidth:110, height:52, borderRadius:10, backgroundColor:"#1a1a1a", borderWidth:2, borderColor:"#333", alignItems:"center", justifyContent:"center", flexDirection:"row", gap:6 },
+  hotbar:     { position:"absolute", bottom:0, left:0, right:0, flexDirection:"row", alignItems:"center", justifyContent:"center", gap:6, paddingVertical:5, paddingHorizontal:8, paddingBottom:8, backgroundColor:"rgba(0,0,0,0.95)", borderTopWidth:1, borderTopColor:"#333" },
+  hotbarSlot: { flex:1, maxWidth:100, height:46, borderRadius:10, backgroundColor:"#1a1a1a", borderWidth:1.5, borderColor:"#333", alignItems:"center", justifyContent:"center", flexDirection:"row", gap:4 },
   hotbarSlotFull: { backgroundColor:"#1e1a00" },
-  hotbarEmoji:{ fontSize:22 },
-  hotbarLabel:{ color:"#fff", fontSize:8, fontWeight:"700", textAlign:"center", paddingHorizontal:2 },
+  hotbarEmoji:{ fontSize:18 },
+  hotbarLabel:{ color:"#fff", fontSize:8, fontWeight:"700", textAlign:"center", paddingHorizontal:2, flexShrink:1 },
   hotbarEmpty:{ color:"#333", fontSize:22 },
-  hotbarHint: { color:"#444", fontSize:9, fontWeight:"700", textAlign:"center", marginLeft:4 },
+  hotbarHint: { color:"#444", fontSize:8, fontWeight:"700", textAlign:"center", marginLeft:4 },
   mysteryOverlay: { flex:1, backgroundColor:"rgba(0,0,0,0.82)", justifyContent:"center", alignItems:"center" },
   mysteryPanel:   { backgroundColor:"#1a0830", borderRadius:24, borderWidth:3, borderColor:"#a855f7", padding:28, width:"92%", maxWidth:460, alignItems:"center", gap:14, position:"relative",
                     shadowColor:"#a855f7", shadowOffset:{width:0,height:0}, shadowOpacity:0.6, shadowRadius:24 },
@@ -2301,7 +2303,7 @@ const S = StyleSheet.create({
   targetBtn:      { flexDirection:"row", alignItems:"center", backgroundColor:"#252525", borderRadius:14, borderWidth:2, paddingVertical:16, paddingHorizontal:18, marginVertical:4 },
   targetName:     { flex:1, fontSize:19, fontWeight:"700" },
   targetPos:      { color:"#555", fontSize:14 },
-  duelScroll:     { flexGrow:1, justifyContent:"flex-start", padding:24, paddingBottom:80, alignItems:"center", gap:14 },
+  duelScroll:     { flexGrow:1, justifyContent:"flex-start", padding:16, paddingBottom:90, alignItems:"center", gap:10 },
   closeBtn:    { position:"absolute", top:10, right:10, width:36, height:36, borderRadius:18, backgroundColor:"rgba(255,255,255,0.18)", borderWidth:1, borderColor:"rgba(255,255,255,0.25)", alignItems:"center", justifyContent:"center", zIndex:10 },
   closeBtnTxt: { color:"#fff", fontSize:18, fontWeight:"bold" },
   toast:    { position:"absolute", bottom:24, right:100, backgroundColor:"#1a1a00", borderWidth:1.5, borderColor:"#f39c12", borderRadius:14, paddingVertical:10, paddingHorizontal:16, zIndex:998, maxWidth:260 },
@@ -2325,13 +2327,13 @@ const S = StyleSheet.create({
   lbDot:      { width:26, height:26, borderRadius:13, marginRight:16 },
   lbName:     { color:"#fff", fontSize:26, fontWeight:"500", flex:1 },
   lbPos:      { color:"#aaa", fontSize:24 },
-  leaveBtn:    { position:"absolute", bottom:12, left:16, backgroundColor:"#2a0000", paddingVertical:12, paddingHorizontal:22, borderRadius:12 },
-  leaveBtnTxt: { color:"#ff6b6b", fontSize:15, fontWeight:"bold" },
+  leaveBtn:    { position:"absolute", top:8, left:8, backgroundColor:"rgba(42,0,0,0.85)", paddingVertical:7, paddingHorizontal:14, borderRadius:10, zIndex:5 },
+  leaveBtnTxt: { color:"#ff6b6b", fontSize:12, fontWeight:"bold" },
   overlay: { flex:1, backgroundColor:"rgba(0,0,0,0.94)", justifyContent:"center", alignItems:"center" },
   modal:   { backgroundColor:"#1e1e1e", borderRadius:24, padding:28, width:"92%", maxWidth:460, alignItems:"center", borderWidth:2.5, borderColor:"#444", gap:14, position:"relative",
              shadowColor:"#000", shadowOffset:{width:0,height:8}, shadowOpacity:0.8, shadowRadius:20 },
   mTtl:    { color:"#fff", fontSize:26, fontWeight:"900", textAlign:"center", letterSpacing:0.5 },
   mDesc:   { color:"#e0e0e0", fontSize:17, textAlign:"center", lineHeight:25 },
-  stunnedBanner:{ backgroundColor:"#5c3800", borderRadius:12, padding:14, marginBottom:8, borderWidth:1.5, borderColor:"#d68910" },
+  stunnedBanner:{ backgroundColor:"#5c3800", borderRadius:10, padding:10, marginBottom:6, borderWidth:1.5, borderColor:"#d68910" },
   stunnedTxt:   { color:"#f39c12", fontSize:16, fontWeight:"bold", textAlign:"center" },
 });
