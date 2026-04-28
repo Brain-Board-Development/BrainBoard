@@ -1977,9 +1977,9 @@ export default function BoardGameScreen({ route, navigation }) {
         <View style={[S.overlay, {backgroundColor:"rgba(160,80,0,0.97)"}]}>
           <View style={[S.modal, {borderColor:"#f39c12",borderWidth:2.5,backgroundColor:"#2e1500",width:"92%",maxWidth:480}]}>
             <Text style={{fontSize:44,textAlign:"center"}}>😵</Text>
-            <Text style={[S.mTtl,{color:"#f39c12",fontSize:26}]}>STUNNED!</Text>
+            <Text style={[S.mTtl,{color:"#ffa500",fontSize:32,letterSpacing:2}]}>😵 STUNNED!</Text>
             {stunBy ? <Text style={[S.mDesc,{color:"#ffcc88",fontSize:14,marginTop:-4}]}>by {stunBy}</Text> : null}
-            <Text style={[S.mDesc,{color:"#ffcc88",fontSize:16}]}>Answer {ROLL_AT} questions correctly in a row to break free!</Text>
+            <Text style={[S.mDesc,{color:"#ffe0a0",fontSize:18,fontWeight:"700"}]}>Answer {ROLL_AT} questions in a row to break free!</Text>
             <View style={{flexDirection:"row",gap:12,marginVertical:8}}>
               {[0,1,2].map(i=>(
                 <View key={i} style={[S.rollDot, i<stunRecovery && {backgroundColor:"#f39c12",borderColor:"#f39c12",width:20,height:20,borderRadius:10}]}/>
@@ -2042,28 +2042,36 @@ export default function BoardGameScreen({ route, navigation }) {
 
       {/* Duel countdown */}
       <Modal visible={duelCountdown !== null} transparent animationType="fade">
-        <View style={S.overlay}><View style={[S.modal,{borderColor:"#3498db",borderWidth:2}]}>
+        <View style={[S.overlay,{backgroundColor:"rgba(0,10,30,0.97)"}]}>
+          <View style={[S.modal,{borderColor:"#3498db",borderWidth:3,backgroundColor:"#060e1e",
+            shadowColor:"#3498db",shadowOffset:{width:0,height:0},shadowOpacity:0.7,shadowRadius:28}]}>
           <Text style={{fontSize:52}}>⚔️</Text>
-          <Text style={[S.mTtl,{color:"#3498db"}]}>1v1 Starting!</Text>
-          <Text style={{color:"#fff",fontSize:88,fontWeight:"900",textAlign:"center",lineHeight:96}}>{duelCountdown}</Text>
-          <Text style={S.mDesc}>Get ready…</Text>
-        </View></View>
+          <Text style={[S.mTtl,{color:"#60c8ff",fontSize:30}]}>⚔️ 1v1 Starting!</Text>
+          <Text style={{color:"#fff",fontSize:100,fontWeight:"900",textAlign:"center",lineHeight:110}}>{duelCountdown}</Text>
+          <Text style={[S.mDesc,{color:"#88ccff",fontSize:18}]}>Get ready…</Text>
+          </View>
+        </View>
       </Modal>
 
       {/* Effect notification — hidden during duel countdown so it can't cover it */}
       <Modal visible={showNotif && duelCountdown === null} transparent animationType="fade">
-        <View style={S.overlay}><View style={[S.modal,{borderColor:"#e67e22",borderWidth:2}]}>
+        <View style={[S.overlay,{backgroundColor:"rgba(20,8,0,0.97)"}]}>
+          <View style={[S.modal,{borderColor:"#f39c12",borderWidth:3,backgroundColor:"#1e1000",
+            shadowColor:"#f39c12",shadowOffset:{width:0,height:0},shadowOpacity:0.7,shadowRadius:28}]}>
           <CloseBtn onPress={()=>{ setShowNotif(false); if(interruptedPhase){setPhaseSync(interruptedPhase);setInterruptedPhase(null);} }}/>
           <Text style={{fontSize:52}}>⚡</Text>
-          <Text style={[S.mTtl,{color:"#e67e22"}]}>Effect Applied!</Text>
-          <Text style={[S.mDesc,{fontSize:18,lineHeight:26}]}>{notif}</Text>
-          <TouchableOpacity style={[S.rollBtn,{backgroundColor:"#e67e22",marginTop:8}]} onPress={()=>{ setShowNotif(false); if(interruptedPhase){setPhaseSync(interruptedPhase);setInterruptedPhase(null);} }}><Text style={S.rollTxtBig}>Got it</Text></TouchableOpacity>
-        </View></View>
+          <Text style={[S.mTtl,{color:"#ffa500",fontSize:28}]}>⚡ Effect!</Text>
+          <Text style={[S.mDesc,{fontSize:20,lineHeight:30,color:"#ffe0b0",fontWeight:"600"}]}>{notif}</Text>
+          <TouchableOpacity style={[S.rollBtn,{backgroundColor:"#e67e22",marginTop:8,paddingVertical:18,paddingHorizontal:52}]} onPress={()=>{ setShowNotif(false); if(interruptedPhase){setPhaseSync(interruptedPhase);setInterruptedPhase(null);} }}><Text style={[S.rollTxtBig,{fontSize:22}]}>Got it</Text></TouchableOpacity>
+          </View>
+        </View>
       </Modal>
 
       {/* Trap */}
       <Modal visible={phase==="space_event" && !!trapEvent} transparent animationType="fade">
-        <View style={S.overlay}><View style={S.modal}>
+        <View style={[S.overlay,{backgroundColor:"rgba(10,6,0,0.97)"}]}>
+          <View style={[S.modal,{borderColor:"#d68910",borderWidth:3,backgroundColor:"#1a1200",
+            shadowColor:"#d68910",shadowOffset:{width:0,height:0},shadowOpacity:0.6,shadowRadius:20}]}>
           <CloseBtn onPress={()=>{ clearInterval(trapRef.current); setTrapEvent(null); setPhaseSync("questions"); setDiceValue(null); }}/>
           <Text style={[S.mTtl,{color:"#d68910"}]}>Trap — Answer Fast!</Text>
           <Text style={[{color:"#fff",fontSize:40,fontWeight:"bold",textAlign:"center"},trapTimer<=3&&{color:"#e74c3c"}]}>{trapTimer}s</Text>
@@ -2283,18 +2291,19 @@ const S = StyleSheet.create({
   hotbarEmpty:{ color:"#333", fontSize:22 },
   hotbarHint: { color:"#444", fontSize:9, fontWeight:"700", textAlign:"center", marginLeft:4 },
   mysteryOverlay: { flex:1, backgroundColor:"rgba(0,0,0,0.82)", justifyContent:"center", alignItems:"center" },
-  mysteryPanel:   { backgroundColor:"#160a22", borderRadius:24, borderWidth:2, borderColor:"#8e44ad", padding:28, width:"85%", maxWidth:440, alignItems:"center", gap:14, position:"relative" },
-  mysteryBigTtl:  { color:"#8e44ad", fontSize:30, fontWeight:"900", textAlign:"center" },
-  mysteryCard:    { backgroundColor:"#1a0a2a", borderRadius:20, borderWidth:2, padding:24, alignItems:"center", gap:8, width:"100%" },
+  mysteryPanel:   { backgroundColor:"#1a0830", borderRadius:24, borderWidth:3, borderColor:"#a855f7", padding:28, width:"92%", maxWidth:460, alignItems:"center", gap:14, position:"relative",
+                    shadowColor:"#a855f7", shadowOffset:{width:0,height:0}, shadowOpacity:0.6, shadowRadius:24 },
+  mysteryBigTtl:  { color:"#d8a0ff", fontSize:32, fontWeight:"900", textAlign:"center", letterSpacing:1 },
+  mysteryCard:    { backgroundColor:"#22083a", borderRadius:20, borderWidth:2.5, padding:24, alignItems:"center", gap:10, width:"100%" },
   mysteryEmoji:   { fontSize:52 },
-  mysteryTitle:   { fontSize:26, fontWeight:"bold", textAlign:"center" },
-  mysteryDesc:    { color:"#ccc", fontSize:16, textAlign:"center", lineHeight:24 },
-  targetBtn:      { flexDirection:"row", alignItems:"center", backgroundColor:"#1a1a1a", borderRadius:14, borderWidth:2, paddingVertical:14, paddingHorizontal:18, marginVertical:3 },
-  targetName:     { flex:1, fontSize:18, fontWeight:"600" },
+  mysteryTitle:   { fontSize:28, fontWeight:"900", textAlign:"center", letterSpacing:0.5 },
+  mysteryDesc:    { color:"#ddd", fontSize:17, textAlign:"center", lineHeight:26 },
+  targetBtn:      { flexDirection:"row", alignItems:"center", backgroundColor:"#252525", borderRadius:14, borderWidth:2, paddingVertical:16, paddingHorizontal:18, marginVertical:4 },
+  targetName:     { flex:1, fontSize:19, fontWeight:"700" },
   targetPos:      { color:"#555", fontSize:14 },
   duelScroll:     { flexGrow:1, justifyContent:"flex-start", padding:24, paddingBottom:80, alignItems:"center", gap:14 },
-  closeBtn:    { position:"absolute", top:12, right:12, width:32, height:32, borderRadius:16, backgroundColor:"rgba(255,255,255,0.1)", alignItems:"center", justifyContent:"center", zIndex:10 },
-  closeBtnTxt: { color:"#aaa", fontSize:16, fontWeight:"bold" },
+  closeBtn:    { position:"absolute", top:10, right:10, width:36, height:36, borderRadius:18, backgroundColor:"rgba(255,255,255,0.18)", borderWidth:1, borderColor:"rgba(255,255,255,0.25)", alignItems:"center", justifyContent:"center", zIndex:10 },
+  closeBtnTxt: { color:"#fff", fontSize:18, fontWeight:"bold" },
   toast:    { position:"absolute", bottom:24, right:100, backgroundColor:"#1a1a00", borderWidth:1.5, borderColor:"#f39c12", borderRadius:14, paddingVertical:10, paddingHorizontal:16, zIndex:998, maxWidth:260 },
   toastTxt: { color:"#f39c12", fontSize:13, fontWeight:"bold", lineHeight:18 },
   flashOverlay: { position:"absolute", top:0, left:0, right:0, bottom:0, zIndex:999 },
@@ -2318,10 +2327,11 @@ const S = StyleSheet.create({
   lbPos:      { color:"#aaa", fontSize:24 },
   leaveBtn:    { position:"absolute", bottom:12, left:16, backgroundColor:"#2a0000", paddingVertical:12, paddingHorizontal:22, borderRadius:12 },
   leaveBtnTxt: { color:"#ff6b6b", fontSize:15, fontWeight:"bold" },
-  overlay: { flex:1, backgroundColor:"rgba(0,0,0,0.92)", justifyContent:"center", alignItems:"center" },
-  modal:   { backgroundColor:"#1a1a1a", borderRadius:22, padding:28, width:"90%", maxWidth:440, alignItems:"center", borderWidth:1, borderColor:"#2a2a2a", gap:12, position:"relative" },
-  mTtl:    { color:"#fff", fontSize:24, fontWeight:"bold", textAlign:"center" },
-  mDesc:   { color:"#bbb", fontSize:16, textAlign:"center", lineHeight:22 },
+  overlay: { flex:1, backgroundColor:"rgba(0,0,0,0.94)", justifyContent:"center", alignItems:"center" },
+  modal:   { backgroundColor:"#1e1e1e", borderRadius:24, padding:28, width:"92%", maxWidth:460, alignItems:"center", borderWidth:2.5, borderColor:"#444", gap:14, position:"relative",
+             shadowColor:"#000", shadowOffset:{width:0,height:8}, shadowOpacity:0.8, shadowRadius:20 },
+  mTtl:    { color:"#fff", fontSize:26, fontWeight:"900", textAlign:"center", letterSpacing:0.5 },
+  mDesc:   { color:"#e0e0e0", fontSize:17, textAlign:"center", lineHeight:25 },
   stunnedBanner:{ backgroundColor:"#5c3800", borderRadius:12, padding:14, marginBottom:8, borderWidth:1.5, borderColor:"#d68910" },
   stunnedTxt:   { color:"#f39c12", fontSize:16, fontWeight:"bold", textAlign:"center" },
 });
