@@ -28,8 +28,11 @@
       "package": "com.anonymous.snackf7a5619ff2df431091d0e07cc201d1dc"
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro",
+      "output": "static"
     },
+    "platforms": ["ios", "android", "web"],
     "extra": {
       "eas": {
         "projectId": "e5576328-43d8-49c0-8134-c10a0cfa715a"
