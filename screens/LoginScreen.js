@@ -1,8 +1,6 @@
 import React, { useState, useRef } from "react";
 import {
-  View, Text, StyleSheet, TouchableOpacity, TextInput,
-  SafeAreaView, Platform, ActivityIndicator, Image,
-  useWindowDimensions, ScrollView,
+  View, Text, StyleSheet, TouchableOpacity, TextInput, SafeAreaView, Platform, ActivityIndicator, useWindowDimensions, ScrollView, Pressable,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
@@ -111,7 +109,7 @@ export default function LoginScreen({ navigation }) {
               returnKeyType="go" onSubmitEditing={handleLogin}
             />
             <TouchableOpacity style={S.eyeBtn} onPress={() => setShowPassword(p => !p)}>
-              <Text style={S.eyeTxt}>{showPassword ? "🙈" : "👁️"}</Text>
+              <Text style={S.eyeTxt}>{showPassword ? "Hide" : "Show"}</Text>
             </TouchableOpacity>
           </View>
           {!!passwordError && <Text style={S.err}>{passwordError}</Text>}
@@ -123,18 +121,18 @@ export default function LoginScreen({ navigation }) {
           {!!serverError && <Text style={[S.err, { marginBottom: 8 }]}>{serverError}</Text>}
         </View>
 
-        <TouchableOpacity
-          style={[S.btn, { width: formW, opacity: (!identifier || !password || identifierError || passwordError) ? 0.5 : 1 }]}
+        <Pressable
+          style={({hovered,pressed})=>[S.btn, { width: formW, opacity: (!identifier || !password || identifierError || passwordError) ? 0.5 : 1 }, Platform.OS==='web'&&hovered&&{backgroundColor:'#00e090',transform:[{scale:1.02}]}, pressed&&{opacity:0.85}]}
           onPress={handleLogin} disabled={isLoading || !identifier || !password || !!identifierError || !!passwordError}
         >
           {isLoading ? <ActivityIndicator color="#fff" /> : <Text style={S.btnTxt}>Log In</Text>}
-        </TouchableOpacity>
+        </Pressable>
 
         <Text style={S.or}>or</Text>
 
-        <TouchableOpacity style={[S.btn, S.googleBtn, { width: formW }]} onPress={handleGoogleSignIn} disabled={isLoading}>
+        <Pressable style={({hovered,pressed})=>[S.btn, S.googleBtn, { width: formW }, Platform.OS==='web'&&hovered&&{backgroundColor:'#5b9cf6',transform:[{scale:1.02}]}, pressed&&{opacity:0.85}]} onPress={handleGoogleSignIn} disabled={isLoading}>
           {isLoading ? <ActivityIndicator color="#fff" /> : <Text style={S.btnTxt}>Continue with Google</Text>}
-        </TouchableOpacity>
+        </Pressable>
 
         <View style={[S.row, { marginTop: 16 }]}>
           <Text style={S.muted}>Don't have an account? </Text>

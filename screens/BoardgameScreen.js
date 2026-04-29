@@ -10,9 +10,7 @@
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
-  View, Text, StyleSheet, TouchableOpacity, ScrollView,
-  Animated, Dimensions, ActivityIndicator, SafeAreaView, Modal, Image,
-  useWindowDimensions,
+  View, Text, StyleSheet, TouchableOpacity, ScrollView, Animated, ActivityIndicator, SafeAreaView, Modal, Image, useWindowDimensions, Pressable, Platform,
 } from "react-native";
 import { db, auth } from "../firebaseConfig";
 import { doc, onSnapshot, updateDoc, runTransaction, getDoc, deleteField } from "firebase/firestore";
@@ -56,12 +54,12 @@ const SPACE_CFG = {
 };
 
 const MYSTERY_DEFS = {
-  pushback:   { emoji:"💥", title:"Push Back",     desc:"Push a player 3 spaces backward.",                color:"#e74c3c", needsTarget:true,  inventoryType:null },
-  duel:       { emoji:"⚔️",  title:"1v1 a Player",  desc:"Challenge a player to a 3-question quiz duel.",   color:"#3498db", needsTarget:true,  inventoryType:null },
-  stun:       { emoji:"😵", title:"Stun",           desc:"A player must answer 3 in a row to recover.",     color:"#e67e22", needsTarget:true,  inventoryType:null },
-  immunity:   { emoji:"🛡️",  title:"Immunity",      desc:"Protected from effects & bad tiles for 2 landings or 45 s.", color:"#2ecc71", needsTarget:false, inventoryType:null },
+  pushback:   { emoji:"", title:"Push Back",     desc:"Push a player 3 spaces backward.",                color:"#e74c3c", needsTarget:true,  inventoryType:null },
+  duel:       { emoji:"",  title:"1v1 a Player",  desc:"Challenge a player to a 3-question quiz duel.",   color:"#3498db", needsTarget:true,  inventoryType:null },
+  stun:       { emoji:"", title:"Stun",           desc:"A player must answer 3 in a row to recover.",     color:"#e67e22", needsTarget:true,  inventoryType:null },
+  immunity:   { emoji:"",  title:"Immunity",      desc:"Protected from effects & bad tiles for 2 landings or 45 s.", color:"#2ecc71", needsTarget:false, inventoryType:null },
   doubleroll: { emoji:"🎲", title:"Double Roll",    desc:"Your next 2 rolls each sum 2 dice.",               color:"#9b59b6", needsTarget:false, inventoryType:null },
-  deflector:  { emoji:"🪞", title:"Deflector",      desc:"Saved to inventory! Reflects next incoming effect back for 30 s.", color:"#00bcd4", needsTarget:false, inventoryType:"deflector" },
+  deflector:  { emoji:"", title:"Deflector",      desc:"Saved to inventory! Reflects next incoming effect back for 30 s.", color:"#00bcd4", needsTarget:false, inventoryType:"deflector" },
   badluck:    { emoji:"🌑", title:"Bad Luck Aura",  desc:"A player loses 30% Luck for 45 seconds.",         color:"#7f8c8d", needsTarget:true,  inventoryType:null },
 };
 const MYSTERY_KEYS = Object.keys(MYSTERY_DEFS);
@@ -74,8 +72,8 @@ const SOLO_MYSTERY_DEFS = {
 const SOLO_MYSTERY_KEYS = Object.keys(SOLO_MYSTERY_DEFS);
 
 const INVENTORY_DEFS = {
-  mystery_box: { emoji:"🎁", label:"Mystery Box", desc:"Open for a random effect" },
-  deflector:   { emoji:"🪞", label:"Deflector",   desc:"Reflect next effect (30 s)" },
+  mystery_box: { emoji:"", label:"Mystery Box", desc:"Open for a random effect" },
+  deflector:   { emoji:"", label:"Deflector",   desc:"Reflect next effect (30 s)" },
 };
 
 const DICE_EMOJI = ["⚀","⚁","⚂","⚃","⚄","⚅"];
@@ -499,7 +497,7 @@ function CannonTile({ sz }) {
   );
 }
 
-function SnakeBoard({ board, players, myPosition, highlightPos, boardEnd, tileSize }) {
+function SnakeBoard({ board, players, myPosition, myPlayerName, myPlayerColor, highlightPos, boardEnd, tileSize }) {
   const { width: winW } = useWindowDimensions();
   const sz = tileSize || Math.min(96, Math.max(44, Math.floor((winW - 32) / BOARD_COLS)));
   const rows = buildSnakeRows(boardEnd);
@@ -531,18 +529,23 @@ function SnakeBoard({ board, players, myPosition, highlightPos, boardEnd, tileSi
             return (
               <View key={i} style={[bS.tile, {width:sz,height:sz}, tileStyle(i)]}>
                 {i===boardEnd ? <SnakeHead size={sz}/>
-                 : i===0     ? <Text style={{fontSize:sz*0.38}}>🏁</Text>
+                 : i===0     ? <Text style={{fontSize:sz*0.38}}>FINISH</Text>
                  : type==="lava"    ? <LavaTile sz={sz}/>
                  : type==="trap"    ? <TrapTile sz={sz}/>
                  : type==="cannon"  ? <CannonTile sz={sz}/>
                  : type==="mystery"
                     ? <View style={[bS.mysteryBadge,{width:sz*0.52,height:sz*0.52}]}><Text style={[bS.mysteryBadgeTxt,{fontSize:sz*0.34}]}>?</Text></View>
                     : <Text style={{fontSize:sz*0.26,color:"#4a6a4a",fontWeight:"bold"}}>{i}</Text>}
-                <View style={bS.tokenRow}>
-                  {here.slice(0,3).map((p,pi) => (
-                    <Pawn key={pi} color={p.color||"#888"} size={sz*0.3}/>
-                  ))}
-                </View>
+                {here.length > 0 && (
+                  <View style={bS.tokenRow}>
+                    {here.map((p, pi) => {
+                      const isMe = p.name === myPlayerName;
+                      if (isMe) return <Pawn key={pi} color={p.color||myPlayerColor||"#00c781"} size={sz*0.36}/>;
+                      // Other players: plain coloured dot
+                      return <View key={pi} style={[bS.otherDot, {backgroundColor: p.color||"#888", width:sz*0.2, height:sz*0.2, borderRadius:sz*0.1}]} />;
+                    })}
+                  </View>
+                )}
               </View>
             );
           })}
@@ -555,7 +558,8 @@ const bS = StyleSheet.create({
   board:    {paddingBottom:8},
   row:      {flexDirection:"row",justifyContent:"center",marginBottom:4},
   tile:     {borderRadius:9,margin:2,alignItems:"center",justifyContent:"center",position:"relative"},
-  tokenRow: {position:"absolute",bottom:3,flexDirection:"row",flexWrap:"wrap",justifyContent:"center"},
+  tokenRow: {position:"absolute",bottom:2,left:0,right:0,flexDirection:"row",flexWrap:"wrap",justifyContent:"center",alignItems:"flex-end",gap:1},
+  otherDot:  {borderWidth:1.5, borderColor:"rgba(0,0,0,0.4)"},
   token:    {margin:1,borderWidth:1.5,borderColor:"rgba(255,255,255,0.4)"},
   mysteryBadge:   {backgroundColor:"#8e44ad",borderRadius:6,alignItems:"center",justifyContent:"center"},
   mysteryBadgeTxt:{color:"#fff",fontWeight:"900"},
@@ -1107,7 +1111,7 @@ export default function BoardGameScreen({ route, navigation }) {
 
     if (tDeflect) {
       // Clear defender's deflector and notify them
-      const notifBack = {text:`🪞 You deflected ${playerName}'s ${mBoxDef?.title} back at them!`, id:Date.now()};
+      const notifBack = {text:` You deflected ${playerName}'s ${mBoxDef?.title} back at them!`, id:Date.now()};
       const updDeflect = (sess.players||[]).map(p =>
         p.name===target.name ? {...p, deflectorExpires:0, notification:notifBack} : p
       );
@@ -1139,7 +1143,7 @@ export default function BoardGameScreen({ route, navigation }) {
         updateDoc(doc(db,"gameSessions",sessionId), {players:updDeflect}).catch(console.error);
       }
 
-      setNotif(`Your ${mBoxDef?.title} was deflected back at you by ${target.name}! 🪞`);
+      setNotif(`Your ${mBoxDef?.title} was deflected back at you by ${target.name}! `);
       setShowNotif(true);
       closeMBox();
       if (willReturnToQ) setQIdx(i => i+1);
@@ -1159,13 +1163,13 @@ export default function BoardGameScreen({ route, navigation }) {
     switch (mBoxKey) {
       case "pushback": {
         const np = Math.max(0, (target.position||0) - 3);
-        const notif = {text:`You were pushed back 3 spaces by ${playerName}! 💥`, id:Date.now()};
+        const notif = {text:`You were pushed back 3 spaces by ${playerName}! `, id:Date.now()};
         const upd = (sess.players||[]).map(p => p.name===target.name ? {...p, position:np, notification:notif} : p);
         await updateDoc(doc(db,"gameSessions",sessionId), {players:upd}).catch(console.error);
         break;
       }
       case "stun": {
-        const notif = {text:`You've been stunned by ${playerName}! 😵 Answer 3 in a row to recover.`, id:Date.now()};
+        const notif = {text:`You've been stunned by ${playerName}!  Answer 3 in a row to recover.`, id:Date.now()};
         await updateDoc(doc(db,"gameSessions",sessionId), {
           [`activeStuns.${target.name}`]: { by: playerName, id: Date.now() },
           players: (sess.players||[]).map(p => p.name===target.name ? {...p, notification:notif} : p),
@@ -1191,7 +1195,7 @@ export default function BoardGameScreen({ route, navigation }) {
             status:"active", winnerName:null,
             challengerDismissed:false, opponentDismissed:false,
           };
-          const notif = {text:`${playerName} has challenged you to a 1v1! ⚔️`, id:Date.now()};
+          const notif = {text:`${playerName} has challenged you to a 1v1! `, id:Date.now()};
           const updP = (sess.players||[]).map(p => p.name===target.name ? {...p, notification:notif} : p);
           await updateDoc(doc(db,"gameSessions",sessionId), {activeDuel, players:updP}).catch(console.error);
         }
@@ -1637,7 +1641,7 @@ export default function BoardGameScreen({ route, navigation }) {
         </View>
         <View style={S.hostBody}>
           <ScrollView ref={boardRef} style={{flex:1}} contentContainerStyle={{padding:12}}>
-            <SnakeBoard board={board} players={players} myPosition={-1} highlightPos={null} boardEnd={boardEnd} tileSize={HOST_TILE}/>
+            <SnakeBoard board={board} players={players} myPosition={-1} myPlayerName={playerName} myPlayerColor={playerColor} highlightPos={null} boardEnd={boardEnd} tileSize={HOST_TILE}/>
             <Legend/>
           </ScrollView>
           <View style={S.hostSide}>
@@ -1664,7 +1668,7 @@ export default function BoardGameScreen({ route, navigation }) {
     <SafeAreaView style={[S.container, isStunned&&S.containerStunned]}>
 
       <View style={[S.hud, isStunned&&S.hudStunned, {paddingVertical:Math.max(6,12*rs),paddingHorizontal:Math.max(6,10*rs),gap:Math.max(4,6*rs)}]}>
-        {[["STREAK",streak>0?`🔥${streak}`:String(streak),streak>0?"#f39c12":null],
+        {[["STREAK",streak>0?`x${streak}`:String(streak),streak>0?"#f39c12":null],
           ["LUCK",`${dispLuck}%`,badLuck?"#e74c3c":null],
           ["SPACE",`${myPos}/${boardEnd}`,playerColor],
         ].map(([lbl,val,col])=>(
@@ -1673,16 +1677,16 @@ export default function BoardGameScreen({ route, navigation }) {
             <Text style={{color:col||"#fff",fontSize:Math.max(16,22*rs),fontWeight:"bold",marginTop:2}}>{val}</Text>
           </View>
         ))}
-        {immunityLeft>0&&<View style={{alignItems:"center",paddingHorizontal:Math.max(3,6*rs)}}><Text style={{color:"#555",fontSize:Math.max(8,10*rs),fontWeight:"700"}}>SHIELD</Text><Text style={{color:"#2ecc71",fontSize:Math.max(12,18*rs),fontWeight:"bold",marginTop:2}}>🛡️{immunityLeft}·{immunitySecsLeft}s</Text></View>}
-        {deflectorActive&&<View style={{alignItems:"center",paddingHorizontal:Math.max(3,6*rs)}}><Text style={{color:"#555",fontSize:Math.max(8,10*rs),fontWeight:"700"}}>REFLECT</Text><Text style={{color:"#00bcd4",fontSize:Math.max(12,18*rs),fontWeight:"bold",marginTop:2}}>🪞{deflectorSecsLeft}s</Text></View>}
+        {immunityLeft>0&&<View style={{alignItems:"center",paddingHorizontal:Math.max(3,6*rs)}}><Text style={{color:"#555",fontSize:Math.max(8,10*rs),fontWeight:"700"}}>SHIELD</Text><Text style={{color:"#2ecc71",fontSize:Math.max(12,18*rs),fontWeight:"bold",marginTop:2}}>{immunityLeft}·{immunitySecsLeft}s</Text></View>}
+        {deflectorActive&&<View style={{alignItems:"center",paddingHorizontal:Math.max(3,6*rs)}}><Text style={{color:"#555",fontSize:Math.max(8,10*rs),fontWeight:"700"}}>REFLECT</Text><Text style={{color:"#00bcd4",fontSize:Math.max(12,18*rs),fontWeight:"bold",marginTop:2}}>{deflectorSecsLeft}ss</Text></View>}
         {doubleRollsLeft>0&&<View style={{alignItems:"center",paddingHorizontal:Math.max(3,6*rs)}}><Text style={{color:"#555",fontSize:Math.max(8,10*rs),fontWeight:"700"}}>2×ROLL</Text><Text style={{color:"#9b59b6",fontSize:Math.max(12,18*rs),fontWeight:"bold",marginTop:2}}>×{doubleRollsLeft}</Text></View>}
         {gameLeft!=null&&<View style={{alignItems:"center",paddingHorizontal:Math.max(3,6*rs)}}><Text style={{color:"#555",fontSize:Math.max(8,10*rs),fontWeight:"700"}}>TIME</Text><Text style={{color:gameLeft<=30?"#e74c3c":"#fff",fontSize:Math.max(12,18*rs),fontWeight:"bold",marginTop:2}}>{formatTime(gameLeft)}</Text></View>}
-        <TouchableOpacity style={[S.qBtn,phase==="questions"&&!showMap&&S.qBtnActive,{paddingHorizontal:Math.max(8,13*rs),paddingVertical:Math.max(6,10*rs)}]} onPress={forceQuestions}>
+        <Pressable style={({hovered,pressed})=>[S.qBtn,phase==="questions"&&!showMap&&S.qBtnActive,{paddingHorizontal:Math.max(8,13*rs),paddingVertical:Math.max(6,10*rs)}, Platform.OS==='web'&&hovered&&{backgroundColor:'#002800',borderColor:'#00c781'}, pressed&&{opacity:0.8}]} onPress={forceQuestions}>
           <Text style={[S.qBtnTxt,{fontSize:Math.max(9,11*rs)}]}>Questions</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={[S.mapBtn,showMap&&S.mapBtnOn,{paddingHorizontal:Math.max(8,13*rs),paddingVertical:Math.max(6,10*rs)}]} onPress={()=>setViewMode(v=>v==="map"?"questions":"map")}>
+        </Pressable>
+        <Pressable style={({hovered,pressed})=>[S.mapBtn,showMap&&S.mapBtnOn,{paddingHorizontal:Math.max(8,13*rs),paddingVertical:Math.max(6,10*rs)}, Platform.OS==='web'&&hovered&&{backgroundColor:'#001a12',borderColor:'#00c781'}, pressed&&{opacity:0.8}]} onPress={()=>setViewMode(v=>v==="map"?"questions":"map")}>
           <Text style={[S.mapBtnTxt,{fontSize:Math.max(10,13*rs)}]}>Map</Text>
-        </TouchableOpacity>
+        </Pressable>
         {hostIsPlaying&&<TouchableOpacity style={[S.hudEndBtn,{paddingHorizontal:Math.max(8,12*rs),paddingVertical:Math.max(6,10*rs)}]} onPress={async()=>{await updateDoc(doc(db,"gameSessions",sessionId),{status:"ended"}).catch(console.error);exitGame();}}><Text style={[S.hudEndBtnTxt,{fontSize:Math.max(10,13*rs)}]}>End</Text></TouchableOpacity>}
       </View>
 
@@ -1695,13 +1699,13 @@ export default function BoardGameScreen({ route, navigation }) {
       <View style={S.main}>
         {showMap && (
           <ScrollView ref={boardRef} contentContainerStyle={{padding:10, paddingBottom:64}}>
-            <SnakeBoard board={board} players={players} myPosition={myPos} highlightPos={highlightPos} boardEnd={boardEnd} tileSize={BASE_TILE}/>
+            <SnakeBoard board={board} players={players} myPosition={myPos} myPlayerName={playerName} myPlayerColor={playerColor} highlightPos={highlightPos} boardEnd={boardEnd} tileSize={BASE_TILE}/>
             <Legend/>
           </ScrollView>
         )}
 
         {!showMap && phase==="questions" && (
-          <ScrollView contentContainerStyle={S.qScroll}>
+          <ScrollView contentContainerStyle={[S.qScroll, isMobile && {padding:10, paddingBottom:80}]}>
             <View style={S.rollBar}>
               {[0,1,2].map(i=><View key={i} style={[S.rollDot,i<cc&&S.rollDotOn]}/>)}
               <Text style={S.rollTxt2}>{ROLL_AT-cc} more correct to roll</Text>
@@ -1714,7 +1718,7 @@ export default function BoardGameScreen({ route, navigation }) {
                     <Text style={S.zoomHint}>Tap to zoom</Text>
                   </TouchableOpacity>
                 ) : null}
-                <Text style={S.qTxt}>{curQ.question}</Text>
+                <Text style={[S.qTxt, isMobile&&{fontSize:16,lineHeight:22}]}>{curQ.question}</Text>
                 {curQ.type==="multiSelect" ? (
                   <>
                     <Text style={{color:"#888",fontSize:13,marginBottom:8,textAlign:"center"}}>Select ALL correct answers, then tap Confirm</Text>
@@ -1751,7 +1755,7 @@ export default function BoardGameScreen({ route, navigation }) {
                       let bg="#1c1c1c",bc="#383838";
                       if(isSel){bg=ansFB==="correct"?"#003d1a":"#3d0000";bc=ansFB==="correct"?"#00c781":"#e74c3c";}
                       else if(selAns!==null&&isCorr&&showCA){bg="#003d1a";bc="#00c781";}
-                      return (<TouchableOpacity key={i} style={[S.aBtn,{backgroundColor:bg,borderColor:bc}]} onPress={()=>handleAnswer(i)} disabled={selAns!==null} activeOpacity={0.75}><Text style={S.aTxt}>{ans}</Text></TouchableOpacity>);
+                      return (<Pressable key={i} style={({hovered,pressed})=>[S.aBtn,{backgroundColor:bg,borderColor:bc}, Platform.OS==='web'&&hovered&&selAns===null&&{transform:[{scale:1.02}],borderColor:'#aaa'}, pressed&&{opacity:0.8}]} onPress={()=>handleAnswer(i)} disabled={selAns!==null}><Text style={[S.aTxt, isMobile&&{fontSize:13}]}>{ans}</Text></Pressable>);
                     })}
                   </View>
                 )}
@@ -1763,21 +1767,21 @@ export default function BoardGameScreen({ route, navigation }) {
         {phase==="rolling" && (
           <View style={S.diceBox}>
             <Text style={{color:"#fff",fontSize:Math.max(16,20*rs),fontWeight:"bold",textAlign:"center"}}>Roll the Dice!</Text>
-            {doubleRollsLeft>0&&<Text style={[S.luckTxt,{color:"#9b59b6",fontSize:Math.max(11,14*rs)}]}>🎯 Double Roll active!</Text>}
-            {effLuck>0&&doubleRollsLeft===0&&<Text style={[S.luckTxt,{fontSize:Math.max(11,14*rs)}]}>🍀 Luck {dispLuck}%</Text>}
+            {doubleRollsLeft>0&&<Text style={[S.luckTxt,{color:"#9b59b6",fontSize:Math.max(11,14*rs)}]}>Double Roll active!</Text>}
+            {effLuck>0&&doubleRollsLeft===0&&<Text style={[S.luckTxt,{fontSize:Math.max(11,14*rs)}]}>Luck {dispLuck}%</Text>}
             <Animated.View style={{transform:[{translateX:diceAnim}]}}><DiceFace value={diceValue} style={S.diceFace}/></Animated.View>
             {diceValue ? <Text style={{color:"#00c781",fontSize:Math.max(16,20*rs),fontWeight:"bold"}}>Rolled {diceValue}!</Text>
-            : <TouchableOpacity style={S.rollBtn} onPress={handleRoll}><Text style={S.rollTxtBig}>Roll!</Text></TouchableOpacity>}
+            : <Pressable style={({hovered,pressed})=>[S.rollBtn, Platform.OS==='web'&&hovered&&{backgroundColor:'#00e090',transform:[{scale:1.06}]}, pressed&&{opacity:0.8}]} onPress={handleRoll}><Text style={S.rollTxtBig}>Roll!</Text></Pressable>}
           </View>
         )}
 
         {phase==="space_roll" && srType && (
           <View style={S.diceBox}>
-            <Text style={{color:srType==="lava"?"#e74c3c":"#3498db",fontSize:Math.max(16,22*rs),fontWeight:"bold",textAlign:"center"}}>{srType==="lava"?"🌋 Lava!":"💥 Cannon!"}</Text>
+            <Text style={{color:srType==="lava"?"#e74c3c":"#3498db",fontSize:Math.max(16,22*rs),fontWeight:"bold",textAlign:"center"}}>{srType==="lava"?"LAVA!":"CANNON!"}</Text>
             <Text style={[S.luckTxt,{fontSize:Math.max(11,13*rs),textAlign:"center",paddingHorizontal:16}]}>{srType==="lava"?"Roll to see how far you're pushed BACK":"Roll to see how far you're LAUNCHED forward"}</Text>
             <Animated.View style={{transform:[{translateX:srAnim}]}}><DiceFace value={srValue} style={S.diceFace}/></Animated.View>
             {srValue ? <Text style={{color:srType==="lava"?"#e74c3c":"#3498db",fontSize:Math.max(16,20*rs),fontWeight:"bold"}}>{srType==="lava"?`Back ${srValue} spaces!`:`Forward ${srValue} spaces!`}</Text>
-            : <TouchableOpacity style={[S.rollBtn,{backgroundColor:srType==="lava"?"#c0392b":"#2980b9"}]} onPress={handleSpaceRoll} disabled={srRolling}><Text style={S.rollTxtBig}>{srRolling?"Rolling…":"Roll!"}</Text></TouchableOpacity>}
+            : <Pressable style={({hovered,pressed})=>[S.rollBtn,{backgroundColor:srType==="lava"?"#c0392b":"#2980b9"}, Platform.OS==='web'&&hovered&&{transform:[{scale:1.06}],opacity:0.9}, pressed&&{opacity:0.8}]} onPress={handleSpaceRoll} disabled={srRolling}><Text style={S.rollTxtBig}>{srRolling?"Rolling…":"Roll!"}</Text></Pressable>}
           </View>
         )}
 
@@ -1785,18 +1789,18 @@ export default function BoardGameScreen({ route, navigation }) {
 
         {phase==="rolled" && (
           <View style={S.diceBox}>
-            <Text style={{fontSize:Math.max(36,48*rs)}}>✅</Text>
+            <Text style={{color:"#00c781",fontSize:Math.max(16,20*rs),fontWeight:"900"}}>DONE</Text>
             <Text style={{color:"#fff",fontSize:Math.max(16,20*rs),fontWeight:"bold"}}>Move done!</Text>
-            <TouchableOpacity style={[S.rollBtn,{backgroundColor:"#00c781"}]}
+            <Pressable style={({hovered,pressed})=>[S.rollBtn,{backgroundColor:"#00c781"}, Platform.OS==='web'&&hovered&&{backgroundColor:'#00e090',transform:[{scale:1.06}]}, pressed&&{opacity:0.8}]}
               onPress={()=>{ setPhaseSync("questions"); setQIdx(i=>i+1); }}>
               <Text style={S.rollTxtBig}>Back to Questions</Text>
-            </TouchableOpacity>
+            </Pressable>
           </View>
         )}
 
         {phase==="duel" && activeDuel && (
           <ScrollView contentContainerStyle={S.duelScroll}>
-            <Text style={[S.mysteryBigTtl,{color:"#3498db"}]}>⚔️ 1v1 Duel!</Text>
+            <Text style={[S.mysteryBigTtl,{color:"#3498db"}]}>1v1 Duel!</Text>
             <Text style={[S.luckTxt,{fontSize:15,marginBottom:8}]}>
               <Text style={{color:activeDuel.challengerColor||"#fff"}}>{activeDuel.challengerName}</Text>
               {" vs "}
@@ -1847,7 +1851,7 @@ export default function BoardGameScreen({ route, navigation }) {
                       ) : (
                         <View style={S.aGrid}>
                           {(q.type==="multipleChoice"?q.answers:["True","False"]).map((ans,i)=>(
-                            <TouchableOpacity key={i} style={[S.aBtn,{backgroundColor:"#1c1c1c",borderColor:"#383838"}]} onPress={()=>handleDuelAnswer(i)} activeOpacity={0.75}><Text style={S.aTxt}>{ans}</Text></TouchableOpacity>
+                            <Pressable key={i} style={({hovered,pressed})=>[S.aBtn,{backgroundColor:"#1c1c1c",borderColor:"#383838"}, Platform.OS==='web'&&hovered&&{transform:[{scale:1.02}],borderColor:'#5a9fd4'}, pressed&&{opacity:0.8}]} onPress={()=>handleDuelAnswer(i)}><Text style={S.aTxt}>{ans}</Text></Pressable>
                           ))}
                         </View>
                       )}
@@ -1873,7 +1877,7 @@ export default function BoardGameScreen({ route, navigation }) {
                   <Text style={[S.mysteryTitle,{color:isTie?"#aaa":iWon?"#2ecc71":"#e74c3c"}]}>{isTie?"Tie!":iWon?"You Win!":"You Lose!"}</Text>
                   <Text style={[S.luckTxt,{fontSize:14,marginTop:4}]}>{activeDuel.challengerName}: {cC}/3 • avg {cT}s</Text>
                   <Text style={[S.luckTxt,{fontSize:14}]}>{activeDuel.opponentName}: {oC}/3 • avg {oT}s</Text>
-                  {iWon&&<Text style={[S.mysteryDesc,{marginTop:6}]}>{swaps?"Swapping positions! 🚀":"Already ahead — no swap needed."}</Text>}
+                  {iWon&&<Text style={[S.mysteryDesc,{marginTop:6}]}>{swaps?"Swapping positions!":"Already ahead — no swap needed."}</Text>}
                   {!iWon&&!isTie&&<Text style={[S.mysteryDesc,{marginTop:6}]}>Your opponent takes your position.</Text>}
                   <TouchableOpacity style={[S.rollBtn,{backgroundColor:"#3498db",marginTop:12}]} onPress={dismissDuel}><Text style={S.rollTxtBig}>Continue</Text></TouchableOpacity>
                 </View>
@@ -1904,7 +1908,7 @@ export default function BoardGameScreen({ route, navigation }) {
           <View style={S.mysteryPanel}>
             {/* X closes — restores item only if effect not yet revealed */}
             <CloseBtn onPress={()=>closeMBox(mBoxStep)}/>
-            <Text style={S.mysteryBigTtl}>🎁 Mystery Box!</Text>
+            <Text style={S.mysteryBigTtl}> Mystery Box!</Text>
             {mBoxStep==="roll" && (
               <>
                 <Text style={S.luckTxt}>Roll to reveal your effect…</Text>
@@ -1978,8 +1982,8 @@ export default function BoardGameScreen({ route, navigation }) {
       <Modal visible={isStunned && phase !== "duel" && duelCountdown === null} transparent animationType="fade">
         <View style={[S.overlay, {backgroundColor:"rgba(160,80,0,0.97)"}]}>
           <View style={[S.modal, {borderColor:"#f39c12",borderWidth:2.5,backgroundColor:"#2e1500",width:"92%",maxWidth:480}]}>
-            <Text style={{fontSize:44,textAlign:"center"}}>😵</Text>
-            <Text style={[S.mTtl,{color:"#ffa500",fontSize:32,letterSpacing:2}]}>😵 STUNNED!</Text>
+            
+            <Text style={[S.mTtl,{color:"#ffa500",fontSize:32,letterSpacing:2}]}>STUNNED!</Text>
             {stunBy ? <Text style={[S.mDesc,{color:"#ffcc88",fontSize:14,marginTop:-4}]}>by {stunBy}</Text> : null}
             <Text style={[S.mDesc,{color:"#ffe0a0",fontSize:18,fontWeight:"700"}]}>Answer {ROLL_AT} questions in a row to break free!</Text>
             <View style={{flexDirection:"row",gap:12,marginVertical:8}}>
@@ -2047,8 +2051,8 @@ export default function BoardGameScreen({ route, navigation }) {
         <View style={[S.overlay,{backgroundColor:"rgba(0,10,30,0.97)"}]}>
           <View style={[S.modal,{borderColor:"#3498db",borderWidth:3,backgroundColor:"#060e1e",
             shadowColor:"#3498db",shadowOffset:{width:0,height:0},shadowOpacity:0.7,shadowRadius:28}]}>
-          <Text style={{fontSize:52}}>⚔️</Text>
-          <Text style={[S.mTtl,{color:"#60c8ff",fontSize:30}]}>⚔️ 1v1 Starting!</Text>
+          
+          <Text style={[S.mTtl,{color:"#60c8ff",fontSize:30}]}>1v1 Starting!</Text>
           <Text style={{color:"#fff",fontSize:100,fontWeight:"900",textAlign:"center",lineHeight:110}}>{duelCountdown}</Text>
           <Text style={[S.mDesc,{color:"#88ccff",fontSize:18}]}>Get ready…</Text>
           </View>
@@ -2061,8 +2065,8 @@ export default function BoardGameScreen({ route, navigation }) {
           <View style={[S.modal,{borderColor:"#f39c12",borderWidth:3,backgroundColor:"#1e1000",
             shadowColor:"#f39c12",shadowOffset:{width:0,height:0},shadowOpacity:0.7,shadowRadius:28}]}>
           <CloseBtn onPress={()=>{ setShowNotif(false); if(interruptedPhase){setPhaseSync(interruptedPhase);setInterruptedPhase(null);} }}/>
-          <Text style={{fontSize:52}}>⚡</Text>
-          <Text style={[S.mTtl,{color:"#ffa500",fontSize:28}]}>⚡ Effect!</Text>
+          <Text style={{fontSize:52}}></Text>
+          <Text style={[S.mTtl,{color:"#ffa500",fontSize:28}]}>Effect Applied!</Text>
           <Text style={[S.mDesc,{fontSize:20,lineHeight:30,color:"#ffe0b0",fontWeight:"600"}]}>{notif}</Text>
           <TouchableOpacity style={[S.rollBtn,{backgroundColor:"#e67e22",marginTop:8,paddingVertical:18,paddingHorizontal:52}]} onPress={()=>{ setShowNotif(false); if(interruptedPhase){setPhaseSync(interruptedPhase);setInterruptedPhase(null);} }}><Text style={[S.rollTxtBig,{fontSize:22}]}>Got it</Text></TouchableOpacity>
           </View>
@@ -2273,14 +2277,14 @@ const S = StyleSheet.create({
   legendItem: { flexDirection:"row", alignItems:"center", gap:5 },
   legendSwatch:{ width:16, height:16, borderRadius:3, borderWidth:1.5 },
   legendTxt:  { fontSize:12, fontWeight:"600" },
-  diceBox:    { flex:1, alignItems:"center", justifyContent:"center", gap:10, backgroundColor:"#0d0d0d", padding:14 },
+  diceBox:    { flex:1, alignItems:"center", justifyContent:"center", gap:10, backgroundColor:"#0d0d0d", padding:14, paddingBottom:80 },
   diceTtl:    { color:"#fff", fontSize:26, fontWeight:"bold", textAlign:"center" },
   luckTxt:    { color:"#888", fontSize:13, textAlign:"center" },
   diceFace:   { fontSize:72, color:"#fff" },
   diceRes:    { color:"#00c781", fontSize:24, fontWeight:"bold" },
   rollBtn:    { backgroundColor:"#00c781", paddingVertical:13, paddingHorizontal:32, borderRadius:14 },
   rollTxtBig: { color:"#000", fontSize:17, fontWeight:"bold" },
-  movingBox:  { flex:1, alignItems:"center", justifyContent:"center", gap:16, backgroundColor:"#0d0d0d" },
+  movingBox:  { flex:1, alignItems:"center", justifyContent:"center", gap:16, backgroundColor:"#0d0d0d", paddingBottom:72 },
   movingTxt:  { color:"#aaa", fontSize:18 },
   rolledBox:  { flex:1, alignItems:"center", justifyContent:"center", gap:16, backgroundColor:"#0d0d0d" },
   rolledEmoji:{ fontSize:64 },

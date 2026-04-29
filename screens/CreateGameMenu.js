@@ -4,17 +4,9 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { useWindowDimensions } from 'react-native';
 import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  TextInput,
-  ScrollView,
-  Image,
-  ActivityIndicator,
-} from 'react-native';
+  View, Text, StyleSheet, TouchableOpacity, TextInput, ScrollView, Image, ActivityIndicator, Pressable, Platform, useWindowDimensions,
+} from "react-native";
 import { db, auth } from '../firebaseConfig';
 import {
   doc,
@@ -141,8 +133,24 @@ export default function CreateGameMenu({ navigation, route }) {
   const readAsBase64 = (file) => new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onerror = () => reject(new Error('Failed to read file'));
-    reader.onload = (e) => resolve(e.target.result); // data:image/...;base64,...
+    reader.onload = (e) => resolve(e.target.result);
     reader.readAsDataURL(file);
+  });
+
+  // Resize + compress image to stay well under Firestore 1MB doc limit
+  const compressImage = (dataUrl, maxPx = 400) => new Promise((resolve) => {
+    const img = new window.Image();
+    img.onload = () => {
+      const scale = Math.min(1, maxPx / Math.max(img.width, img.height));
+      const w = Math.round(img.width * scale);
+      const h = Math.round(img.height * scale);
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      resolve(canvas.toDataURL('image/jpeg', 0.72));
+    };
+    img.onerror = () => resolve(dataUrl); // fallback: use original
+    img.src = dataUrl;
   });
 
   const handleImageUpload = async (e, isCover = false) => {
@@ -161,7 +169,8 @@ export default function CreateGameMenu({ navigation, route }) {
     }
     setImageUploading(true);
     try {
-      const base64 = await readAsBase64(file);
+      const raw = await readAsBase64(file);
+      const base64 = await compressImage(raw, isCover ? 400 : 600);
       if (isCover) { setCoverImage(base64); } else { updateCurrentQuestion({ imageUrl: base64 }); }
       e.target.value = '';
     } catch (err) {
@@ -316,7 +325,7 @@ export default function CreateGameMenu({ navigation, route }) {
         </View>
 
         {/* Center: Question Editor */}
-        <View style={styles.centerEditor}>
+        <ScrollView style={{flex:1}} contentContainerStyle={styles.centerEditor} keyboardShouldPersistTaps="handled">
           <Text style={styles.editorLabel}>Question {selectedQuestionIndex + 1}</Text>
 
           {/* Question type picker */}
@@ -463,10 +472,10 @@ export default function CreateGameMenu({ navigation, route }) {
             />
             <Text style={styles.seconds}>seconds</Text>
           </View>
-        </View>
+        </ScrollView>
 
         {/* Right: Summary & Actions */}
-        <View style={[styles.rightSidebar, isMobile && {width:"100%", borderLeftWidth:0, borderTopWidth:1, borderTopColor:"#222"}]}>
+        <ScrollView style={[styles.rightSidebar, isMobile && {width:"100%", borderLeftWidth:0, borderTopWidth:1, borderTopColor:"#222"}]} contentContainerStyle={{padding:16}} keyboardShouldPersistTaps="handled">
           <View style={styles.summary}>
             <Text style={styles.summaryTitle}>Game Summary</Text>
             <Text style={styles.summaryText}>{questions.length} Question(s)</Text>
@@ -479,14 +488,14 @@ export default function CreateGameMenu({ navigation, route }) {
             )}
           </View>
           <View style={styles.actionButtons}>
-            <TouchableOpacity style={styles.saveExitBtn} onPress={() => saveGame(false)}>
+            <Pressable style={({hovered,pressed})=>[styles.saveExitBtn, Platform.OS==='web'&&hovered&&{backgroundColor:'#555',transform:[{scale:1.03}]}, pressed&&{opacity:0.8}]} onPress={() => saveGame(false)}>
               <Text style={styles.actionBtnText}>Save & Exit</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.saveHostBtn} onPress={() => saveGame(true)}>
+            </Pressable>
+            <Pressable style={({hovered,pressed})=>[styles.saveHostBtn, Platform.OS==='web'&&hovered&&{backgroundColor:'#00e090',transform:[{scale:1.03}]}, pressed&&{opacity:0.8}]} onPress={() => saveGame(true)}>
               <Text style={styles.actionBtnText}>Save & Host</Text>
-            </TouchableOpacity>
+            </Pressable>
           </View>
-        </View>
+        </ScrollView>
       </View>
     </View>
   );
@@ -511,7 +520,7 @@ const styles = StyleSheet.create({
   leftSidebar: { width: 300, backgroundColor: '#0d0d0d', padding: 20, borderRightWidth: 1, borderRightColor: '#222' },
   addQuestionBtn: { backgroundColor: '#00c781', padding: 16, borderRadius: 12, alignItems: 'center', marginBottom: 20 },
   addQuestionText: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
-  questionList: { flex: 1, maxHeight: '100%' },
+  questionList: { flex: 1 },
   questionThumb: { backgroundColor: '#1e1e1e', borderRadius: 12, padding: 12, marginBottom: 12, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: 'transparent', position: 'relative' },
   questionThumbSelected: { borderColor: '#00c781', backgroundColor: '#003322' },
   questionThumbNoAnswer: { borderColor: '#e74c3c' },
@@ -523,7 +532,7 @@ const styles = StyleSheet.create({
   reorderButtons: { flexDirection: 'column', marginLeft: 8 },
   reorderText: { color: '#00c781', fontSize: 18, fontWeight: 'bold' },
   disabledReorder: { opacity: 0.3 },
-  centerEditor: { flex: 1, padding: 40, backgroundColor: '#111' },
+  centerEditor: { flexGrow: 1, padding: 24, backgroundColor: '#111' },
   editorLabel: { fontSize: 18, color: '#aaa', marginBottom: 12 },
   typeRow:       { flexDirection: 'row', gap: 8, marginBottom: 16 },
   typeBtn:       { flex: 1, backgroundColor: '#1e1e1e', padding: 10, borderRadius: 10, alignItems: 'center', borderWidth: 2, borderColor: '#333' },
@@ -552,7 +561,7 @@ const styles = StyleSheet.create({
   settingLabel: { color: '#aaa', marginRight: 12 },
   timeInput: { backgroundColor: '#1e1e1e', color: '#fff', width: 60, padding: 10, borderRadius: 8, textAlign: 'center' },
   seconds: { color: '#aaa', marginLeft: 8 },
-  rightSidebar: { width: 400, backgroundColor: '#0d0d0d', padding: 16, borderLeftWidth: 1, borderLeftColor: '#222' },
+  rightSidebar: { width: 400, backgroundColor: '#0d0d0d', borderLeftWidth: 1, borderLeftColor: '#222' },
   summary: { flex: 1 },
   summaryTitle: { fontSize: 20, fontWeight: 'bold', color: '#fff', marginBottom: 20 },
   summaryText: { color: '#ccc', fontSize: 16, marginBottom: 12 },

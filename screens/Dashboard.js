@@ -4,13 +4,12 @@
  * Landscape / desktop: original sidebar layout
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, TextInput,
-  FlatList, Modal, Image, ScrollView, Switch,
-  useWindowDimensions, SafeAreaView, Platform,
-} from 'react-native';
+  View, Text, StyleSheet, TouchableOpacity, TextInput, FlatList, Modal, Image, ScrollView, Switch, Pressable, Platform, useWindowDimensions, SafeAreaView,
+} from "react-native";
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useFocusEffect } from '@react-navigation/native';
 import { db, auth } from '../firebaseConfig';
 import {
   collection, query, where, getDocs,
@@ -65,42 +64,46 @@ export default function Dashboard({ navigation, route }) {
 
   // Dynamic card size
   const sidebarW = isMobile ? 0 : 260;
-  const cols     = isMobile ? 2 : 4;
+  const cols     = winW < 500 ? 2 : winW < 900 ? 3 : 4;
   const gap      = 12;
   const hPad     = isMobile ? 12 : 30;
   const cardSize = Math.min(
-    280,
-    Math.floor((winW - sidebarW - hPad * 2 - gap * (cols + 1)) / cols)
+    220,
+    Math.max(120, Math.floor((winW - sidebarW - hPad * 2 - gap * (cols + 1)) / cols))
   );
 
-  useEffect(() => {
-    const fetchData = async () => {
-      const userToken = await AsyncStorage.getItem('userToken');
-      if (!userToken) { navigation.replace('Home'); return; }
+  const fetchData = useCallback(async () => {
+    const userToken = await AsyncStorage.getItem('userToken');
+    if (!userToken) { navigation.replace('Home'); return; }
 
-      const userDoc = await getDoc(doc(db, 'users', userToken));
-      if (userDoc.exists()) setUserData(userDoc.data());
+    const userDoc = await getDoc(doc(db, 'users', userToken));
+    if (userDoc.exists()) setUserData(userDoc.data());
 
-      const myQ = query(collection(db, 'games'), where('creatorId', '==', userToken));
-      const mySnap = await getDocs(myQ);
-      setMyGames(mySnap.docs.map(d => ({ id: d.id, ...d.data(), isPublished: d.data().isPublished || false })));
+    const myQ = query(collection(db, 'games'), where('creatorId', '==', userToken));
+    const mySnap = await getDocs(myQ);
+    setMyGames(mySnap.docs.map(d => ({ id: d.id, ...d.data(), isPublished: d.data().isPublished || false })));
 
-      const pubQ = query(collection(db, 'games'), where('isPublished', '==', true));
-      const pubSnap = await getDocs(pubQ);
-      const pubRaw = pubSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const pubQ = query(collection(db, 'games'), where('isPublished', '==', true));
+    const pubSnap = await getDocs(pubQ);
+    const pubRaw = pubSnap.docs.map(d => ({ id: d.id, ...d.data() }));
 
-      const creatorIds = Array.from(new Set(pubRaw.map(g => g.creatorId).filter(Boolean)));
-      const usersMap = {};
-      if (creatorIds.length) {
-        try {
-          const snaps = await Promise.all(creatorIds.map(id => getDoc(doc(db, 'users', id))));
-          snaps.forEach(s => { if (s.exists()) { const u = s.data(); usersMap[s.id] = u.username || u.displayName || u.email || 'Unknown'; } });
-        } catch {}
-      }
-      setPublicGames(pubRaw.map(g => ({ ...g, creatorName: usersMap[g.creatorId] || 'Unknown' })));
-    };
-    fetchData();
+    const creatorIds = Array.from(new Set(pubRaw.map(g => g.creatorId).filter(Boolean)));
+    const usersMap = {};
+    if (creatorIds.length) {
+      try {
+        const snaps = await Promise.all(creatorIds.map(id => getDoc(doc(db, 'users', id))));
+        snaps.forEach(s => { if (s.exists()) { const u = s.data(); usersMap[s.id] = u.username || u.displayName || u.email || 'Unknown'; } });
+      } catch {}
+    }
+    setPublicGames(pubRaw.map(g => ({ ...g, creatorName: usersMap[g.creatorId] || 'Unknown' })));
   }, [navigation]);
+
+  // Re-fetch every time the screen comes into focus (e.g. returning from CreateGameMenu)
+  useFocusEffect(
+    useCallback(() => {
+      fetchData();
+    }, [fetchData])
+  );
 
   useEffect(() => {
     if (route.params?.newGame) {
@@ -186,15 +189,24 @@ export default function Dashboard({ navigation, route }) {
     const isMenuOpen = openedMenuId === item.id;
     const cs = cardSize;
     return (
-      <TouchableOpacity
-        style={[S.gameCard, { width: cs, marginHorizontal: gap / 2, marginBottom: gap }]}
+      <Pressable
+        style={({ hovered, pressed }) => [
+          S.gameCard,
+          { width: cs, marginHorizontal: gap / 2, marginBottom: gap },
+          Platform.OS === 'web' && hovered && { transform: [{ scale: 1.03 }], borderColor: '#555', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.4, shadowRadius: 12 },
+          pressed && { opacity: 0.85 },
+        ]}
         onPress={() => { if (!isMine) openPreview(item); if (isMenuOpen) { setOpenedMenuId(null); setMenuPosition(null); } }}
         disabled={isMine}
         ref={ref => { cardRefs.current[item.id] = ref; }}
-        activeOpacity={0.85}
       >
         <View style={[S.gameCover, { height: cs * 0.55 }]}>
-          <Text style={{ fontSize: Math.max(28, cs * 0.3) }}>🎯</Text>
+          {item.coverImage
+            ? <Image source={{ uri: item.coverImage }} style={{ width: '100%', height: '100%', borderRadius: 10 }} resizeMode="cover" />
+            : <View style={{ width: '100%', height: '100%', borderRadius: 10, backgroundColor: '#2a2a2a', alignItems: 'center', justifyContent: 'center' }}>
+                <Text style={{ color: '#555', fontSize: Math.max(11, 13 * rs) }}>{item.title?.substring(0,2).toUpperCase() || '??'}</Text>
+              </View>
+          }
         </View>
         {item.isPublished && currentTab === 'library' && (
           <View style={S.publishedBadge}><Text style={S.badgeTxt}>Published</Text></View>
@@ -204,14 +216,14 @@ export default function Dashboard({ navigation, route }) {
         <Text style={[S.gameDetails, { fontSize: Math.max(10, 12 * rs) }]}>{item.numQuestions || 0} questions</Text>
         {isMine && (
           <TouchableOpacity
-            style={[S.threeDotsBtn, { top: cs * 0.55 + 4 }]}
+            style={S.threeDotsBtn}
             onPress={() => handleThreeDotsPress(item.id)}
-            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
           >
-            <Text style={{ color: '#aaa', fontSize: 18, letterSpacing: 1 }}>···</Text>
+            <Image source={require('../assets/threeDots.png')} style={S.threeDotsIcon} resizeMode="contain" />
           </TouchableOpacity>
         )}
-      </TouchableOpacity>
+      </Pressable>
     );
   };
 
@@ -239,19 +251,24 @@ export default function Dashboard({ navigation, route }) {
 
   // ── SIDEBAR TABS (desktop) ──────────────────────────────────────────────────
   const TAB_ITEMS = [
-    { id: 'home',     label: 'Home',        icon: '🏠' },
-    { id: 'library',  label: 'Library',     icon: '📚' },
-    { id: 'discover', label: 'Discover',    icon: '🔍' },
+    { id: 'home',     label: 'Home',        icon: require('../assets/home.png') },
+    { id: 'library',  label: 'Library',     icon: require('../assets/library.png') },
+    { id: 'discover', label: 'Discover',    icon: require('../assets/discover.png') },
   ];
 
   const SidebarTab = ({ tab }) => (
-    <TouchableOpacity
-      style={[S.tabRow, currentTab === tab.id && S.tabRowActive]}
+    <Pressable
+      style={({ hovered, pressed }) => [
+        S.tabRow,
+        currentTab === tab.id && S.tabRowActive,
+        Platform.OS === 'web' && hovered && !S.tabRowActive && { backgroundColor: '#1a2a1a' },
+        pressed && { opacity: 0.8 },
+      ]}
       onPress={() => setCurrentTab(tab.id)}
     >
-      <Text style={[S.tabIcon, currentTab === tab.id && S.tabIconActive]}>{tab.icon}</Text>
+      <Image source={tab.icon} style={[S.tabIconImg, currentTab === tab.id && S.tabIconImgActive]} resizeMode="contain" />
       <Text style={[S.tabLabel, currentTab === tab.id && S.tabLabelActive]}>{tab.label}</Text>
-    </TouchableOpacity>
+    </Pressable>
   );
 
   // ── MAIN CONTENT ─────────────────────────────────────────────────────────────
@@ -268,12 +285,12 @@ export default function Dashboard({ navigation, route }) {
           </Text>
 
           <View style={[S.actionRow, { flexDirection: isMobile ? 'column' : 'row', gap: 12, marginBottom: Math.max(24, 40 * rs) }]}>
-            <TouchableOpacity style={[S.bigCreateBtn, isMobile && { minWidth: 0 }]} onPress={handleCreateGame}>
+            <Pressable style={({ hovered, pressed }) => [S.bigCreateBtn, isMobile && { minWidth: 0 }, Platform.OS==='web' && hovered && { backgroundColor:'#00e090', transform:[{scale:1.02}] }, pressed && { opacity:0.85 }]} onPress={handleCreateGame}>
               <Text style={[S.bigCreateTxt, { fontSize: Math.max(15, 18 * rs) }]}>+ Create New Game</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[S.joinBtn, isMobile && { minWidth: 0 }]} onPress={() => navigation.navigate('JoinGameScreen')}>
+            </Pressable>
+            <Pressable style={({ hovered, pressed }) => [S.joinBtn, isMobile && { minWidth: 0 }, Platform.OS==='web' && hovered && { backgroundColor:'#5dade2', transform:[{scale:1.02}] }, pressed && { opacity:0.85 }]} onPress={() => navigation.navigate('JoinGameScreen')}>
               <Text style={[S.joinBtnTxt, { fontSize: Math.max(15, 18 * rs) }]}>Join Game</Text>
-            </TouchableOpacity>
+            </Pressable>
           </View>
 
           {recentGames.length > 0 && (
@@ -298,7 +315,7 @@ export default function Dashboard({ navigation, route }) {
       <View style={{ flex: 1 }}>
         <View style={[S.header, { padding: Math.max(10, 16 * rs), gap: 10 }]}>
           <View style={[S.searchBox, { height: Math.max(40, 48 * rs) }]}>
-            <Text style={{ fontSize: 16, marginRight: 8 }}>🔍</Text>
+            <Image source={require('../assets/search.png')} style={{ width: 18, height: 18, marginRight: 8, tintColor: '#aaa' }} resizeMode="contain" />
             <TextInput
               style={[S.searchInput, { fontSize: Math.max(13, 15 * rs) }]}
               placeholder={`Search ${currentTab === 'library' ? 'library' : 'discover'}...`}
@@ -347,12 +364,12 @@ export default function Dashboard({ navigation, route }) {
     <View style={S.bottomBar}>
       {TAB_ITEMS.map(tab => (
         <TouchableOpacity key={tab.id} style={S.bottomTab} onPress={() => setCurrentTab(tab.id)}>
-          <Text style={[S.bottomTabIcon, currentTab === tab.id && S.bottomTabIconActive]}>{tab.icon}</Text>
+          <Image source={tab.icon} style={[S.bottomTabIconImg, currentTab === tab.id && S.bottomTabIconImgActive]} resizeMode="contain" />
           <Text style={[S.bottomTabLabel, currentTab === tab.id && S.bottomTabLabelActive]}>{tab.label}</Text>
         </TouchableOpacity>
       ))}
       <TouchableOpacity style={S.bottomTab} onPress={handleLogout}>
-        <Text style={S.bottomTabIcon}>🚪</Text>
+        <Image source={require('../assets/logout.png')} style={S.bottomTabIconImg} resizeMode="contain" />
         <Text style={S.bottomTabLabel}>Logout</Text>
       </TouchableOpacity>
     </View>
@@ -368,7 +385,7 @@ export default function Dashboard({ navigation, route }) {
             {TAB_ITEMS.map(tab => <SidebarTab key={tab.id} tab={tab} />)}
             <View style={{ flex: 1 }} />
             <TouchableOpacity style={S.tabRow} onPress={handleLogout}>
-              <Text style={S.tabIcon}>🚪</Text>
+              <Image source={require('../assets/logout.png')} style={S.tabIconImg} resizeMode="contain" />
               <Text style={S.tabLabel}>Logout</Text>
             </TouchableOpacity>
           </View>
@@ -486,8 +503,8 @@ const S = StyleSheet.create({
   logo:       { fontSize: 24, fontWeight: 'bold', color: '#00c781', marginBottom: 40, marginLeft: 8 },
   tabRow:     { flexDirection: 'row', alignItems: 'center', paddingVertical: 13, paddingHorizontal: 14, borderRadius: 14, marginBottom: 6 },
   tabRowActive: { backgroundColor: '#003322' },
-  tabIcon:    { fontSize: 20, marginRight: 14 },
-  tabIconActive: {},
+  tabIconImg:       { width: 22, height: 22, marginRight: 14, tintColor: '#ccc' },
+  tabIconImgActive: { tintColor: '#00c781' },
   tabLabel:   { fontSize: 15, color: '#ccc', fontWeight: '500' },
   tabLabelActive: { color: '#00c781', fontWeight: 'bold' },
 
@@ -498,8 +515,8 @@ const S = StyleSheet.create({
 
   bottomBar:       { flexDirection: 'row', backgroundColor: '#0d0d0d', borderTopWidth: 1, borderTopColor: '#222', paddingBottom: 4 },
   bottomTab:       { flex: 1, alignItems: 'center', paddingVertical: 8 },
-  bottomTabIcon:   { fontSize: 22, marginBottom: 2 },
-  bottomTabIconActive: {},
+  bottomTabIconImg:       { width: 22, height: 22, marginBottom: 2, tintColor: '#666' },
+  bottomTabIconImgActive: { tintColor: '#00c781' },
   bottomTabLabel:  { fontSize: 10, color: '#666', fontWeight: '600' },
   bottomTabLabelActive: { color: '#00c781' },
 
@@ -522,14 +539,15 @@ const S = StyleSheet.create({
   filterActive:{ backgroundColor: '#003322', borderWidth: 1, borderColor: '#00c781' },
   filterTxt:   { color: '#fff', fontWeight: 'bold' },
 
-  gameCard:    { backgroundColor: '#1e1e1e', borderRadius: 14, padding: 10, borderWidth: 1, borderColor: '#333', position: 'relative', overflow: 'hidden' },
+  gameCard:    { backgroundColor: '#1e1e1e', borderRadius: 14, padding: 10, borderWidth: 1, borderColor: '#333', flexDirection: 'column' },
   gameCover:   { backgroundColor: '#2a2a2a', borderRadius: 10, justifyContent: 'center', alignItems: 'center', marginBottom: 8 },
   publishedBadge: { position: 'absolute', top: 8, right: 8, backgroundColor: '#00c781', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 20, zIndex: 5 },
   badgeTxt:    { color: '#fff', fontSize: 10, fontWeight: 'bold' },
   gameTitle:   { fontWeight: 'bold', color: '#fff', marginBottom: 3 },
   creatorTxt:  { color: '#aaa', marginBottom: 2 },
   gameDetails: { color: '#aaa' },
-  threeDotsBtn:{ position: 'absolute', right: 4, padding: 4, zIndex: 10 },
+  threeDotsBtn:{ alignSelf: 'flex-end', padding: 4, marginTop: 4 },
+  threeDotsIcon:{ width: 18, height: 18, tintColor: '#aaa' },
 
   menuBackdrop:{ ...StyleSheet.absoluteFillObject, backgroundColor: 'transparent', zIndex: 50 },
   menuDropdown:{ position: 'absolute', backgroundColor: '#1e1e1e', borderRadius: 12, borderWidth: 1, borderColor: '#444', paddingVertical: 6, width: 140, zIndex: 60, elevation: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.4, shadowRadius: 8 },

@@ -5,8 +5,7 @@
 
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
-  View, Text, StyleSheet, TouchableOpacity, ActivityIndicator,
-  SafeAreaView, Modal, ScrollView, Animated, Dimensions, TextInput,
+  View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, SafeAreaView, Modal, ScrollView, Animated, Dimensions, TextInput, Pressable, Platform, useWindowDimensions,
 } from "react-native";
 import { db } from "../firebaseConfig";
 import { doc, onSnapshot, updateDoc, getDoc } from "firebase/firestore";
@@ -478,13 +477,18 @@ export default function Lobby({ route, navigation }) {
               {locked ? "LOCKED" : "OPEN"}
             </Text>
           </TouchableOpacity>
-          <TouchableOpacity
-            style={[S.startBtn, (players.length === 0 || starting) && S.startOff]}
+          <Pressable
+            style={({hovered, pressed}) => [
+              S.startBtn,
+              (players.length === 0 || starting) && S.startOff,
+              Platform.OS === 'web' && hovered && players.length > 0 && !starting && { backgroundColor: '#00e090', transform: [{ scale: 1.04 }] },
+              pressed && { opacity: 0.8 },
+            ]}
             onPress={handleStartGame}
             disabled={players.length === 0 || starting}
           >
             <Text style={S.startTxt}>{starting ? "Starting…" : "Start Game"}</Text>
-          </TouchableOpacity>
+          </Pressable>
         </View>
       ) : null}
 
@@ -567,7 +571,7 @@ const S = StyleSheet.create({
   playerName: { color: "#fff", fontSize: 15, flex: 1 },
   kickBtn:    { backgroundColor: "#3a0000", borderRadius: 8, width: 26, height: 26, justifyContent: "center", alignItems: "center", marginLeft: 6 },
   kickTxt:    { color: "#ff6b6b", fontSize: 13, fontWeight: "bold" },
-  hostBar:    { position: "absolute", bottom: 44, left: 0, right: 0, flexDirection: "row", gap: 12, paddingHorizontal: 20, alignItems: "center" },
+  hostBar:    { position: "absolute", bottom: 0, left: 0, right: 0, flexDirection: "row", gap: 8, paddingHorizontal: 14, paddingVertical: 10, paddingBottom: 20, alignItems: "center", backgroundColor: "rgba(13,13,13,0.95)", borderTopWidth: 1, borderTopColor: "#222" },
   lockBtn:    { backgroundColor: "#1e1e1e", borderRadius: 14, paddingVertical: 12, paddingHorizontal: 18, alignItems: "center", borderWidth: 1, borderColor: "#333" },
   lockOn:     { backgroundColor: "#003322", borderColor: "#00c781" },
   lockTxt:    { color: "#888", fontSize: 12, fontWeight: "bold" },

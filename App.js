@@ -10,12 +10,13 @@ import JoinGameScreenMobile from './screens/JoinGameScreenMobile';
 import LoginScreen from './screens/LoginScreen';
 import SignUpScreen from './screens/SignUpScreen';
 import ResetPassword from './screens/ResetPassword';
-import Dashboard from './screens/Dashboard'; // Added for Teacher navigation
+import Dashboard from './screens/Dashboard';
 import CreateGameMenu from './screens/CreateGameMenu.js';
 import HostGameMenu from './screens/HostGameMenu.js';
 import Lobby from './screens/Lobby.js';
 import GameScreen from './screens/GameScreen.js';
 import BoardGameScreen from './screens/BoardgameScreen';
+import SoloQuiz from './screens/SoloQuiz';
 
 const Stack = createStackNavigator();
 
@@ -25,20 +26,17 @@ export default function App() {
   );
 
   useEffect(() => {
-    // Configure Google Sign-In
     GoogleSignin.configure({
-      webClientId: '1:1045244308839:web:76ce638e01a27c933f13c2', // Replace with your Firebase Web Client ID
-      iosClientId: 'YOUR_IOS_CLIENT_ID', // Optional, replace with your iOS Client ID
+      webClientId: '1:1045244308839:web:76ce638e01a27c933f13c2',
+      iosClientId: 'YOUR_IOS_CLIENT_ID',
       offlineAccess: true,
     });
 
-    // Check for existing user token to determine initial route
     const checkAuthState = async () => {
       try {
         const userToken = await AsyncStorage.getItem('userToken');
         if (userToken) {
-          // Optionally verify token with Firebase if needed
-          setInitialRouteName('Home'); // Or 'TeacherDashboard' based on user data
+          setInitialRouteName('Home');
         }
       } catch (error) {
         console.error('Error checking auth state:', error);
@@ -72,7 +70,7 @@ export default function App() {
         <Stack.Screen name="Lobby" component={Lobby} />
         <Stack.Screen name="GameScreen" component={GameScreen} />
         <Stack.Screen name="BoardGameScreen" component={BoardGameScreen} />
-
+        <Stack.Screen name="SoloQuiz" component={SoloQuiz} />
       </Stack.Navigator>
     </NavigationContainer>
   );

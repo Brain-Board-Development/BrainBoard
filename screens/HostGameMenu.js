@@ -6,10 +6,8 @@
 
 import React, { useState, useEffect } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity,
-  ActivityIndicator, ScrollView, Switch, TextInput, Modal,
-  useWindowDimensions, SafeAreaView,
-} from 'react-native';
+  View, Text, StyleSheet, TouchableOpacity, Image, ActivityIndicator, ScrollView, Switch, TextInput, Modal, useWindowDimensions, SafeAreaView, Pressable, Platform,
+} from "react-native";
 import { db, auth } from '../firebaseConfig';
 import { doc, getDoc, addDoc, collection, serverTimestamp } from 'firebase/firestore';
 
@@ -20,6 +18,7 @@ export default function HostGameMenu({ navigation, route }) {
   const rs = Math.min(1, Math.max(0.7, winW / 500, winH / 700));
 
   const [game, setGame] = useState(null);
+  const [coverImage, setCoverImage] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showErrorModal, setShowErrorModal] = useState(false);
@@ -42,6 +41,7 @@ export default function HostGameMenu({ navigation, route }) {
         if (gameDoc.exists()) {
           const d = gameDoc.data();
           setGame(d);
+          setCoverImage(d.coverImage || null);
           if (d.timePerQuestion > 0) setTimePerQuestion(d.timePerQuestion.toString());
         } else {
           setError('Game not found');
@@ -131,9 +131,9 @@ export default function HostGameMenu({ navigation, route }) {
     <SafeAreaView style={S.container}>
       {/* ── Header ── */}
       <View style={[S.header, { padding: Math.max(12, 16 * rs) }]}>
-        <TouchableOpacity onPress={() => navigation.goBack()}>
+        <Pressable style={({hovered,pressed})=>[{}, Platform.OS==='web'&&hovered&&{opacity:0.7}, pressed&&{opacity:0.5}]} onPress={() => navigation.goBack()}>
           <Text style={[S.backText, { fontSize: Math.max(13, 15 * rs) }]}>← Back</Text>
-        </TouchableOpacity>
+        </Pressable>
         <Text style={[S.headerTitle, { fontSize: Math.max(16, 20 * rs) }]}>Host Game</Text>
         <View style={{ width: 60 }} />
       </View>
@@ -147,7 +147,14 @@ export default function HostGameMenu({ navigation, route }) {
         {/* Game card */}
         <View style={[S.gameCard, { padding: Math.max(12, 16 * rs), marginBottom: Math.max(8, 12 * rs) }]}>
           <View style={[S.gameCover, { width: Math.max(64, 80 * rs), height: Math.max(64, 80 * rs) }]}>
-            <Text style={{ fontSize: Math.max(28, 36 * rs) }}>🎯</Text>
+            {coverImage
+              ? <Image source={{ uri: coverImage }} style={{ width: '100%', height: '100%', borderRadius: 12 }} resizeMode="cover" />
+              : <View style={{ width: '100%', height: '100%', borderRadius: 12, backgroundColor: '#333', alignItems: 'center', justifyContent: 'center' }}>
+                  <Text style={{ color: '#555', fontSize: Math.max(18, 22 * rs), fontWeight: 'bold' }}>
+                    {game?.title?.substring(0,2).toUpperCase() || '?'}
+                  </Text>
+                </View>
+            }
           </View>
           <Text style={[S.gameTitle, { fontSize: Math.max(15, 18 * rs) }]} numberOfLines={2}>
             {game?.title || 'Game Title'}
@@ -198,14 +205,13 @@ export default function HostGameMenu({ navigation, route }) {
 
       {/* ── Launch button — always visible at bottom ── */}
       <View style={[S.launchBar, { padding: Math.max(10, 14 * rs) }]}>
-        <TouchableOpacity
-          style={[S.launchButton, { paddingVertical: Math.max(12, 16 * rs) }]}
+        <Pressable
+          style={({hovered,pressed})=>[S.launchButton, { paddingVertical: Math.max(12, 16 * rs) }, Platform.OS==='web'&&hovered&&{backgroundColor:'#00e090',transform:[{scale:1.02}]}, pressed&&{opacity:0.85}]}
           onPress={launchLobby}
-          activeOpacity={0.85}
         >
-          <Text style={[S.launchText, { fontSize: Math.max(15, 18 * rs) }]}>🚀  Launch Lobby</Text>
+          <Text style={[S.launchText, { fontSize: Math.max(15, 18 * rs) }]}>Launch Lobby</Text>
           <Text style={[S.launchSubtext, { fontSize: Math.max(11, 13 * rs) }]}>Students will join with a PIN</Text>
-        </TouchableOpacity>
+        </Pressable>
       </View>
 
       <Modal visible={showErrorModal} transparent animationType="fade" onRequestClose={() => setShowErrorModal(false)}>
@@ -258,6 +264,8 @@ const S = StyleSheet.create({
   launchButton: { backgroundColor: '#00c781', borderRadius: 14, alignItems: 'center',
                    width: '100%', maxWidth: 600, alignSelf: 'center' },
   launchText:   { color: '#fff', fontWeight: 'bold' },
+  soloButton:     { backgroundColor: '#0d3550', borderRadius: 14, alignItems: 'center', width: '100%', maxWidth: 600, alignSelf: 'center', borderWidth: 1.5, borderColor: '#3498db' },
+  soloButtonText: { color: '#3498db', fontWeight: 'bold' },
   launchSubtext:{ color: 'rgba(255,255,255,0.75)', marginTop: 3 },
 
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', alignItems: 'center' },

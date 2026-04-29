@@ -6,13 +6,14 @@
 
 import React, { useState } from "react";
 import {
-  View, Text, TextInput, TouchableOpacity,
-  StyleSheet, SafeAreaView, ActivityIndicator, Modal,
+  View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, ActivityIndicator, Modal, Pressable, Platform, useWindowDimensions,
 } from "react-native";
 import { db } from "../firebaseConfig";
 import { collection, query, where, getDocs } from "firebase/firestore";
 
 export default function JoinGameScreen({ navigation }) {
+  const { width: winW } = useWindowDimensions();
+  const isMobile = winW < 500;
   const [gameCode, setGameCode] = useState("");
   const [isJoining, setIsJoining] = useState(false);
   const [modal, setModal]         = useState({ visible: false, title: "", message: "", goBack: false });
@@ -54,7 +55,7 @@ export default function JoinGameScreen({ navigation }) {
       // FIX #5: Lobby locked?
       if (data.isLobbyLocked) {
         showModal(
-          "🔒 Lobby Locked",
+          "Lobby Locked",
           "The game you are attempting to join is locked.\n\nThe host has prevented new players from joining. Try again later or ask the host to unlock.",
           true // goBack = true → dismiss sends back
         );
@@ -66,7 +67,7 @@ export default function JoinGameScreen({ navigation }) {
       const currentCount = (data.players || []).length;
       if (currentCount >= maxPlayers) {
         showModal(
-          "🚫 Game Full",
+          "Game Full",
           `This game is full (${currentCount}/${maxPlayers} players).\n\nYou cannot join. Try a different game.`,
           true
         );
@@ -138,9 +139,9 @@ const styles = StyleSheet.create({
   title: { fontSize: 28, fontWeight: "bold", color: "#00c781", marginBottom: 8 },
   subtitle: { fontSize: 15, color: "#888", marginBottom: 24 },
   input: {
-    width: "100%", maxWidth: 340, height: 60,
-    backgroundColor: "#1e1e1e", borderRadius: 16, color: "#fff",
-    fontSize: 26, marginBottom: 14,
+    width: "100%", maxWidth: 340, height: 56,
+    backgroundColor: "#1e1e1e", borderRadius: 14, color: "#fff",
+    fontSize: 22, marginBottom: 12,
     borderWidth: 2, borderColor: "#333",
     textAlign: "center",
     paddingHorizontal: 14,
@@ -151,6 +152,7 @@ const styles = StyleSheet.create({
   },
   btnDisabled: { backgroundColor: "#222", opacity: 0.5 },
   btnText: { color: "#fff", fontSize: 17, fontWeight: "bold" },
+
   backLink: { marginTop: 8 },
   backLinkText: { color: "#555", fontSize: 15 },
 
