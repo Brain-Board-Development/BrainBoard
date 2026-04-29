@@ -131,9 +131,9 @@ export default function HostGameMenu({ navigation, route }) {
     <SafeAreaView style={S.container}>
       {/* ── Header ── */}
       <View style={[S.header, { padding: Math.max(12, 16 * rs) }]}>
-        <Pressable style={({hovered,pressed})=>[{}, Platform.OS==='web'&&hovered&&{opacity:0.7}, pressed&&{opacity:0.5}]} onPress={() => navigation.goBack()}>
+        <TouchableOpacity style={{ width: 80 }} onPress={() => navigation.goBack()}>
           <Text style={[S.backText, { fontSize: Math.max(13, 15 * rs) }]}>← Back</Text>
-        </Pressable>
+        </TouchableOpacity>
         <Text style={[S.headerTitle, { fontSize: Math.max(16, 20 * rs) }]}>Host Game</Text>
         <View style={{ width: 60 }} />
       </View>
@@ -212,22 +212,28 @@ export default function HostGameMenu({ navigation, route }) {
           <Text style={[S.launchText, { fontSize: Math.max(15, 18 * rs) }]}>Launch Lobby</Text>
           <Text style={[S.launchSubtext, { fontSize: Math.max(11, 13 * rs) }]}>Students will join with a PIN</Text>
         </Pressable>
-        <Pressable
-          style={({hovered,pressed})=>[S.soloButton, { paddingVertical: Math.max(11, 14 * rs) }, Platform.OS==='web'&&hovered&&{backgroundColor:'#1a4d6d',transform:[{scale:1.02}]}, pressed&&{opacity:0.85}]}
+        <TouchableOpacity
+          style={[S.soloButton, { paddingVertical: Math.max(11, 14 * rs) }]}
+          activeOpacity={0.75}
           onPress={() => {
-            if (!game) return;
+            if (!game) { alert('Game not loaded yet, please wait.'); return; }
+            if (!game.questions || game.questions.length === 0) { alert('This game has no questions.'); return; }
             navigation.navigate('SoloQuiz', {
               gameId,
-              questions: game.questions || [],
+              questions: game.questions,
               title: game.title || '',
+              coverImage: coverImage || null,
               timePerQuestion: parseInt(timePerQuestion, 10) || 20,
               gameDuration: parseInt(gameDuration, 10) || 10,
+              showAnswersAfter,
+              randomizeQuestions,
+              randomizeAnswers,
             });
           }}
         >
           <Text style={[S.soloButtonText, { fontSize: Math.max(14, 16 * rs) }]}>Play Solo</Text>
           <Text style={[S.launchSubtext, { fontSize: Math.max(10, 12 * rs) }]}>Answer questions by yourself</Text>
-        </Pressable>
+        </TouchableOpacity>
       </View>
 
       <Modal visible={showErrorModal} transparent animationType="fade" onRequestClose={() => setShowErrorModal(false)}>

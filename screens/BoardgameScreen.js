@@ -1042,15 +1042,8 @@ export default function BoardGameScreen({ route, navigation }) {
     setMBoxOpen(false); setMBoxKey(null); setMBoxDef(null);
     const itemId = mBoxInventoryItemId.current;
     mBoxInventoryItemId.current = null;
-    // Only restore the item if the effect hasn't been revealed yet (still on "roll" step).
-    // Once the player sees the effect, the box is consumed — no fishing for a better roll.
-    if (itemId && stepAtClose === "roll") {
-      setInventory(prev => {
-        if (prev.find(i => i.id === itemId)) return prev;
-        return [...prev, { type: "mystery_box", id: itemId }];
-      });
-    } else if (itemId) {
-      // Effect was revealed — consume it regardless of what the player does
+    // Always consume the mystery box — once you open it, it's gone regardless
+    if (itemId) {
       removeFromInventory(itemId);
     }
     const restore = savedPhaseRef.current;
@@ -1312,8 +1305,11 @@ export default function BoardGameScreen({ route, navigation }) {
       await updateDoc(doc(db,"gameSessions",sessionId), {[`activeDuel.${myKey}`]:true}).catch(console.error);
     }
     setDuelView("active");
-    setPhaseSync("questions");
-    setQIdx(i => i+1);
+    // Brief pause so the transition doesn't feel jarring
+    setTimeout(() => {
+      setPhaseSync("questions");
+      setQIdx(i => i+1);
+    }, 800);
 
     // Apply any stun that arrived while we were in the duel
     setPendingStun(prev => {
@@ -1390,9 +1386,9 @@ export default function BoardGameScreen({ route, navigation }) {
           setStunRecovery(0); setStunQIdx(0); setStunSelAns(null);
           setStunMultiSel([]); setStunMultiSubmitted(false);
           setIsStunned(false); activeStunRef.current = false;
-          // Go to "rolled" so the normal "Back to Questions" button appears
+          // Show "rolled" screen briefly so the player sees they're free
           setPhaseSync("rolled");
-        }, 600);
+        }, 1800);
         return;
       }
     } else {
@@ -1435,7 +1431,7 @@ export default function BoardGameScreen({ route, navigation }) {
           setStunMultiSel([]); setStunMultiSubmitted(false);
           setIsStunned(false); activeStunRef.current = false;
           setPhaseSync("rolled");
-        }, 600);
+        }, 1800);
         return;
       }
     } else {
