@@ -10,19 +10,6 @@ import {
 import { db } from "../firebaseConfig";
 import { doc, onSnapshot, updateDoc, getDoc } from "firebase/firestore";
 
-const BOARD_COLS = 10;
-const { width: SCREEN_W } = Dimensions.get("window");
-const TILE_SIZE = Math.min(48, Math.floor((SCREEN_W - 64) / BOARD_COLS));
-
-const SPACE_CFG = {
-  normal:  { bg: "#1a3d1a", border: "#27ae60", label: ""  },
-  lava:    { bg: "#3d1200", border: "#e74c3c", label: "L" },
-  cannon:  { bg: "#00213d", border: "#2980b9", label: "C" },
-  trap:    { bg: "#3d2d00", border: "#d68910", label: "T" },
-  mystery: { bg: "#2a0a3d", border: "#8e44ad", label: "?" },
-};
-
-// Distribution: 60% mystery, 10% normal, 10% lava, 10% cannon, 10% trap (pool of 10)
 const SPACE_POOL = [
   "mystery", "mystery", "mystery", "mystery", "mystery", "mystery",
   "normal",
@@ -37,128 +24,293 @@ const calcBoardSize = (n) =>
 function Pawn({ color, size = 14 }) {
   const c = color || "#888";
   const s = size;
+  const dark = "rgba(0,0,0,0.6)";
   return (
-    <View style={{ width: s, height: s * 1.25, alignItems: "center", justifyContent: "flex-end" }}>
-      <View style={{ width: s * 0.44, height: s * 0.44, borderRadius: s * 0.22,
-          backgroundColor: c, borderWidth: 1.5, borderColor: "rgba(0,0,0,0.55)" }}>
-        <View style={{ position:"absolute", top: s*0.06, left: s*0.09,
-            width: s*0.13, height: s*0.11, borderRadius: s*0.06,
-            backgroundColor: "rgba(255,255,255,0.35)" }} />
-      </View>
-      <View style={{ width: s * 0.14, height: s * 0.1, backgroundColor: c,
-          borderLeftWidth: 1.5, borderRightWidth: 1.5, borderColor: "rgba(0,0,0,0.55)" }} />
-      <View style={{ width: s * 0.62, height: s * 0.22,
-          borderTopLeftRadius: s * 0.04, borderTopRightRadius: s * 0.04,
-          borderBottomLeftRadius: s * 0.12, borderBottomRightRadius: s * 0.12,
-          backgroundColor: c, borderWidth: 1.5, borderColor: "rgba(0,0,0,0.55)" }} />
-      <View style={{ width: s * 0.78, height: s * 0.14, borderRadius: s * 0.04,
-          backgroundColor: c, borderWidth: 1.5, borderColor: "rgba(0,0,0,0.55)" }} />
+    <View style={{ width: s, height: s * 1.1, alignItems: "center", justifyContent: "flex-end" }}>
+      {/* Head — simple circle */}
+      <View style={{ width: s * 0.46, height: s * 0.46, borderRadius: s * 0.23,
+          backgroundColor: c, borderWidth: 1.5, borderColor: dark }} />
+      {/* Body — tapered trapezoid shape */}
+      <View style={{ width: s * 0.68, height: s * 0.44,
+          borderTopLeftRadius: s * 0.08, borderTopRightRadius: s * 0.08,
+          borderBottomLeftRadius: s * 0.18, borderBottomRightRadius: s * 0.18,
+          backgroundColor: c, borderWidth: 1.5, borderColor: dark,
+          marginTop: s * 0.04 }} />
+    </View>
+  );
+}
+function LavaTile({ sz }) {
+  // Use SVG-style layering: dark rock slabs, glowing orange cracks between them,
+  // bright yellow lava pools at crack nodes
+  const rock = "#1c0800";
+  const darkCrust = "#2e0d02";
+  const glowOrange = "#ff5500";
+  const glowYellow = "#ffbb00";
+  return (
+    <View style={{ width:sz, height:sz, borderRadius:7, overflow:"hidden", backgroundColor:rock }}>
+
+      {/* ── Rock slab chunks — irregular dark polygons ── */}
+      {[
+        {t:0,    l:0,    w:0.44, h:0.42, br:[6,2,8,4],  c:"#280c01"},
+        {t:0,    l:0.48, w:0.52, h:0.36, br:[2,6,4,8],  c:"#2e0e02"},
+        {t:0.45, l:0,    w:0.38, h:0.55, br:[4,8,6,2],  c:"#240b01"},
+        {t:0.4,  l:0.42, w:0.58, h:0.6,  br:[8,4,2,6],  c:"#2a0d02"},
+        {t:0.2,  l:0.2,  w:0.28, h:0.26, br:[4,4,4,4],  c:"#321002"},
+      ].map((r,i)=>(
+        <View key={i} style={{ position:"absolute",
+            top:sz*r.t, left:sz*r.l, width:sz*r.w, height:sz*r.h,
+            borderTopLeftRadius:r.br[0], borderTopRightRadius:r.br[1],
+            borderBottomRightRadius:r.br[2], borderBottomLeftRadius:r.br[3],
+            backgroundColor:r.c }} />
+      ))}
+
+      {/* ── Lava fissures — glowing orange lines between slabs ── */}
+      {/* Horizontal main crack */}
+      <View style={{ position:"absolute", top:sz*0.41, left:0, right:0,
+          height:sz*0.07, backgroundColor:glowOrange }} />
+      {/* Vertical main crack */}
+      <View style={{ position:"absolute", left:sz*0.43, top:0, bottom:0,
+          width:sz*0.07, backgroundColor:glowOrange }} />
+      {/* Diagonal sub-crack top-right */}
+      <View style={{ position:"absolute", top:sz*0.04, left:sz*0.62,
+          width:sz*0.06, height:sz*0.38,
+          backgroundColor:"#e04a00",
+          transform:[{rotate:"20deg"}] }} />
+      {/* Diagonal sub-crack bottom-left */}
+      <View style={{ position:"absolute", top:sz*0.55, left:sz*0.08,
+          width:sz*0.06, height:sz*0.36,
+          backgroundColor:"#e04a00",
+          transform:[{rotate:"-15deg"}] }} />
+
+      {/* ── Glow bleed — soft halo around cracks ── */}
+      <View style={{ position:"absolute", top:sz*0.35, left:0, right:0,
+          height:sz*0.19, backgroundColor:"rgba(255,80,0,0.18)" }} />
+      <View style={{ position:"absolute", left:sz*0.37, top:0, bottom:0,
+          width:sz*0.19, backgroundColor:"rgba(255,80,0,0.18)" }} />
+
+      {/* ── Lava pools at crack intersections ── */}
+      {/* Centre node — brightest */}
+      <View style={{ position:"absolute", top:sz*0.36, left:sz*0.38,
+          width:sz*0.18, height:sz*0.18, borderRadius:sz*0.09,
+          backgroundColor:glowYellow }} />
+      {/* Top-centre node */}
+      <View style={{ position:"absolute", top:sz*0.0, left:sz*0.39,
+          width:sz*0.13, height:sz*0.13, borderRadius:sz*0.065,
+          backgroundColor:glowYellow, opacity:0.9 }} />
+      {/* Left-centre node */}
+      <View style={{ position:"absolute", top:sz*0.38, left:sz*0.0,
+          width:sz*0.13, height:sz*0.13, borderRadius:sz*0.065,
+          backgroundColor:glowYellow, opacity:0.85 }} />
+      {/* Right-centre node */}
+      <View style={{ position:"absolute", top:sz*0.38, right:0,
+          width:sz*0.13, height:sz*0.13, borderRadius:sz*0.065,
+          backgroundColor:glowYellow, opacity:0.85 }} />
+      {/* Bottom-centre node */}
+      <View style={{ position:"absolute", bottom:0, left:sz*0.39,
+          width:sz*0.13, height:sz*0.13, borderRadius:sz*0.065,
+          backgroundColor:glowYellow, opacity:0.9 }} />
+      {/* Small secondary bubbles */}
+      {[{t:0.14,l:0.62},{t:0.68,l:0.16},{t:0.72,l:0.64},{t:0.08,l:0.15}].map((b,i)=>(
+        <View key={i} style={{ position:"absolute", top:sz*b.t, left:sz*b.l,
+            width:sz*0.07, height:sz*0.07, borderRadius:sz*0.035,
+            backgroundColor:"#ff8800", opacity:0.8 }} />
+      ))}
     </View>
   );
 }
 
-function buildSnakeRows(total) {
-  const rows = [];
-  for (let r = 0; r <= total; r += BOARD_COLS) {
-    const row = [];
-    for (let s = r; s < r + BOARD_COLS && s <= total; s++) row.push(s);
-    if (Math.floor(r / BOARD_COLS) % 2 === 1) row.reverse();
-    rows.push(row);
-  }
-  return rows.reverse();
-}
+// ── Trap tile — stone floor with a spiked pit trap ─────────────────────────
 
-const NICK_ADJ  = ["Swift","Brave","Clever","Bold","Quick","Bright","Sharp","Fierce","Calm","Wild","Sly","Wise","Daring","Lucky","Keen"];
-const NICK_NOUN = ["Fox","Wolf","Eagle","Bear","Lion","Tiger","Hawk","Shark","Raven","Dragon","Falcon","Puma","Cobra","Viper","Lynx"];
-const randomNick = () =>
-  NICK_ADJ[Math.floor(Math.random() * NICK_ADJ.length)] +
-  NICK_NOUN[Math.floor(Math.random() * NICK_NOUN.length)] +
-  Math.floor(Math.random() * 100);
-
-function BoardPreview({ players, boardSize }) {
-  const sz   = Math.min(TILE_SIZE, Math.floor((SCREEN_W - 64) / BOARD_COLS));
-  const rows = buildSnakeRows(boardSize);
-
-  const sampleBoard = useMemo(() => {
-    return Array.from({ length: boardSize + 1 }, (_, i) => {
-      if (i === 0 || i === boardSize) return { type: "normal" };
-      return { type: SPACE_POOL[Math.floor(Math.random() * SPACE_POOL.length)] };
-    });
-  }, [boardSize]);
-
-  const playersAt = (idx) => players.filter((p) => (p.position || 0) === idx);
-
+function TrapTile({ sz }) {
   return (
-    <View style={brd.wrapper}>
-      <Text style={brd.title}>Board Preview — {boardSize} tiles</Text>
-      <Text style={brd.sub}>(Sample — actual layout generated at start)</Text>
-      <ScrollView nestedScrollEnabled>
-        {rows.map((row, ri) => (
-          <View key={ri} style={brd.row}>
-            {row.map((idx) => {
-              const type    = sampleBoard[idx] ? sampleBoard[idx].type : "normal";
-              const cfg     = SPACE_CFG[type] || SPACE_CFG.normal;
-              const isEnd   = idx === boardSize;
-              const isStart = idx === 0;
-              const here    = playersAt(idx);
-              return (
-                <View key={idx} style={[
-                  brd.tile,
-                  { width: sz, height: sz, backgroundColor: cfg.bg, borderColor: cfg.border },
-                  (isEnd || isStart) && brd.tileSpecial,
-                ]}>
-                  {isEnd ? (
-                    <Text style={[brd.lbl, { color: "#2980b9", fontSize: sz * 0.28 }]}>END</Text>
-                  ) : isStart ? (
-                    <Text style={[brd.lbl, { color: "#27ae60", fontSize: sz * 0.28 }]}>GO</Text>
-                  ) : type !== "normal" ? (
-                    <Text style={[brd.lbl, { color: cfg.border, fontSize: sz * 0.38 }]}>{cfg.label}</Text>
-                  ) : (
-                    <Text style={[brd.num, { fontSize: sz * 0.26 }]}>{idx}</Text>
-                  )}
-                  {here.length > 0 && (
-                    <View style={brd.tokens}>
-                      {here.slice(0, 4).map((p, i) => (
-                        <Pawn key={i} color={p.color || "#888"} size={sz * 0.55}/>
-                      ))}
-                    </View>
-                  )}
-                </View>
-              );
-            })}
-          </View>
-        ))}
-      </ScrollView>
-      <View style={brd.legend}>
-        {Object.entries(SPACE_CFG).map(([type, cfg]) => (
-          <View key={type} style={brd.legendRow}>
-            <View style={[brd.swatch, { backgroundColor: cfg.bg, borderColor: cfg.border }]} />
-            <Text style={[brd.legendTxt, { color: cfg.border }]}>
-              {type.charAt(0).toUpperCase() + type.slice(1)}
-            </Text>
-          </View>
-        ))}
+    <View style={{ width:sz, height:sz, borderRadius:7, overflow:"hidden",
+        backgroundColor:"#2a2520" }}>
+
+      {/* ── Stone floor — four cobblestone blocks with mortar lines ── */}
+      {[
+        {t:0,    l:0,    w:0.47, h:0.47, c:"#3d3530"},
+        {t:0,    l:0.53, w:0.47, h:0.47, c:"#362f28"},
+        {t:0.53, l:0,    w:0.47, h:0.47, c:"#383028"},
+        {t:0.53, l:0.53, w:0.47, h:0.47, c:"#3a3228"},
+      ].map((r,i)=>(
+        <View key={i} style={{ position:"absolute", top:sz*r.t, left:sz*r.l,
+            width:sz*r.w, height:sz*r.h, backgroundColor:r.c,
+            borderWidth:0.5, borderColor:"#1a1510" }} />
+      ))}
+      {/* Mortar cross */}
+      <View style={{ position:"absolute", top:sz*0.47, left:0, right:0,
+          height:sz*0.06, backgroundColor:"#1a1510" }} />
+      <View style={{ position:"absolute", left:sz*0.47, top:0, bottom:0,
+          width:sz*0.06, backgroundColor:"#1a1510" }} />
+
+      {/* Stone surface texture — small pits */}
+      {[{t:0.08,l:0.1},{t:0.16,l:0.34},{t:0.08,l:0.64},{t:0.28,l:0.72},
+        {t:0.62,l:0.08},{t:0.72,l:0.3},{t:0.65,l:0.66},{t:0.78,l:0.8},
+      ].map((p,i)=>(
+        <View key={i} style={{ position:"absolute", top:sz*p.t, left:sz*p.l,
+            width:sz*0.06, height:sz*0.04, borderRadius:sz*0.02,
+            backgroundColor:"rgba(0,0,0,0.25)" }} />
+      ))}
+
+      {/* ── Pit — dark rectangular hole in floor centre ── */}
+      <View style={{ position:"absolute", top:sz*0.19, left:sz*0.18,
+          width:sz*0.64, height:sz*0.62,
+          borderRadius:sz*0.04,
+          backgroundColor:"#0a0806",
+          borderWidth:2, borderColor:"#111" }}>
+        {/* Pit depth shadow */}
+        <View style={{ position:"absolute", top:2, left:2, right:2, bottom:2,
+            borderRadius:sz*0.03, backgroundColor:"#050303" }} />
+        {/* Pit inner edge highlight (near side lit) */}
+        <View style={{ position:"absolute", top:0, left:0, right:0,
+            height:sz*0.05, borderTopLeftRadius:sz*0.04, borderTopRightRadius:sz*0.04,
+            backgroundColor:"rgba(255,255,255,0.06)" }} />
       </View>
+
+      {/* ── Spikes — sharp triangles pointing up inside pit ── */}
+      {[0.26, 0.40, 0.54, 0.68].map((l,i)=>(
+        <View key={i} style={{ position:"absolute", bottom:sz*0.21, left:sz*l,
+            width:0, height:0,
+            borderLeftWidth:sz*0.05, borderRightWidth:sz*0.05, borderBottomWidth:sz*0.22,
+            borderLeftColor:"transparent", borderRightColor:"transparent",
+            borderBottomColor: i%2===0 ? "#9e9e9e" : "#bdbdbd" }} />
+      ))}
+
+      {/* ── Worn cracks extending from pit corners ── */}
+      {[{t:0.14,l:0.12,rot:"-40deg",h:0.1},{t:0.16,l:0.76,rot:"40deg",h:0.1},
+        {t:0.78,l:0.1, rot:"35deg", h:0.1},{t:0.78,l:0.78,rot:"-35deg",h:0.1},
+      ].map((c,i)=>(
+        <View key={i} style={{ position:"absolute", top:sz*c.t, left:sz*c.l,
+            width:2, height:sz*c.h, backgroundColor:"#0a0806",
+            transform:[{rotate:c.rot}] }} />
+      ))}
     </View>
   );
 }
 
-const brd = StyleSheet.create({
-  wrapper:     { backgroundColor: "#0d0d0d", borderRadius: 16, padding: 14, marginTop: 20, borderWidth: 1, borderColor: "#222" },
-  title:       { color: "#00c781", fontSize: 14, fontWeight: "bold", marginBottom: 4, textAlign: "center" },
-  sub:         { color: "#444", fontSize: 11, textAlign: "center", marginBottom: 10 },
-  row:         { flexDirection: "row", justifyContent: "center", marginBottom: 3 },
-  tile:        { borderRadius: 7, margin: 2, alignItems: "center", justifyContent: "center", borderWidth: 1 },
-  tileSpecial: { borderWidth: 2 },
-  lbl:         { fontWeight: "bold" },
-  num:         { color: "#3a5a3a", fontWeight: "bold" },
-  tokens:      { position: "absolute", bottom: 2, flexDirection: "row", flexWrap: "wrap", justifyContent: "center" },
-  token:       { width: 7, height: 7, borderRadius: 4, margin: 1 },
-  legend:      { flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: 10, marginTop: 12, paddingTop: 10, borderTopWidth: 1, borderTopColor: "#222" },
-  legendRow:   { flexDirection: "row", alignItems: "center", gap: 5 },
-  swatch:      { width: 14, height: 14, borderRadius: 3, borderWidth: 1.5 },
-  legendTxt:   { fontSize: 11, fontWeight: "600" },
-});
+// ── Cannon tile — top-down view of a cannon pointing LEFT ─────────────────
+
+function CannonTile({ sz }) {
+  return (
+    <View style={{ width:sz, height:sz, borderRadius:7, overflow:"hidden",
+        backgroundColor:"#0e1620" }}>
+
+      {/* ── Stone/brick floor ── */}
+      {[{t:0,l:0,w:0.5,h:0.5,c:"#16202c"},{t:0,l:0.5,w:0.5,h:0.5,c:"#131d28"},
+        {t:0.5,l:0,w:0.5,h:0.5,c:"#14202a"},{t:0.5,l:0.5,w:0.5,h:0.5,c:"#16222e"},
+      ].map((r,i)=>(
+        <View key={i} style={{ position:"absolute", top:sz*r.t, left:sz*r.l,
+            width:sz*r.w, height:sz*r.h, backgroundColor:r.c,
+            borderWidth:0.5, borderColor:"#0a1218" }} />
+      ))}
+
+      {/* ── Wooden carriage platform ── */}
+      <View style={{ position:"absolute", top:sz*0.28, left:sz*0.16,
+          width:sz*0.74, height:sz*0.44,
+          borderRadius:sz*0.04,
+          backgroundColor:"#4a3520",
+          borderWidth:1.5, borderColor:"#2c1e10" }}>
+        {/* Wood grain lines */}
+        {[0.2,0.4,0.6,0.8].map((t,i)=>(
+          <View key={i} style={{ position:"absolute", top:`${t*100}%`, left:0, right:0,
+              height:0.5, backgroundColor:"rgba(0,0,0,0.2)" }} />
+        ))}
+        {/* Corner bolts */}
+        {[[0.06,0.1],[0.88,0.1],[0.06,0.74],[0.88,0.74]].map(([x,y],i)=>(
+          <View key={i} style={{ position:"absolute",
+              top:sz*y*0.44, left:sz*x*0.74,
+              width:sz*0.07, height:sz*0.07, borderRadius:sz*0.035,
+              backgroundColor:"#6e5030", borderWidth:1, borderColor:"#2c1e10" }} />
+        ))}
+      </View>
+
+      {/* ── Barrel — viewed top-down, thick cylinder pointing left ── */}
+      {/* Drop shadow */}
+      <View style={{ position:"absolute", top:sz*0.37, left:sz*0.04,
+          width:sz*0.66, height:sz*0.28,
+          borderRadius:sz*0.14,
+          backgroundColor:"rgba(0,0,0,0.45)" }} />
+      {/* Barrel body */}
+      <View style={{ position:"absolute", top:sz*0.34, left:sz*0.06,
+          width:sz*0.64, height:sz*0.26,
+          borderRadius:sz*0.13,
+          backgroundColor:"#546e7a",
+          borderWidth:1.5, borderColor:"#263238" }}>
+        {/* Top specular highlight */}
+        <View style={{ position:"absolute", top:2, left:sz*0.08, right:sz*0.14,
+            height:sz*0.07, borderRadius:sz*0.04,
+            backgroundColor:"rgba(255,255,255,0.15)" }} />
+        {/* Reinforcement rings */}
+        {[0.12, 0.34, 0.58, 0.78].map((l,i)=>(
+          <View key={i} style={{ position:"absolute", top:0, left:sz*l*0.64,
+              width:sz*0.05, height:"100%",
+              backgroundColor: i===0||i===3 ? "#455a64" : "#4a6572",
+              borderLeftWidth:0.5, borderRightWidth:0.5,
+              borderColor:"#263238" }} />
+        ))}
+      </View>
+      {/* Muzzle — wider darker opening at LEFT end */}
+      <View style={{ position:"absolute", top:sz*0.36, left:sz*0.04,
+          width:sz*0.12, height:sz*0.22,
+          borderRadius:sz*0.11,
+          backgroundColor:"#37474f",
+          borderWidth:1.5, borderColor:"#1c2d36" }}>
+        {/* Bore hole */}
+        <View style={{ position:"absolute", top:sz*0.03, left:sz*0.02,
+            width:sz*0.08, height:sz*0.15,
+            borderRadius:sz*0.075, backgroundColor:"#0a1018" }} />
+      </View>
+      {/* Breech cap — thicker right end */}
+      <View style={{ position:"absolute", top:sz*0.31, left:sz*0.62,
+          width:sz*0.13, height:sz*0.32,
+          borderRadius:sz*0.07,
+          backgroundColor:"#546e7a",
+          borderWidth:1.5, borderColor:"#263238" }}>
+        {/* Touch-hole */}
+        <View style={{ position:"absolute", top:sz*0.03, left:sz*0.04,
+            width:sz*0.05, height:sz*0.05, borderRadius:sz*0.025,
+            backgroundColor:"#1c2d36" }} />
+      </View>
+
+      {/* ── Wheels — top-down circles, lower half of tile ── */}
+      {[{side:"left",l:sz*0.14},{side:"right",l:sz*0.56}].map(({side,l},wi)=>(
+        <View key={wi} style={{ position:"absolute", bottom:sz*0.04, left:l,
+            width:sz*0.3, height:sz*0.3, borderRadius:sz*0.15,
+            backgroundColor:"#5d4037", borderWidth:2, borderColor:"#3e2723" }}>
+          {/* Hub */}
+          <View style={{ position:"absolute", top:sz*0.08, left:sz*0.08,
+              width:sz*0.14, height:sz*0.14, borderRadius:sz*0.07,
+              backgroundColor:"#8d6e63", borderWidth:1, borderColor:"#3e2723" }} />
+          {/* Spokes */}
+          {[0,45,90,135].map(deg=>(
+            <View key={deg} style={{ position:"absolute", top:"50%", left:"50%",
+                width:sz*0.26, height:1.5, backgroundColor:"#4e342e",
+                marginLeft:-sz*0.13, marginTop:-0.75,
+                transform:[{rotate:`${deg}deg`}] }} />
+          ))}
+        </View>
+      ))}
+
+      {/* ── Cannonball resting beside carriage ── */}
+      <View style={{ position:"absolute", top:sz*0.1, left:sz*0.74,
+          width:sz*0.18, height:sz*0.18, borderRadius:sz*0.09,
+          backgroundColor:"#424242",
+          borderWidth:1, borderColor:"#212121" }}>
+        <View style={{ position:"absolute", top:2, left:3,
+            width:sz*0.06, height:sz*0.06, borderRadius:sz*0.03,
+            backgroundColor:"rgba(255,255,255,0.2)" }} />
+      </View>
+
+      {/* ── Smoke puffs at muzzle ── */}
+      {[{t:0.3, l:-0.05,r:0.1,o:0.4},{t:0.2,l:-0.04,r:0.08,o:0.25},
+        {t:0.44,l:-0.06,r:0.07,o:0.3}].map((b,i)=>(
+        <View key={i} style={{ position:"absolute", top:sz*b.t, left:sz*b.l,
+            width:sz*b.r*2, height:sz*b.r*2, borderRadius:sz*b.r,
+            backgroundColor:"#b0bec5", opacity:b.o }} />
+      ))}
+    </View>
+  );
+}
 
 export default function Lobby({ route, navigation }) {
   const { sessionId, pin, gameId, isHost } = route.params;
@@ -167,7 +319,8 @@ export default function Lobby({ route, navigation }) {
   const [session,    setSession]    = useState(null);
   const [locked,     setLocked]     = useState(false);
   const [loading,    setLoading]    = useState(true);
-  const [showLeave,  setShowLeave]  = useState(false);
+  const [showLeave,    setShowLeave]    = useState(false);
+  const [showTutorial, setShowTutorial] = useState(false);
   const [kickTarget, setKickTarget] = useState(null);
   const [starting,   setStarting]   = useState(false);
   const [writeError, setWriteError] = useState(null);
@@ -467,11 +620,20 @@ export default function Lobby({ route, navigation }) {
           </View>
         )}
 
-        <BoardPreview players={players} boardSize={previewSize} />
+        <TouchableOpacity
+          style={S.tutorialBtn}
+          onPress={() => setShowTutorial(true)}
+          activeOpacity={0.85}
+        >
+          <Text style={S.tutorialBtnTxt}>Tutorial</Text>
+        </TouchableOpacity>
       </ScrollView>
 
       {isHost ? (
         <View style={S.hostBar}>
+          <TouchableOpacity style={S.leaveBtn} onPress={() => setShowLeave(true)}>
+            <Text style={S.leaveTxt}>Leave</Text>
+          </TouchableOpacity>
           <TouchableOpacity style={[S.lockBtn, locked && S.lockOn]} onPress={toggleLock}>
             <Text style={[S.lockTxt, locked && { color: "#00c781" }]}>
               {locked ? "LOCKED" : "OPEN"}
@@ -490,11 +652,13 @@ export default function Lobby({ route, navigation }) {
             <Text style={S.startTxt}>{starting ? "Starting…" : "Start Game"}</Text>
           </Pressable>
         </View>
-      ) : null}
-
-      <TouchableOpacity style={S.leaveBtn} onPress={() => setShowLeave(true)}>
-        <Text style={S.leaveTxt}>Leave</Text>
-      </TouchableOpacity>
+      ) : (
+        <View style={S.hostBar}>
+          <TouchableOpacity style={[S.leaveBtn, {flex:1, maxWidth:200}]} onPress={() => setShowLeave(true)}>
+            <Text style={S.leaveTxt}>Leave Game</Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       <Modal visible={!!kickTarget} transparent animationType="fade">
         <View style={S.overlay}><View style={S.modal}>
@@ -531,6 +695,138 @@ export default function Lobby({ route, navigation }) {
           </View>
         </View></View>
       </Modal>
+      {/* Tutorial Modal */}
+      <Modal visible={showTutorial} transparent animationType="slide" onRequestClose={() => setShowTutorial(false)}>
+        <View style={S.tutorialOverlay}>
+          <View style={S.tutorialModal}>
+            <View style={S.tutorialHeader}>
+              <Text style={S.tutorialTitle}>How to Play</Text>
+              <TouchableOpacity onPress={() => setShowTutorial(false)} style={S.tutorialClose}>
+                <Text style={S.tutorialCloseTxt}>×</Text>
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={{ flex: 1 }} contentContainerStyle={S.tutorialScroll} showsVerticalScrollIndicator>
+
+              {/* ── OVERVIEW ── */}
+              <Text style={S.tutSecTitle}>How to Play</Text>
+              <Text style={S.tutText}>
+                Brain Board is a multiplayer quiz race. Answer questions correctly to earn dice rolls — move your piece forward, and be the first to reach the end of the board!
+              </Text>
+              <Text style={S.tutText}>
+                Answer <Text style={S.tutBold}>3 correct questions</Text> in a row to earn a dice roll. The more you answer, the further you go.
+              </Text>
+
+              {/* ── TURN FLOW ── */}
+              <View style={S.tutDivider}/>
+              <Text style={S.tutSecTitle}>Turn Flow</Text>
+              {[
+                ["1. Answer Questions", "You are shown one question at a time with a countdown timer. Answer before time runs out!"],
+                ["2. Roll the Dice", "After 3 correct answers, you earn a dice roll. The number you roll is how many spaces you move forward."],
+                ["3. Land on a Space", "After moving, the space you land on triggers an event — good or bad!"],
+                ["4. Repeat", "Keep answering to earn more rolls. First player to reach the final tile wins."],
+              ].map(([title, desc]) => (
+                <View key={title} style={S.tutStep}>
+                  <Text style={S.tutStepTitle}>{title}</Text>
+                  <Text style={S.tutStepDesc}>{desc}</Text>
+                </View>
+              ))}
+
+              {/* ── TILES ── */}
+              <View style={S.tutDivider}/>
+              <Text style={S.tutSecTitle}>Board Spaces</Text>
+
+              {/* Normal */}
+              <View style={S.tutTileRow}>
+                <View style={[S.tutTileBox, {backgroundColor:'#1a2a1a', borderColor:'#2a4a2a'}]}>
+                  <Text style={{color:'#4a6a4a', fontWeight:'bold', fontSize:13}}>42</Text>
+                </View>
+                <View style={S.tutTileDesc}>
+                  <Text style={S.tutTileTitle}>Normal Space</Text>
+                  <Text style={S.tutTileText}>Nothing happens. Just move forward and keep answering!</Text>
+                </View>
+              </View>
+
+              {/* Lava */}
+              <View style={S.tutTileRow}>
+                <LavaTile sz={56}/>
+                <View style={S.tutTileDesc}>
+                  <Text style={S.tutTileTitle}>Lava</Text>
+                  <Text style={S.tutTileText}>You've landed in molten lava! Roll the dice — you'll be pushed <Text style={S.tutBold}>backwards</Text> by that many spaces. Avoid at all costs.</Text>
+                </View>
+              </View>
+
+              {/* Trap */}
+              <View style={S.tutTileRow}>
+                <TrapTile sz={56}/>
+                <View style={S.tutTileDesc}>
+                  <Text style={S.tutTileTitle}>Trap</Text>
+                  <Text style={S.tutTileText}>A spiked pit! You must answer a <Text style={S.tutBold}>bonus question</Text> correctly to escape. Get it wrong and you'll lose progress.</Text>
+                </View>
+              </View>
+
+              {/* Cannon */}
+              <View style={S.tutTileRow}>
+                <CannonTile sz={56}/>
+                <View style={S.tutTileDesc}>
+                  <Text style={S.tutTileTitle}>Cannon</Text>
+                  <Text style={S.tutTileText}>You're loaded into a cannon! Roll the dice — you'll be launched <Text style={S.tutBold}>forward</Text> by that many extra spaces. A lucky break!</Text>
+                </View>
+              </View>
+
+              {/* Mystery */}
+              <View style={S.tutTileRow}>
+                <View style={[S.tutTileBox, {backgroundColor:'#160a22', borderColor:'#8e44ad'}]}>
+                  <Text style={{color:'#a855f7', fontWeight:'900', fontSize:22}}>?</Text>
+                </View>
+                <View style={S.tutTileDesc}>
+                  <Text style={S.tutTileTitle}>Mystery Box</Text>
+                  <Text style={S.tutTileText}>A random item is awarded — could be good or bad. Items go into your inventory and can be used any time.</Text>
+                </View>
+              </View>
+
+              {/* ── ITEMS ── */}
+              <View style={S.tutDivider}/>
+              <Text style={S.tutSecTitle}>Mystery Box Items</Text>
+              {[
+                ["Immunity", "Protects you from the next negative space effect or attack. Lasts 2 landings or 45 seconds."],
+                ["Double Dice Roll", "Your next roll uses two dice — you move the total of both!"],
+                ["Push Back", "Target another player and push them back 3 spaces."],
+                ["Stun", "Target a player — they must answer 3 questions in a row correctly to break free. Until then they can't roll."],
+                ["Deflector", "If someone attacks you in the next 30 seconds, the effect bounces back to them instead."],
+                ["1v1 Duel", "Challenge another player to a 3-question duel. Most correct answers wins — the loser swaps positions with the winner if the winner is behind."],
+              ].map(([name, desc]) => (
+                <View key={name} style={S.tutItem}>
+                  <Text style={S.tutItemName}>{name}</Text>
+                  <Text style={S.tutItemDesc}>{desc}</Text>
+                </View>
+              ))}
+
+              {/* ── STREAKS ── */}
+              <View style={S.tutDivider}/>
+              <Text style={S.tutSecTitle}>Streaks & Luck</Text>
+              <Text style={S.tutText}>
+                <Text style={S.tutBold}>Streak</Text> — Every consecutive correct answer adds to your streak. Higher streaks build your Luck stat.
+              </Text>
+              <Text style={S.tutText}>
+                <Text style={S.tutBold}>Luck</Text> — A percentage chance that your dice roll gets re-rolled if it's low, and you keep the better result. Get on a hot streak to maximize your luck!
+              </Text>
+              <Text style={S.tutText}>
+                Getting a question <Text style={S.tutBold}>wrong</Text> resets your streak to 0.
+              </Text>
+
+              {/* ── WINNING ── */}
+              <View style={S.tutDivider}/>
+              <Text style={S.tutSecTitle}>Winning</Text>
+              <Text style={S.tutText}>
+                The first player to reach or pass the <Text style={S.tutBold}>final tile</Text> (the snake head) wins the game! If a timer is set, the player furthest along when time expires wins.
+              </Text>
+
+              <View style={{height:20}}/>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
     </SafeAreaView>
   );
 }
@@ -575,11 +871,36 @@ const S = StyleSheet.create({
   lockBtn:    { backgroundColor: "#1e1e1e", borderRadius: 14, paddingVertical: 12, paddingHorizontal: 18, alignItems: "center", borderWidth: 1, borderColor: "#333" },
   lockOn:     { backgroundColor: "#003322", borderColor: "#00c781" },
   lockTxt:    { color: "#888", fontSize: 12, fontWeight: "bold" },
+  tutorialBtn:    { backgroundColor: "#0d1e2e", borderRadius: 14, paddingVertical: 14, alignItems: "center", marginTop: 20, borderWidth: 1.5, borderColor: "#3498db" },
+  tutorialBtnTxt: { color: "#3498db", fontSize: 16, fontWeight: "bold" },
+  tutorialOverlay:{ flex: 1, backgroundColor: "rgba(0,0,0,0.85)", justifyContent: "flex-end" },
+  tutorialModal:  { backgroundColor: "#1a1a1a", borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: "80%", borderWidth: 1, borderColor: "#333" },
+  tutorialHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: 20, borderBottomWidth: 1, borderBottomColor: "#222" },
+  tutorialTitle:  { color: "#fff", fontSize: 20, fontWeight: "bold" },
+  tutorialClose:  { width: 36, height: 36, borderRadius: 18, backgroundColor: "#2a2a2a", alignItems: "center", justifyContent: "center" },
+  tutorialCloseTxt:{ color: "#fff", fontSize: 22, fontWeight: "bold", lineHeight: 26 },
+  tutorialScroll: { padding: 20, paddingBottom: 40 },
+  tutSecTitle:    { color: "#00c781", fontSize: 17, fontWeight: "900", marginBottom: 10, marginTop: 4 },
+  tutText:        { color: "#ccc", fontSize: 14, lineHeight: 22, marginBottom: 10 },
+  tutBold:        { color: "#fff", fontWeight: "bold" },
+  tutDivider:     { height: 1, backgroundColor: "#2a2a2a", marginVertical: 18 },
+  tutStep:        { backgroundColor: "#1a1a1a", borderRadius: 12, padding: 14, marginBottom: 10, borderLeftWidth: 3, borderLeftColor: "#00c781" },
+  tutStepTitle:   { color: "#fff", fontWeight: "bold", fontSize: 14, marginBottom: 4 },
+  tutStepDesc:    { color: "#aaa", fontSize: 13, lineHeight: 20 },
+  tutTileRow:     { flexDirection: "row", alignItems: "center", gap: 14, marginBottom: 16, backgroundColor: "#1a1a1a", borderRadius: 12, padding: 12 },
+  tutTileBox:     { width: 56, height: 56, borderRadius: 7, borderWidth: 1.5, alignItems: "center", justifyContent: "center" },
+  tutTileDesc:    { flex: 1 },
+  tutTileTitle:   { color: "#fff", fontWeight: "bold", fontSize: 14, marginBottom: 3 },
+  tutTileText:    { color: "#aaa", fontSize: 12, lineHeight: 18 },
+  tutItem:        { backgroundColor: "#1a1a1a", borderRadius: 10, padding: 12, marginBottom: 8, borderLeftWidth: 3, borderLeftColor: "#8e44ad" },
+  tutItemName:    { color: "#c084fc", fontWeight: "bold", fontSize: 13, marginBottom: 3 },
+  tutItemDesc:    { color: "#aaa", fontSize: 12, lineHeight: 18 },
+  tutorialBody:   { color: "#888", fontSize: 15 },
   startBtn:   { flex: 1, backgroundColor: "#00c781", borderRadius: 16, paddingVertical: 14, alignItems: "center" },
   startOff:   { backgroundColor: "#1e1e1e", opacity: 0.4 },
   startTxt:   { color: "#000", fontSize: 16, fontWeight: "bold" },
-  leaveBtn:   { position: "absolute", bottom: 12, left: 20, backgroundColor: "#2a0000", paddingVertical: 10, paddingHorizontal: 20, borderRadius: 12 },
-  leaveTxt:   { color: "#ff6b6b", fontSize: 14, fontWeight: "bold" },
+  leaveBtn:   { backgroundColor: "#2a0000", borderRadius: 12, paddingVertical: 12, paddingHorizontal: 18, alignItems: "center", borderWidth: 1, borderColor: "#5a0000" },
+  leaveTxt:   { color: "#ff6b6b", fontSize: 13, fontWeight: "bold" },
   overlay:    { flex: 1, backgroundColor: "rgba(0,0,0,0.88)", justifyContent: "center", alignItems: "center" },
   modal:      { backgroundColor: "#1e1e1e", borderRadius: 20, padding: 28, width: "85%", maxWidth: 360, borderWidth: 1, borderColor: "#333" },
   mTtl:       { color: "#fff", fontSize: 16, fontWeight: "bold", marginBottom: 12 },

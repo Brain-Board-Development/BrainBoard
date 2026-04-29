@@ -38,7 +38,7 @@ const GRADE_THRESHOLDS = [
   { min: 80, grade: 'A',  msg: 'Excellent!',      color: '#00c781' },
   { min: 70, grade: 'B',  msg: 'Great work!',     color: '#27ae60' },
   { min: 60, grade: 'C',  msg: 'Good effort!',    color: '#f39c12' },
-  { min: 50, grade: 'D',  msg: 'Keep practising!',color: '#e67e22' },
+  { min: 50, grade: 'D',  msg: 'Keep practicing!',color: '#e67e22' },
   { min: 0,  grade: 'F',  msg: 'Keep trying!',    color: '#e74c3c' },
 ];
 

@@ -108,29 +108,22 @@ function buildSnakeRows(be) {
 function Pawn({ color, size = 20 }) {
   const c = color || "#888";
   const s = size;
+  const dark = "rgba(0,0,0,0.6)";
   return (
-    <View style={{ width: s, height: s * 1.25, alignItems: "center", justifyContent: "flex-end" }}>
-      {/* Head orb */}
-      <View style={{ width: s * 0.44, height: s * 0.44, borderRadius: s * 0.22,
-          backgroundColor: c, borderWidth: 1.5, borderColor: "rgba(0,0,0,0.55)" }}>
-        <View style={{ position:"absolute", top: s*0.06, left: s*0.09,
-            width: s*0.13, height: s*0.11, borderRadius: s*0.06,
-            backgroundColor: "rgba(255,255,255,0.35)" }} />
-      </View>
-      {/* Neck */}
-      <View style={{ width: s * 0.14, height: s * 0.1, backgroundColor: c,
-          borderLeftWidth: 1.5, borderRightWidth: 1.5, borderColor: "rgba(0,0,0,0.55)" }} />
-      {/* Skirt */}
-      <View style={{ width: s * 0.62, height: s * 0.22,
-          borderTopLeftRadius: s * 0.04, borderTopRightRadius: s * 0.04,
-          borderBottomLeftRadius: s * 0.12, borderBottomRightRadius: s * 0.12,
-          backgroundColor: c, borderWidth: 1.5, borderColor: "rgba(0,0,0,0.55)" }} />
-      {/* Base */}
-      <View style={{ width: s * 0.78, height: s * 0.14, borderRadius: s * 0.04,
-          backgroundColor: c, borderWidth: 1.5, borderColor: "rgba(0,0,0,0.55)" }} />
+    <View style={{ width: s, height: s * 1.1, alignItems: "center", justifyContent: "flex-end" }}>
+      {/* Head — simple circle */}
+      <View style={{ width: s * 0.46, height: s * 0.46, borderRadius: s * 0.23,
+          backgroundColor: c, borderWidth: 1.5, borderColor: dark }} />
+      {/* Body — tapered trapezoid shape */}
+      <View style={{ width: s * 0.68, height: s * 0.44,
+          borderTopLeftRadius: s * 0.08, borderTopRightRadius: s * 0.08,
+          borderBottomLeftRadius: s * 0.18, borderBottomRightRadius: s * 0.18,
+          backgroundColor: c, borderWidth: 1.5, borderColor: dark,
+          marginTop: s * 0.04 }} />
     </View>
   );
 }
+
 
 // ── Snake head — bird's eye view, facing LEFT ────────────────────────────────
 // Coordinate system: left = snout, right = neck connection

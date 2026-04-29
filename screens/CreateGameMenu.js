@@ -252,7 +252,7 @@ export default function CreateGameMenu({ navigation, route }) {
   }
 
   return (
-    <View style={styles.container}>
+    <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       <input type="file" accept="image/jpeg,image/png,image/gif,image/webp" ref={coverInputRef} style={{ display: 'none' }} onChange={(e) => handleImageUpload(e, true)} />
       <input type="file" accept="image/jpeg,image/png,image/gif,image/webp" ref={questionInputRef} style={{ display: 'none' }} onChange={(e) => handleImageUpload(e, false)} />
 
@@ -285,7 +285,7 @@ export default function CreateGameMenu({ navigation, route }) {
           <TouchableOpacity style={styles.addQuestionBtn} onPress={addQuestion}>
             <Text style={styles.addQuestionText}>+ Add Question</Text>
           </TouchableOpacity>
-          <ScrollView style={styles.questionList}>
+          <ScrollView style={styles.questionList} showsVerticalScrollIndicator={true}>
             {questions.map((q, i) => {
               const correctCount = q.correctAnswers?.filter(v=>v===true).length || 0;
               const hasCorrect = q.type==='multiSelect' ? correctCount >= 2 : correctCount >= 1;
@@ -325,7 +325,7 @@ export default function CreateGameMenu({ navigation, route }) {
         </View>
 
         {/* Center: Question Editor */}
-        <ScrollView style={{flex:1}} contentContainerStyle={styles.centerEditor} keyboardShouldPersistTaps="handled">
+        <ScrollView style={{flex:1}} contentContainerStyle={styles.centerEditor} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={true}>
           <Text style={styles.editorLabel}>Question {selectedQuestionIndex + 1}</Text>
 
           {/* Question type picker */}
@@ -475,7 +475,7 @@ export default function CreateGameMenu({ navigation, route }) {
         </ScrollView>
 
         {/* Right: Summary & Actions */}
-        <ScrollView style={[styles.rightSidebar, isMobile && {width:"100%", borderLeftWidth:0, borderTopWidth:1, borderTopColor:"#222"}]} contentContainerStyle={{padding:16}} keyboardShouldPersistTaps="handled">
+        <ScrollView style={[styles.rightSidebar, isMobile && {width:"100%", borderLeftWidth:0, borderTopWidth:1, borderTopColor:"#222", maxHeight: 300}]} contentContainerStyle={{padding:16}} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={true}>
           <View style={styles.summary}>
             <Text style={styles.summaryTitle}>Game Summary</Text>
             <Text style={styles.summaryText}>{questions.length} Question(s)</Text>
@@ -497,7 +497,7 @@ export default function CreateGameMenu({ navigation, route }) {
           </View>
         </ScrollView>
       </View>
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -520,7 +520,7 @@ const styles = StyleSheet.create({
   leftSidebar: { width: 300, backgroundColor: '#0d0d0d', padding: 20, borderRightWidth: 1, borderRightColor: '#222' },
   addQuestionBtn: { backgroundColor: '#00c781', padding: 16, borderRadius: 12, alignItems: 'center', marginBottom: 20 },
   addQuestionText: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
-  questionList: { flex: 1 },
+  questionList: { flex: 1, minHeight: 0 },
   questionThumb: { backgroundColor: '#1e1e1e', borderRadius: 12, padding: 12, marginBottom: 12, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: 'transparent', position: 'relative' },
   questionThumbSelected: { borderColor: '#00c781', backgroundColor: '#003322' },
   questionThumbNoAnswer: { borderColor: '#e74c3c' },
