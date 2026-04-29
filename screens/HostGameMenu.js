@@ -203,14 +203,30 @@ export default function HostGameMenu({ navigation, route }) {
         </View>
       </ScrollView>
 
-      {/* ── Launch button — always visible at bottom ── */}
-      <View style={[S.launchBar, { padding: Math.max(10, 14 * rs) }]}>
+      {/* ── Bottom buttons — always visible ── */}
+      <View style={[S.launchBar, { padding: Math.max(10, 14 * rs), gap: 10 }]}>
         <Pressable
           style={({hovered,pressed})=>[S.launchButton, { paddingVertical: Math.max(12, 16 * rs) }, Platform.OS==='web'&&hovered&&{backgroundColor:'#00e090',transform:[{scale:1.02}]}, pressed&&{opacity:0.85}]}
           onPress={launchLobby}
         >
           <Text style={[S.launchText, { fontSize: Math.max(15, 18 * rs) }]}>Launch Lobby</Text>
           <Text style={[S.launchSubtext, { fontSize: Math.max(11, 13 * rs) }]}>Students will join with a PIN</Text>
+        </Pressable>
+        <Pressable
+          style={({hovered,pressed})=>[S.soloButton, { paddingVertical: Math.max(11, 14 * rs) }, Platform.OS==='web'&&hovered&&{backgroundColor:'#1a4d6d',transform:[{scale:1.02}]}, pressed&&{opacity:0.85}]}
+          onPress={() => {
+            if (!game) return;
+            navigation.navigate('SoloQuiz', {
+              gameId,
+              questions: game.questions || [],
+              title: game.title || '',
+              timePerQuestion: parseInt(timePerQuestion, 10) || 20,
+              gameDuration: parseInt(gameDuration, 10) || 10,
+            });
+          }}
+        >
+          <Text style={[S.soloButtonText, { fontSize: Math.max(14, 16 * rs) }]}>Play Solo</Text>
+          <Text style={[S.launchSubtext, { fontSize: Math.max(10, 12 * rs) }]}>Answer questions by yourself</Text>
         </Pressable>
       </View>
 

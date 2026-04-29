@@ -480,14 +480,13 @@ export default function Dashboard({ navigation, route }) {
                     </View>
                   ))}
                 </ScrollView>
-                <View style={[S.previewActions, isMobile && { flexDirection: 'column' }]}>
-                  <TouchableOpacity style={S.hostGameBtn} onPress={() => { setPreviewModal({ isOpen: false, game: null }); navigation.navigate('HostGameMenu', { gameId: previewModal.game.id }); }}>
-                    <Text style={S.hostGameBtnTxt}>Host This Game</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={S.soloBtn} onPress={() => { setPreviewModal({ isOpen: false, game: null }); navigation.navigate('SoloGameMenu', { gameId: previewModal.game.id }); }}>
-                    <Text style={S.soloBtnTxt}>Play Solo</Text>
-                  </TouchableOpacity>
-                </View>
+                <TouchableOpacity
+                  style={S.playBtn}
+                  onPress={() => { setPreviewModal({ isOpen: false, game: null }); navigation.navigate('HostGameMenu', { gameId: previewModal.game.id }); }}
+                  activeOpacity={0.85}
+                >
+                  <Text style={S.playBtnTxt}>Play</Text>
+                </TouchableOpacity>
               </>
             )}
           </View>
@@ -592,9 +591,6 @@ const S = StyleSheet.create({
   previewAns:    { backgroundColor: '#333', padding: 10, borderRadius: 8 },
   previewCorrect:{ backgroundColor: '#004d26' },
   previewAnsTxt: { color: '#fff', fontSize: 14 },
-  previewActions:{ flexDirection: 'row', gap: 12, marginTop: 8 },
-  hostGameBtn:   { flex: 1, backgroundColor: '#00c781', padding: 16, borderRadius: 12, alignItems: 'center' },
-  hostGameBtnTxt:{ color: '#fff', fontSize: 16, fontWeight: 'bold' },
-  soloBtn:       { flex: 1, backgroundColor: '#3498db', padding: 16, borderRadius: 12, alignItems: 'center' },
-  soloBtnTxt:    { color: '#fff', fontSize: 16, fontWeight: 'bold' },
+  playBtn:       { backgroundColor: '#00c781', padding: 18, borderRadius: 14, alignItems: 'center', marginTop: 8 },
+  playBtnTxt:    { color: '#fff', fontSize: 18, fontWeight: 'bold' },
 });

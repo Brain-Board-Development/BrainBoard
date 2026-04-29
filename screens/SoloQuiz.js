@@ -28,7 +28,9 @@ export default function SoloQuiz({ navigation, route }) {
   // Build shuffled question deck, cycling if needed
   const deckRef = useRef(shuffleArray(questions));
   const [qIdx,        setQIdx]        = useState(0);
-  const [selAns,      setSelAns]      = useState(null);
+  const [selAns,      setSelAns]      = useState(null);   // index for single, null for multi
+  const [multiSel,    setMultiSel]    = useState([]);      // for multiSelect
+  const [multiDone,   setMultiDone]   = useState(false);   // confirmed multiSelect
   const [feedback,    setFeedback]    = useState(null); // "correct" | "wrong"
   const [score,       setScore]       = useState(0);
   const [total,       setTotal]       = useState(0);
@@ -45,6 +47,8 @@ export default function SoloQuiz({ navigation, route }) {
 
   const nextQuestion = useCallback(() => {
     setSelAns(null);
+    setMultiSel([]);
+    setMultiDone(false);
     setFeedback(null);
     setQTimeLeft(timePerQuestion);
     setQIdx(i => i + 1);
@@ -108,6 +112,33 @@ export default function SoloQuiz({ navigation, route }) {
     if (isCorrect) setScore(prev => prev + 1);
 
     setTimeout(nextQuestion, isCorrect ? 900 : 1400);
+  };
+
+  const handleMultiToggle = (ansIdx) => {
+    if (multiDone || gameOver) return;
+    setMultiSel(prev =>
+      prev.includes(ansIdx) ? prev.filter(i => i !== ansIdx) : [...prev, ansIdx]
+    );
+  };
+
+  const handleMultiConfirm = () => {
+    if (multiDone || gameOver || multiSel.length === 0) return;
+    clearInterval(qTimerRef.current);
+    timerAnim.stopAnimation();
+    setMultiDone(true);
+
+    // Correct if selected indices exactly match all correct answer indices
+    const correctIndices = (curQ.correctAnswers || [])
+      .map((v, i) => v === true ? i : -1).filter(i => i >= 0);
+    const sortedSel = [...multiSel].sort();
+    const sortedCorrect = [...correctIndices].sort();
+    const isCorrect = sortedSel.length === sortedCorrect.length &&
+      sortedSel.every((v, i) => v === sortedCorrect[i]);
+
+    setFeedback(isCorrect ? "correct" : "wrong");
+    setTotal(prev => prev + 1);
+    if (isCorrect) setScore(prev => prev + 1);
+    setTimeout(nextQuestion, isCorrect ? 900 : 1600);
   };
 
   const formatTime = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
@@ -215,26 +246,65 @@ export default function SoloQuiz({ navigation, route }) {
           {curQ.question}
         </Text>
 
-        <View style={{ gap: Math.max(8, 11 * rs) }}>
-          {answers.map((ans, i) => {
-            let bg = "#1e1e1e", border = "#2a2a2a";
-            if (selAns !== null) {
-              if (curQ.correctAnswers?.[i]) { bg = "#004d20"; border = "#00c781"; }
-              else if (i === selAns && !curQ.correctAnswers?.[i]) { bg = "#4d0000"; border = "#e74c3c"; }
-            }
-            return (
-              <TouchableOpacity
-                key={i}
-                style={[S.ansBtn, { backgroundColor: bg, borderColor: border, paddingVertical: Math.max(12, 16 * rs) }]}
-                onPress={() => handleAnswer(i)}
-                disabled={selAns !== null}
-                activeOpacity={0.75}
-              >
-                <Text style={[S.ansTxt, { fontSize: Math.max(14, 17 * rs) }]}>{ans || `Answer ${i + 1}`}</Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
+        {curQ.type === 'multiSelect' ? (
+          <View style={{ gap: Math.max(8, 11 * rs) }}>
+            <Text style={{ color: '#3498db', fontSize: Math.max(11, 13 * rs), marginBottom: 4, textAlign: 'center' }}>
+              Select ALL correct answers, then tap Confirm
+            </Text>
+            {answers.map((ans, i) => {
+              const isSel = multiSel.includes(i);
+              let bg = isSel ? "#001d33" : "#1e1e1e";
+              let border = isSel ? "#3498db" : "#2a2a2a";
+              if (multiDone) {
+                if (curQ.correctAnswers?.[i]) { bg = "#004d20"; border = "#00c781"; }
+                else if (isSel && !curQ.correctAnswers?.[i]) { bg = "#4d0000"; border = "#e74c3c"; }
+              }
+              return (
+                <TouchableOpacity
+                  key={i}
+                  style={[S.ansBtn, { backgroundColor: bg, borderColor: border, paddingVertical: Math.max(12, 16 * rs), flexDirection: 'row', alignItems: 'center' }]}
+                  onPress={() => handleMultiToggle(i)}
+                  disabled={multiDone}
+                  activeOpacity={0.75}
+                >
+                  <View style={{ width: 20, height: 20, borderRadius: 4, borderWidth: 2, borderColor: isSel ? '#3498db' : '#555', backgroundColor: isSel ? '#3498db' : 'transparent', marginRight: 10, alignItems: 'center', justifyContent: 'center' }}>
+                    {isSel && <Text style={{ color: '#fff', fontSize: 13, fontWeight: 'bold' }}>✓</Text>}
+                  </View>
+                  <Text style={[S.ansTxt, { fontSize: Math.max(14, 17 * rs), flex: 1, textAlign: 'left' }]}>{ans || `Answer ${i + 1}`}</Text>
+                </TouchableOpacity>
+              );
+            })}
+            <TouchableOpacity
+              style={[S.ansBtn, { backgroundColor: '#1a3a5c', borderColor: '#3498db', paddingVertical: Math.max(12, 16 * rs), opacity: multiSel.length > 0 && !multiDone ? 1 : 0.4 }]}
+              onPress={handleMultiConfirm}
+              disabled={multiDone || multiSel.length === 0}
+              activeOpacity={0.75}
+            >
+              <Text style={[S.ansTxt, { fontSize: Math.max(14, 17 * rs), color: '#3498db', fontWeight: 'bold' }]}>Confirm</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <View style={{ gap: Math.max(8, 11 * rs) }}>
+            {answers.map((ans, i) => {
+              let bg = "#1e1e1e", border = "#2a2a2a";
+              if (selAns !== null) {
+                if (curQ.correctAnswers?.[i]) { bg = "#004d20"; border = "#00c781"; }
+                else if (i === selAns && !curQ.correctAnswers?.[i]) { bg = "#4d0000"; border = "#e74c3c"; }
+              }
+              return (
+                <TouchableOpacity
+                  key={i}
+                  style={[S.ansBtn, { backgroundColor: bg, borderColor: border, paddingVertical: Math.max(12, 16 * rs) }]}
+                  onPress={() => handleAnswer(i)}
+                  disabled={selAns !== null}
+                  activeOpacity={0.75}
+                >
+                  <Text style={[S.ansTxt, { fontSize: Math.max(14, 17 * rs) }]}>{ans || `Answer ${i + 1}`}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        )}
       </ScrollView>
     </SafeAreaView>
   );

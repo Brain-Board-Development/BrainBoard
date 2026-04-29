@@ -529,7 +529,7 @@ function SnakeBoard({ board, players, myPosition, myPlayerName, myPlayerColor, h
             return (
               <View key={i} style={[bS.tile, {width:sz,height:sz}, tileStyle(i)]}>
                 {i===boardEnd ? <SnakeHead size={sz}/>
-                 : i===0     ? <Text style={{fontSize:sz*0.38}}>FINISH</Text>
+                 : i===0     ? null
                  : type==="lava"    ? <LavaTile sz={sz}/>
                  : type==="trap"    ? <TrapTile sz={sz}/>
                  : type==="cannon"  ? <CannonTile sz={sz}/>
@@ -837,18 +837,21 @@ export default function BoardGameScreen({ route, navigation }) {
             // would block a false countdown retrigger.
             if (!duelSeenRef.current && ad.currentRound === 0) {
               duelSeenRef.current = true;
-              setDuelCountdown(3);
-              clearInterval(duelCountdownRef.current);
-              let count = 3;
-              duelCountdownRef.current = setInterval(() => {
-                count--;
-                if (count <= 0) {
-                  clearInterval(duelCountdownRef.current);
-                  setDuelCountdown(null);
-                  setPhaseSync("duel");
-                } else {
-                  setDuelCountdown(count);
-                }
+              // Delay 1s before showing countdown so both players have time to load
+              setTimeout(() => {
+                setDuelCountdown(3);
+                clearInterval(duelCountdownRef.current);
+                let count = 3;
+                duelCountdownRef.current = setInterval(() => {
+                  count--;
+                  if (count <= 0) {
+                    clearInterval(duelCountdownRef.current);
+                    setDuelCountdown(null);
+                    setPhaseSync("duel");
+                  } else {
+                    setDuelCountdown(count);
+                  }
+                }, 1000);
               }, 1000);
             }
           }
@@ -2277,7 +2280,7 @@ const S = StyleSheet.create({
   legendItem: { flexDirection:"row", alignItems:"center", gap:5 },
   legendSwatch:{ width:16, height:16, borderRadius:3, borderWidth:1.5 },
   legendTxt:  { fontSize:12, fontWeight:"600" },
-  diceBox:    { flex:1, alignItems:"center", justifyContent:"center", gap:10, backgroundColor:"#0d0d0d", padding:14, paddingBottom:80 },
+  diceBox:    { flex:1, alignItems:"center", justifyContent:"flex-end", gap:10, backgroundColor:"#0d0d0d", padding:14, paddingBottom:110 },
   diceTtl:    { color:"#fff", fontSize:26, fontWeight:"bold", textAlign:"center" },
   luckTxt:    { color:"#888", fontSize:13, textAlign:"center" },
   diceFace:   { fontSize:72, color:"#fff" },
@@ -2331,7 +2334,7 @@ const S = StyleSheet.create({
   lbDot:      { width:26, height:26, borderRadius:13, marginRight:16 },
   lbName:     { color:"#fff", fontSize:26, fontWeight:"500", flex:1 },
   lbPos:      { color:"#aaa", fontSize:24 },
-  leaveBtn:    { position:"absolute", top:8, left:8, backgroundColor:"rgba(42,0,0,0.85)", paddingVertical:7, paddingHorizontal:14, borderRadius:10, zIndex:5 },
+  leaveBtn:    { position:"absolute", top:8, right:8, backgroundColor:"rgba(42,0,0,0.85)", paddingVertical:7, paddingHorizontal:14, borderRadius:10, zIndex:5 },
   leaveBtnTxt: { color:"#ff6b6b", fontSize:12, fontWeight:"bold" },
   overlay: { flex:1, backgroundColor:"rgba(0,0,0,0.94)", justifyContent:"center", alignItems:"center" },
   modal:   { backgroundColor:"#1e1e1e", borderRadius:24, padding:28, width:"92%", maxWidth:460, alignItems:"center", borderWidth:2.5, borderColor:"#444", gap:14, position:"relative",
