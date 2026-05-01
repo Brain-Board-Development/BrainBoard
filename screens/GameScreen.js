@@ -5,7 +5,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   View, Text, StyleSheet, TextInput, TouchableOpacity,
-  ActivityIndicator, SafeAreaView, FlatList, Modal, Animated, Platform,
+  ActivityIndicator, SafeAreaView, FlatList, Modal, Animated, Platform, ScrollView,
 } from "react-native";
 import { db, auth } from "../firebaseConfig";
 import { doc, onSnapshot, updateDoc } from "firebase/firestore";
@@ -134,6 +134,7 @@ export default function GameScreen({ route, navigation }) {
   const [showColorTaken, setShowColorTaken]= useState(false);
   const [showKicked,     setShowKicked]    = useState(false);
   const [showLeave,      setShowLeave]     = useState(false);
+  const [showTutorial,   setShowTutorial]  = useState(false);
   const [showAbandoned,  setShowAbandoned] = useState(false);
   const [playerUid]                        = useState(
     () => "guest_" + Date.now() + "_" + Math.random().toString(36).substr(2, 9)
@@ -390,6 +391,10 @@ export default function GameScreen({ route, navigation }) {
         />
       </View>
 
+      <TouchableOpacity style={S.tutorialBtn} onPress={() => setShowTutorial(true)} activeOpacity={0.85}>
+        <Text style={S.tutorialBtnTxt}>Tutorial</Text>
+      </TouchableOpacity>
+
       <TouchableOpacity style={S.leaveBtn} onPress={() => setShowLeave(true)}>
         <Text style={S.leaveTxt}>Leave</Text>
       </TouchableOpacity>
@@ -400,6 +405,70 @@ export default function GameScreen({ route, navigation }) {
       <InfoModal visible={showAbandoned} title="Lobby Closed"
         message="The host has ended the lobby."
         onDismiss={() => { setShowAbandoned(false); navigation.navigate("JoinGameScreen"); }} />
+
+      <Modal visible={showTutorial} transparent animationType="slide" onRequestClose={() => setShowTutorial(false)}>
+        <View style={S.tutOverlay}>
+          <View style={S.tutModal}>
+            <View style={S.tutHeader}>
+              <Text style={S.tutTitle}>How to Play</Text>
+              <TouchableOpacity onPress={() => setShowTutorial(false)} style={S.tutClose}>
+                <Text style={S.tutCloseTxt}>×</Text>
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={{ flex: 1 }} contentContainerStyle={S.tutScroll} showsVerticalScrollIndicator>
+
+              <Text style={S.tutSec}>How to Play</Text>
+              <Text style={S.tutTxt}>Brain Board is a multiplayer quiz race. Answer questions correctly to earn dice rolls — move your piece forward, and be the first to reach the end of the board!</Text>
+              <Text style={S.tutTxt}>Answer <Text style={{color:'#fff',fontWeight:'bold'}}>3 correct questions</Text> in a row to earn a dice roll.</Text>
+
+              <View style={S.tutDivider}/>
+              <Text style={S.tutSec}>Turn Flow</Text>
+              {[["1. Answer Questions","You are shown one question at a time with a countdown timer. Answer before time runs out!"],["2. Roll the Dice","After 3 correct answers, you earn a dice roll. The number you roll is how many spaces you move forward."],["3. Land on a Space","After moving, the space you land on triggers an event — good or bad!"],["4. Repeat","Keep answering to earn more rolls. First player to reach the final tile wins."]].map(([t,d])=>(
+                <View key={t} style={S.tutStep}><Text style={S.tutStepT}>{t}</Text><Text style={S.tutStepD}>{d}</Text></View>
+              ))}
+
+              <View style={S.tutDivider}/>
+              <Text style={S.tutSec}>Board Spaces</Text>
+              {[
+                {bg:'#27ae60',btc:'#33cc77',bbc:'#145a32',label:'42',title:'Normal',desc:'Nothing happens. Move forward and keep answering!'},
+                {bg:'#c0392b',btc:'#e74c3c',bbc:'#7b241c',label:'🔥',title:'Lava',desc:'Roll the dice — pushed BACKWARDS that many spaces.'},
+                {bg:'#0369a1',btc:'#38bdf8',bbc:'#0c4a6e',label:'✦',title:'Cannon',desc:'A magical orb launches you FORWARD extra spaces!'},
+                {bg:'#ea580c',btc:'#fb923c',bbc:'#7c2d12',label:'✕',title:'Trap',desc:'Evil rune curse — answer a bonus question to break free or lose progress.'},
+                {bg:'#8b5cf6',btc:'#c4b5fd',bbc:'#5b2c6f',label:'?',title:'Mystery Box',desc:'Receive a random item — helpful or harmful.'},
+              ].map(({bg,btc,bbc,label,title,desc})=>(
+                <View key={title} style={[S.tutStep,{flexDirection:'row',alignItems:'center',paddingVertical:8}]}>
+                  <View style={{width:44,height:44,borderRadius:16,backgroundColor:bg,
+                    borderTopWidth:2,borderLeftWidth:2,borderBottomWidth:5,borderRightWidth:5,
+                    borderTopColor:btc,borderLeftColor:btc,borderBottomColor:bbc,borderRightColor:bbc,
+                    alignItems:'center',justifyContent:'center',marginRight:12}}>
+                    <Text style={{color:'#fff',fontWeight:'900',fontSize:label.length>1?18:14}}>{label}</Text>
+                  </View>
+                  <View style={{flex:1}}>
+                    <Text style={S.tutStepT}>{title}</Text>
+                    <Text style={S.tutStepD}>{desc}</Text>
+                  </View>
+                </View>
+              ))}
+              <View style={S.tutDivider}/>
+              <Text style={S.tutSec}>Mystery Box Items</Text>
+              {[["Immunity","Protects from the next negative effect. Lasts 2 landings or 45 seconds."],["Double Dice","Your next roll uses two dice — move the total of both!"],["Push Back","Target a player and push them back 3 spaces."],["Stun","Target a player — they must answer 3 in a row to break free."],["Deflector","Bounces the next attack back to whoever sent it (30 seconds)."],["1v1 Duel","Challenge a player to a 3-question duel. Loser swaps positions if they're behind."]].map(([n,d])=>(
+                <View key={n} style={[S.tutStep,{borderLeftColor:'#8b5cf6'}]}><Text style={[S.tutStepT,{color:'#c4b5fd'}]}>{n}</Text><Text style={S.tutStepD}>{d}</Text></View>
+              ))}
+
+              <View style={S.tutDivider}/>
+              <Text style={S.tutSec}>Streaks & Luck</Text>
+              <Text style={S.tutTxt}>Every consecutive correct answer builds your <Text style={{color:'#fff',fontWeight:'bold'}}>Streak</Text>. Higher streaks increase your <Text style={{color:'#fff',fontWeight:'bold'}}>Luck %</Text> — a chance to re-roll low dice results and keep the better roll.</Text>
+
+              <View style={S.tutDivider}/>
+              <Text style={S.tutSec}>Winning</Text>
+              <Text style={S.tutTxt}>First player to reach the <Text style={{color:'#fff',fontWeight:'bold'}}>snake head</Text> wins! If a timer is set, the player furthest along when time expires wins.</Text>
+              <View style={{height:24}}/>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      
 
       <Modal visible={showLeave} transparent animationType="fade">
         <View style={S.overlay}>
@@ -442,6 +511,20 @@ const S = StyleSheet.create({
   joinBtn:  { backgroundColor: "#00c781", paddingVertical: 14, width: "100%", maxWidth: 380, borderRadius: 16, alignItems: "center" },
   joinOff:  { backgroundColor: "#1e1e1e", opacity: 0.4 },
   joinTxt:  { color: "#fff", fontSize: 20, fontWeight: "bold" },
+  tutorialBtn:  { width: "100%", maxWidth: 400, backgroundColor: "#0d1e2e", borderRadius: 14, paddingVertical: 14, alignItems: "center", marginBottom: 12, borderWidth: 1.5, borderColor: "#3498db" },
+  tutorialBtnTxt:{ color: "#3498db", fontSize: 15, fontWeight: "bold" },
+  tutOverlay:   { flex: 1, backgroundColor: "rgba(0,0,0,0.85)", justifyContent: "flex-end" },
+  tutModal:     { backgroundColor: "#1a1a1a", borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: "85%", borderWidth: 1, borderColor: "#333" },
+  tutHeader:    { flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: 20, borderBottomWidth: 1, borderBottomColor: "#222" },
+  tutTitle:     { color: "#fff", fontSize: 20, fontWeight: "bold" },
+  tutClose:     { width: 36, height: 36, borderRadius: 18, backgroundColor: "#2a2a2a", alignItems: "center", justifyContent: "center" },
+  tutCloseTxt:  { color: "#fff", fontSize: 22, fontWeight: "bold", lineHeight: 26 },
+  tutScroll:    { padding: 20, paddingBottom: 40, flexGrow: 1 },
+  tutSec:       { color: "#00c781", fontSize: 16, fontWeight: "900", marginBottom: 8, marginTop: 12 },
+  tutTxt:       { color: "#ccc", fontSize: 14, lineHeight: 22, marginBottom: 8 },
+  tutStep:      { backgroundColor: "#1e1e1e", borderRadius: 10, padding: 12, marginBottom: 8, borderLeftWidth: 3, borderLeftColor: "#00c781" },
+  tutStepT:     { color: "#fff", fontWeight: "bold", fontSize: 13, marginBottom: 3 },
+  tutStepD:     { color: "#aaa", fontSize: 12, lineHeight: 18 },
   leaveBtn: { position: "absolute", bottom: 16, left: 16, backgroundColor: "#2a0000", paddingVertical: 10, paddingHorizontal: 20, borderRadius: 12 },
   leaveTxt: { color: "#ff6b6b", fontSize: 14, fontWeight: "bold" },
   myCard:     { flexDirection: "row", alignItems: "center", backgroundColor: "#1e1e1e", borderRadius: 16, padding: 14, width: "100%", maxWidth: 400, marginBottom: 8, borderWidth: 1, borderColor: "#333" },

@@ -46,11 +46,11 @@ function buildFreshDeck(rawQuestions, randQ = true, randA = true) {
 }
 
 const SPACE_CFG = {
-  normal:  { bg:"#1a3d1a", border:"#27ae60", label:"" },
-  lava:    { bg:"#3d1200", border:"#e74c3c", label:"L" },
-  cannon:  { bg:"#00213d", border:"#2980b9", label:"C" },
-  trap:    { bg:"#3d2d00", border:"#d68910", label:"T" },
-  mystery: { bg:"#2a0a3d", border:"#8e44ad", label:"?" },
+  normal:  { bg:"#3dd68c", border:"#27ae60", label:"" },
+  lava:    { bg:"#b91c1c", border:"#f87171", label:"L" },
+  cannon:  { bg:"#0369a1", border:"#38bdf8", label:"C" },
+  trap:    { bg:"#ea580c", border:"#fb923c", label:"T" },
+  mystery: { bg:"#9333ea", border:"#a855f7", label:"?" },
 };
 
 const MYSTERY_DEFS = {
@@ -93,18 +93,6 @@ function getCorrectText(q) {
   return q.correctAnswers?.[0] === true ? "True" : "False";
 }
 
-function buildSnakeRows(be) {
-  const rows = [];
-  for (let r = 0; r <= be; r += BOARD_COLS) {
-    const row = [];
-    for (let s = r; s < r + BOARD_COLS && s <= be; s++) row.push(s);
-    if (Math.floor(r / BOARD_COLS) % 2 === 1) row.reverse();
-    rows.push(row);
-  }
-  return rows.reverse();
-}
-
-// ── Pawn piece — rendered as pure View shapes (no SVG dependency) ───────────
 function Pawn({ color, size = 20 }) {
   const c = color || "#888";
   const s = size;
@@ -125,438 +113,641 @@ function Pawn({ color, size = 20 }) {
 }
 
 
-// ── Snake head — bird's eye view, facing LEFT ────────────────────────────────
-// Coordinate system: left = snout, right = neck connection
-// Head is a wide flat oval. Eyes are on top (dorsal view). Tongue exits left.
-// ── Snake head — bird's-eye, fills the entire tile, no neck ─────────────────
-function SnakeHead({ size = 40 }) {
+// ── Snake head — bird's eye, round, facing LEFT ────────────────────────────
+function SnakeHead({ size = 40, facesLeft = true }) {
   const s = size;
   return (
-    <View style={{ width: s, height: s, overflow: "visible" }}>
-      {/* ── Head oval — fills tile wall to wall ── */}
+    <View style={{ width: s, height: s, overflow: 'visible', alignItems: 'center', justifyContent: 'center' }}>
+      {/* Main round head */}
       <View style={{
-        position: "absolute",
-        top: s * 0.04, left: s * 0.02,
-        width: s * 0.96, height: s * 0.92,
-        // Pointed snout on the left, blunt back on the right
-        borderTopLeftRadius:    s * 0.42,
-        borderBottomLeftRadius: s * 0.42,
-        borderTopRightRadius:   s * 0.18,
-        borderBottomRightRadius:s * 0.18,
-        backgroundColor: "#2e8b2e",
-        borderWidth: 2, borderColor: "#1a5c1a",
+        width: s * 0.92, height: s * 0.92, borderRadius: s * 0.46,
+        backgroundColor: '#2ecc71',
+        borderWidth: 2.5, borderColor: '#1a8a3a',
+        alignItems: 'center', justifyContent: 'center',
+        shadowColor: '#000', shadowOffset: {width:0,height:2}, shadowOpacity:0.4, shadowRadius:4,
       }}>
-        {/* Dorsal ridge / midline */}
-        <View style={{ position:"absolute", top: s*0.14, left: s*0.18,
-            right: s*0.18, height: s*0.64,
-            borderRadius: s*0.04,
-            backgroundColor: "#3cb83c", opacity: 0.45 }} />
-
-        {/* Scale rows — overlapping semicircle shapes */}
-        {[{t:0.1,l:0.22},{t:0.1,l:0.46},{t:0.1,l:0.68},
-          {t:0.36,l:0.28},{t:0.36,l:0.52},{t:0.36,l:0.72},
-          {t:0.62,l:0.22},{t:0.62,l:0.46},{t:0.62,l:0.68},
-        ].map((sc,i)=>(
-          <View key={i} style={{ position:"absolute", top:s*sc.t, left:s*sc.l,
-              width:s*0.18, height:s*0.18, borderRadius:s*0.09,
-              backgroundColor:"#45d445", opacity:0.28 }} />
-        ))}
-
-        {/* ── Eyes — top and bottom of head (bird's eye) ── */}
         {/* Top eye */}
-        <View style={{ position:"absolute", top: s*0.04, left: s*0.22,
-            width: s*0.22, height: s*0.22, borderRadius: s*0.11,
-            backgroundColor: "#f5c518", borderWidth: 1.5, borderColor: "#1a0a00" }}>
-          {/* Vertical slit pupil */}
-          <View style={{ position:"absolute", top: s*0.04, left: s*0.08,
-              width: s*0.06, height: s*0.14, borderRadius: s*0.03,
-              backgroundColor: "#050505" }} />
-          {/* Highlight */}
-          <View style={{ position:"absolute", top: 2, right: 2,
-              width: s*0.06, height: s*0.06, borderRadius: s*0.03,
-              backgroundColor:"rgba(255,255,255,0.7)" }} />
+        <View style={{
+          position: 'absolute', top: s * 0.1, [facesLeft?'left':'right']: s * 0.18,
+          width: s * 0.24, height: s * 0.24, borderRadius: s * 0.12,
+          backgroundColor: '#fff', borderWidth: 2, borderColor: '#111',
+        }}>
+          <View style={{
+            position: 'absolute', top: s*0.04, left: s*0.04,
+            width: s*0.13, height: s*0.13, borderRadius: s*0.065,
+            backgroundColor: '#111',
+          }}/>
+          <View style={{
+            position: 'absolute', top: s*0.02, right: s*0.02,
+            width: s*0.06, height: s*0.06, borderRadius: s*0.03,
+            backgroundColor: 'rgba(255,255,255,0.8)',
+          }}/>
         </View>
         {/* Bottom eye */}
-        <View style={{ position:"absolute", bottom: s*0.04, left: s*0.22,
-            width: s*0.22, height: s*0.22, borderRadius: s*0.11,
-            backgroundColor: "#f5c518", borderWidth: 1.5, borderColor: "#1a0a00" }}>
-          <View style={{ position:"absolute", top: s*0.04, left: s*0.08,
-              width: s*0.06, height: s*0.14, borderRadius: s*0.03,
-              backgroundColor: "#050505" }} />
-          <View style={{ position:"absolute", top: 2, right: 2,
-              width: s*0.06, height: s*0.06, borderRadius: s*0.03,
-              backgroundColor:"rgba(255,255,255,0.7)" }} />
+        <View style={{
+          position: 'absolute', bottom: s * 0.1, [facesLeft?'left':'right']: s * 0.18,
+          width: s * 0.24, height: s * 0.24, borderRadius: s * 0.12,
+          backgroundColor: '#fff', borderWidth: 2, borderColor: '#111',
+        }}>
+          <View style={{
+            position: 'absolute', top: s*0.04, left: s*0.04,
+            width: s*0.13, height: s*0.13, borderRadius: s*0.065,
+            backgroundColor: '#111',
+          }}/>
+          <View style={{
+            position: 'absolute', top: s*0.02, right: s*0.02,
+            width: s*0.06, height: s*0.06, borderRadius: s*0.03,
+            backgroundColor: 'rgba(255,255,255,0.8)',
+          }}/>
         </View>
-
-        {/* Nostril pits — near snout */}
-        <View style={{ position:"absolute", top: s*0.2, left: s*0.03,
-            width: s*0.07, height: s*0.07, borderRadius: s*0.035,
-            backgroundColor: "#1a4a1a" }} />
-        <View style={{ position:"absolute", bottom: s*0.2, left: s*0.03,
-            width: s*0.07, height: s*0.07, borderRadius: s*0.035,
-            backgroundColor: "#1a4a1a" }} />
+        {/* Nostril dots near left edge */}
+        <View style={{ position:'absolute', top:s*0.24, [facesLeft?'left':'right']:s*0.06, width:s*0.07, height:s*0.07, borderRadius:s*0.035, backgroundColor:'#1a6a2a' }}/>
+        <View style={{ position:'absolute', bottom:s*0.24, [facesLeft?'left':'right']:s*0.06, width:s*0.07, height:s*0.07, borderRadius:s*0.035, backgroundColor:'#1a6a2a' }}/>
       </View>
-
-      {/* ── Forked tongue — exits snout (left), horizontal stem then two prongs ── */}
-      {/* Stem */}
-      <View style={{ position:"absolute", top: s*0.44, left: -s*0.2,
-          width: s*0.24, height: 4,
-          backgroundColor: "#c0392b", borderRadius: 2 }} />
-      {/* Upper fork */}
-      <View style={{ position:"absolute",
-          top: s*0.28, left: -s*0.28,
-          width: 3.5, height: s*0.22,
-          backgroundColor: "#c0392b", borderRadius: 2,
-          transform:[{rotate:"-28deg"}] }} />
-      {/* Lower fork */}
-      <View style={{ position:"absolute",
-          top: s*0.5, left: -s*0.28,
-          width: 3.5, height: s*0.22,
-          backgroundColor: "#c0392b", borderRadius: 2,
-          transform:[{rotate:"28deg"}] }} />
+      {/* Tongue — direction matches head facing */}
+      <View style={{ position:'absolute', top:s*0.44, [facesLeft?'left':'right']:-s*0.18, width:s*0.22, height:3.5, backgroundColor:'#e74c3c', borderRadius:2 }}/>
+      <View style={{ position:'absolute', top:s*0.3, [facesLeft?'left':'right']:-s*0.26, width:3, height:s*0.18, backgroundColor:'#e74c3c', borderRadius:2, transform:[{rotate:facesLeft?'-28deg':'28deg'}] }}/>
+      <View style={{ position:'absolute', top:s*0.52, [facesLeft?'left':'right']:-s*0.26, width:3, height:s*0.18, backgroundColor:'#e74c3c', borderRadius:2, transform:[{rotate:facesLeft?'28deg':'-28deg'}] }}/>
     </View>
   );
 }
 
-// ── Lava tile — top-down molten rock with glowing fissures ─────────────────
+
+// ── Lava tile ─────────────────────────────────────────────────────────────
 function LavaTile({ sz }) {
-  // Use SVG-style layering: dark rock slabs, glowing orange cracks between them,
-  // bright yellow lava pools at crack nodes
-  const rock = "#1c0800";
-  const darkCrust = "#2e0d02";
-  const glowOrange = "#ff5500";
-  const glowYellow = "#ffbb00";
+  const glowOrange = "#ff5500", glowYellow = "#ffbb00";
   return (
-    <View style={{ width:sz, height:sz, borderRadius:7, overflow:"hidden", backgroundColor:rock }}>
-
-      {/* ── Rock slab chunks — irregular dark polygons ── */}
-      {[
-        {t:0,    l:0,    w:0.44, h:0.42, br:[6,2,8,4],  c:"#280c01"},
-        {t:0,    l:0.48, w:0.52, h:0.36, br:[2,6,4,8],  c:"#2e0e02"},
-        {t:0.45, l:0,    w:0.38, h:0.55, br:[4,8,6,2],  c:"#240b01"},
-        {t:0.4,  l:0.42, w:0.58, h:0.6,  br:[8,4,2,6],  c:"#2a0d02"},
-        {t:0.2,  l:0.2,  w:0.28, h:0.26, br:[4,4,4,4],  c:"#321002"},
+    <View style={{ width:sz, height:sz, borderRadius:7, overflow:"hidden", backgroundColor:"#1c0800" }}>
+      {[{t:0,l:0,w:0.44,h:0.42,c:"#280c01"},{t:0,l:0.48,w:0.52,h:0.36,c:"#2e0e02"},
+        {t:0.45,l:0,w:0.38,h:0.55,c:"#240b01"},{t:0.4,l:0.42,w:0.58,h:0.6,c:"#2a0d02"},
       ].map((r,i)=>(
-        <View key={i} style={{ position:"absolute",
-            top:sz*r.t, left:sz*r.l, width:sz*r.w, height:sz*r.h,
-            borderTopLeftRadius:r.br[0], borderTopRightRadius:r.br[1],
-            borderBottomRightRadius:r.br[2], borderBottomLeftRadius:r.br[3],
-            backgroundColor:r.c }} />
+        <View key={i} style={{ position:"absolute", top:sz*r.t, left:sz*r.l, width:sz*r.w, height:sz*r.h, backgroundColor:r.c }} />
       ))}
-
-      {/* ── Lava fissures — glowing orange lines between slabs ── */}
-      {/* Horizontal main crack */}
-      <View style={{ position:"absolute", top:sz*0.41, left:0, right:0,
-          height:sz*0.07, backgroundColor:glowOrange }} />
-      {/* Vertical main crack */}
-      <View style={{ position:"absolute", left:sz*0.43, top:0, bottom:0,
-          width:sz*0.07, backgroundColor:glowOrange }} />
-      {/* Diagonal sub-crack top-right */}
-      <View style={{ position:"absolute", top:sz*0.04, left:sz*0.62,
-          width:sz*0.06, height:sz*0.38,
-          backgroundColor:"#e04a00",
-          transform:[{rotate:"20deg"}] }} />
-      {/* Diagonal sub-crack bottom-left */}
-      <View style={{ position:"absolute", top:sz*0.55, left:sz*0.08,
-          width:sz*0.06, height:sz*0.36,
-          backgroundColor:"#e04a00",
-          transform:[{rotate:"-15deg"}] }} />
-
-      {/* ── Glow bleed — soft halo around cracks ── */}
-      <View style={{ position:"absolute", top:sz*0.35, left:0, right:0,
-          height:sz*0.19, backgroundColor:"rgba(255,80,0,0.18)" }} />
-      <View style={{ position:"absolute", left:sz*0.37, top:0, bottom:0,
-          width:sz*0.19, backgroundColor:"rgba(255,80,0,0.18)" }} />
-
-      {/* ── Lava pools at crack intersections ── */}
-      {/* Centre node — brightest */}
-      <View style={{ position:"absolute", top:sz*0.36, left:sz*0.38,
-          width:sz*0.18, height:sz*0.18, borderRadius:sz*0.09,
-          backgroundColor:glowYellow }} />
-      {/* Top-centre node */}
-      <View style={{ position:"absolute", top:sz*0.0, left:sz*0.39,
-          width:sz*0.13, height:sz*0.13, borderRadius:sz*0.065,
-          backgroundColor:glowYellow, opacity:0.9 }} />
-      {/* Left-centre node */}
-      <View style={{ position:"absolute", top:sz*0.38, left:sz*0.0,
-          width:sz*0.13, height:sz*0.13, borderRadius:sz*0.065,
-          backgroundColor:glowYellow, opacity:0.85 }} />
-      {/* Right-centre node */}
-      <View style={{ position:"absolute", top:sz*0.38, right:0,
-          width:sz*0.13, height:sz*0.13, borderRadius:sz*0.065,
-          backgroundColor:glowYellow, opacity:0.85 }} />
-      {/* Bottom-centre node */}
-      <View style={{ position:"absolute", bottom:0, left:sz*0.39,
-          width:sz*0.13, height:sz*0.13, borderRadius:sz*0.065,
-          backgroundColor:glowYellow, opacity:0.9 }} />
-      {/* Small secondary bubbles */}
-      {[{t:0.14,l:0.62},{t:0.68,l:0.16},{t:0.72,l:0.64},{t:0.08,l:0.15}].map((b,i)=>(
-        <View key={i} style={{ position:"absolute", top:sz*b.t, left:sz*b.l,
-            width:sz*0.07, height:sz*0.07, borderRadius:sz*0.035,
-            backgroundColor:"#ff8800", opacity:0.8 }} />
-      ))}
+      <View style={{ position:"absolute", top:sz*0.41, left:0, right:0, height:sz*0.07, backgroundColor:glowOrange }} />
+      <View style={{ position:"absolute", left:sz*0.43, top:0, bottom:0, width:sz*0.07, backgroundColor:glowOrange }} />
+      <View style={{ position:"absolute", top:sz*0.35, left:0, right:0, height:sz*0.19, backgroundColor:"rgba(255,80,0,0.18)" }} />
+      <View style={{ position:"absolute", top:sz*0.36, left:sz*0.38, width:sz*0.18, height:sz*0.18, borderRadius:sz*0.09, backgroundColor:glowYellow }} />
     </View>
   );
 }
-
-// ── Trap tile — stone floor with a spiked pit trap ─────────────────────────
+// ── Trap tile ─────────────────────────────────────────────────────────────
 function TrapTile({ sz }) {
   return (
-    <View style={{ width:sz, height:sz, borderRadius:7, overflow:"hidden",
-        backgroundColor:"#2a2520" }}>
-
-      {/* ── Stone floor — four cobblestone blocks with mortar lines ── */}
-      {[
-        {t:0,    l:0,    w:0.47, h:0.47, c:"#3d3530"},
-        {t:0,    l:0.53, w:0.47, h:0.47, c:"#362f28"},
-        {t:0.53, l:0,    w:0.47, h:0.47, c:"#383028"},
-        {t:0.53, l:0.53, w:0.47, h:0.47, c:"#3a3228"},
+    <View style={{ width:sz, height:sz, borderRadius:7, overflow:"hidden", backgroundColor:"#2a2520" }}>
+      {[{t:0,l:0,w:0.47,h:0.47,c:"#3d3530"},{t:0,l:0.53,w:0.47,h:0.47,c:"#362f28"},
+        {t:0.53,l:0,w:0.47,h:0.47,c:"#383028"},{t:0.53,l:0.53,w:0.47,h:0.47,c:"#3a3228"},
       ].map((r,i)=>(
-        <View key={i} style={{ position:"absolute", top:sz*r.t, left:sz*r.l,
-            width:sz*r.w, height:sz*r.h, backgroundColor:r.c,
-            borderWidth:0.5, borderColor:"#1a1510" }} />
+        <View key={i} style={{ position:"absolute", top:sz*r.t, left:sz*r.l, width:sz*r.w, height:sz*r.h, backgroundColor:r.c, borderWidth:0.5, borderColor:"#1a1510" }} />
       ))}
-      {/* Mortar cross */}
-      <View style={{ position:"absolute", top:sz*0.47, left:0, right:0,
-          height:sz*0.06, backgroundColor:"#1a1510" }} />
-      <View style={{ position:"absolute", left:sz*0.47, top:0, bottom:0,
-          width:sz*0.06, backgroundColor:"#1a1510" }} />
-
-      {/* Stone surface texture — small pits */}
-      {[{t:0.08,l:0.1},{t:0.16,l:0.34},{t:0.08,l:0.64},{t:0.28,l:0.72},
-        {t:0.62,l:0.08},{t:0.72,l:0.3},{t:0.65,l:0.66},{t:0.78,l:0.8},
-      ].map((p,i)=>(
-        <View key={i} style={{ position:"absolute", top:sz*p.t, left:sz*p.l,
-            width:sz*0.06, height:sz*0.04, borderRadius:sz*0.02,
-            backgroundColor:"rgba(0,0,0,0.25)" }} />
-      ))}
-
-      {/* ── Pit — dark rectangular hole in floor centre ── */}
-      <View style={{ position:"absolute", top:sz*0.19, left:sz*0.18,
-          width:sz*0.64, height:sz*0.62,
-          borderRadius:sz*0.04,
-          backgroundColor:"#0a0806",
-          borderWidth:2, borderColor:"#111" }}>
-        {/* Pit depth shadow */}
-        <View style={{ position:"absolute", top:2, left:2, right:2, bottom:2,
-            borderRadius:sz*0.03, backgroundColor:"#050303" }} />
-        {/* Pit inner edge highlight (near side lit) */}
-        <View style={{ position:"absolute", top:0, left:0, right:0,
-            height:sz*0.05, borderTopLeftRadius:sz*0.04, borderTopRightRadius:sz*0.04,
-            backgroundColor:"rgba(255,255,255,0.06)" }} />
+      <View style={{ position:"absolute", top:sz*0.19, left:sz*0.18, width:sz*0.64, height:sz*0.62, borderRadius:sz*0.04, backgroundColor:"#0a0806", borderWidth:2, borderColor:"#111" }}>
+        <View style={{ position:"absolute", top:2, left:2, right:2, bottom:2, borderRadius:sz*0.03, backgroundColor:"#050303" }} />
       </View>
-
-      {/* ── Spikes — sharp triangles pointing up inside pit ── */}
-      {[0.26, 0.40, 0.54, 0.68].map((l,i)=>(
-        <View key={i} style={{ position:"absolute", bottom:sz*0.21, left:sz*l,
-            width:0, height:0,
-            borderLeftWidth:sz*0.05, borderRightWidth:sz*0.05, borderBottomWidth:sz*0.22,
-            borderLeftColor:"transparent", borderRightColor:"transparent",
-            borderBottomColor: i%2===0 ? "#9e9e9e" : "#bdbdbd" }} />
-      ))}
-
-      {/* ── Worn cracks extending from pit corners ── */}
-      {[{t:0.14,l:0.12,rot:"-40deg",h:0.1},{t:0.16,l:0.76,rot:"40deg",h:0.1},
-        {t:0.78,l:0.1, rot:"35deg", h:0.1},{t:0.78,l:0.78,rot:"-35deg",h:0.1},
-      ].map((c,i)=>(
-        <View key={i} style={{ position:"absolute", top:sz*c.t, left:sz*c.l,
-            width:2, height:sz*c.h, backgroundColor:"#0a0806",
-            transform:[{rotate:c.rot}] }} />
+      {[0.26,0.40,0.54,0.68].map((l,i)=>(
+        <View key={i} style={{ position:"absolute", bottom:sz*0.21, left:sz*l, width:0, height:0,
+          borderLeftWidth:sz*0.05, borderRightWidth:sz*0.05, borderBottomWidth:sz*0.22,
+          borderLeftColor:"transparent", borderRightColor:"transparent",
+          borderBottomColor: i%2===0 ? "#9e9e9e" : "#bdbdbd" }} />
       ))}
     </View>
   );
 }
-
-// ── Cannon tile — top-down view of a cannon pointing LEFT ─────────────────
+// ── Cannon tile ───────────────────────────────────────────────────────────
 function CannonTile({ sz }) {
   return (
-    <View style={{ width:sz, height:sz, borderRadius:7, overflow:"hidden",
-        backgroundColor:"#0e1620" }}>
-
-      {/* ── Stone/brick floor ── */}
+    <View style={{ width:sz, height:sz, borderRadius:7, overflow:"hidden", backgroundColor:"#0e1620" }}>
       {[{t:0,l:0,w:0.5,h:0.5,c:"#16202c"},{t:0,l:0.5,w:0.5,h:0.5,c:"#131d28"},
         {t:0.5,l:0,w:0.5,h:0.5,c:"#14202a"},{t:0.5,l:0.5,w:0.5,h:0.5,c:"#16222e"},
       ].map((r,i)=>(
-        <View key={i} style={{ position:"absolute", top:sz*r.t, left:sz*r.l,
-            width:sz*r.w, height:sz*r.h, backgroundColor:r.c,
-            borderWidth:0.5, borderColor:"#0a1218" }} />
+        <View key={i} style={{ position:"absolute", top:sz*r.t, left:sz*r.l, width:sz*r.w, height:sz*r.h, backgroundColor:r.c, borderWidth:0.5, borderColor:"#0a1218" }} />
       ))}
-
-      {/* ── Wooden carriage platform ── */}
-      <View style={{ position:"absolute", top:sz*0.28, left:sz*0.16,
-          width:sz*0.74, height:sz*0.44,
-          borderRadius:sz*0.04,
-          backgroundColor:"#4a3520",
-          borderWidth:1.5, borderColor:"#2c1e10" }}>
-        {/* Wood grain lines */}
-        {[0.2,0.4,0.6,0.8].map((t,i)=>(
-          <View key={i} style={{ position:"absolute", top:`${t*100}%`, left:0, right:0,
-              height:0.5, backgroundColor:"rgba(0,0,0,0.2)" }} />
-        ))}
-        {/* Corner bolts */}
-        {[[0.06,0.1],[0.88,0.1],[0.06,0.74],[0.88,0.74]].map(([x,y],i)=>(
-          <View key={i} style={{ position:"absolute",
-              top:sz*y*0.44, left:sz*x*0.74,
-              width:sz*0.07, height:sz*0.07, borderRadius:sz*0.035,
-              backgroundColor:"#6e5030", borderWidth:1, borderColor:"#2c1e10" }} />
-        ))}
+      <View style={{ position:"absolute", top:sz*0.28, left:sz*0.16, width:sz*0.74, height:sz*0.44, borderRadius:sz*0.04, backgroundColor:"#4a3520", borderWidth:1.5, borderColor:"#2c1e10" }} />
+      <View style={{ position:"absolute", top:sz*0.34, left:sz*0.06, width:sz*0.64, height:sz*0.26, borderRadius:sz*0.13, backgroundColor:"#546e7a", borderWidth:1.5, borderColor:"#263238" }} />
+      <View style={{ position:"absolute", top:sz*0.36, left:sz*0.04, width:sz*0.12, height:sz*0.22, borderRadius:sz*0.11, backgroundColor:"#37474f" }}>
+        <View style={{ position:"absolute", top:sz*0.03, left:sz*0.02, width:sz*0.08, height:sz*0.15, borderRadius:sz*0.075, backgroundColor:"#0a1018" }} />
       </View>
-
-      {/* ── Barrel — viewed top-down, thick cylinder pointing left ── */}
-      {/* Drop shadow */}
-      <View style={{ position:"absolute", top:sz*0.37, left:sz*0.04,
-          width:sz*0.66, height:sz*0.28,
-          borderRadius:sz*0.14,
-          backgroundColor:"rgba(0,0,0,0.45)" }} />
-      {/* Barrel body */}
-      <View style={{ position:"absolute", top:sz*0.34, left:sz*0.06,
-          width:sz*0.64, height:sz*0.26,
-          borderRadius:sz*0.13,
-          backgroundColor:"#546e7a",
-          borderWidth:1.5, borderColor:"#263238" }}>
-        {/* Top specular highlight */}
-        <View style={{ position:"absolute", top:2, left:sz*0.08, right:sz*0.14,
-            height:sz*0.07, borderRadius:sz*0.04,
-            backgroundColor:"rgba(255,255,255,0.15)" }} />
-        {/* Reinforcement rings */}
-        {[0.12, 0.34, 0.58, 0.78].map((l,i)=>(
-          <View key={i} style={{ position:"absolute", top:0, left:sz*l*0.64,
-              width:sz*0.05, height:"100%",
-              backgroundColor: i===0||i===3 ? "#455a64" : "#4a6572",
-              borderLeftWidth:0.5, borderRightWidth:0.5,
-              borderColor:"#263238" }} />
-        ))}
-      </View>
-      {/* Muzzle — wider darker opening at LEFT end */}
-      <View style={{ position:"absolute", top:sz*0.36, left:sz*0.04,
-          width:sz*0.12, height:sz*0.22,
-          borderRadius:sz*0.11,
-          backgroundColor:"#37474f",
-          borderWidth:1.5, borderColor:"#1c2d36" }}>
-        {/* Bore hole */}
-        <View style={{ position:"absolute", top:sz*0.03, left:sz*0.02,
-            width:sz*0.08, height:sz*0.15,
-            borderRadius:sz*0.075, backgroundColor:"#0a1018" }} />
-      </View>
-      {/* Breech cap — thicker right end */}
-      <View style={{ position:"absolute", top:sz*0.31, left:sz*0.62,
-          width:sz*0.13, height:sz*0.32,
-          borderRadius:sz*0.07,
-          backgroundColor:"#546e7a",
-          borderWidth:1.5, borderColor:"#263238" }}>
-        {/* Touch-hole */}
-        <View style={{ position:"absolute", top:sz*0.03, left:sz*0.04,
-            width:sz*0.05, height:sz*0.05, borderRadius:sz*0.025,
-            backgroundColor:"#1c2d36" }} />
-      </View>
-
-      {/* ── Wheels — top-down circles, lower half of tile ── */}
-      {[{side:"left",l:sz*0.14},{side:"right",l:sz*0.56}].map(({side,l},wi)=>(
-        <View key={wi} style={{ position:"absolute", bottom:sz*0.04, left:l,
-            width:sz*0.3, height:sz*0.3, borderRadius:sz*0.15,
-            backgroundColor:"#5d4037", borderWidth:2, borderColor:"#3e2723" }}>
-          {/* Hub */}
-          <View style={{ position:"absolute", top:sz*0.08, left:sz*0.08,
-              width:sz*0.14, height:sz*0.14, borderRadius:sz*0.07,
-              backgroundColor:"#8d6e63", borderWidth:1, borderColor:"#3e2723" }} />
-          {/* Spokes */}
-          {[0,45,90,135].map(deg=>(
-            <View key={deg} style={{ position:"absolute", top:"50%", left:"50%",
-                width:sz*0.26, height:1.5, backgroundColor:"#4e342e",
-                marginLeft:-sz*0.13, marginTop:-0.75,
-                transform:[{rotate:`${deg}deg`}] }} />
-          ))}
-        </View>
-      ))}
-
-      {/* ── Cannonball resting beside carriage ── */}
-      <View style={{ position:"absolute", top:sz*0.1, left:sz*0.74,
-          width:sz*0.18, height:sz*0.18, borderRadius:sz*0.09,
-          backgroundColor:"#424242",
-          borderWidth:1, borderColor:"#212121" }}>
-        <View style={{ position:"absolute", top:2, left:3,
-            width:sz*0.06, height:sz*0.06, borderRadius:sz*0.03,
-            backgroundColor:"rgba(255,255,255,0.2)" }} />
-      </View>
-
-      {/* ── Smoke puffs at muzzle ── */}
-      {[{t:0.3, l:-0.05,r:0.1,o:0.4},{t:0.2,l:-0.04,r:0.08,o:0.25},
-        {t:0.44,l:-0.06,r:0.07,o:0.3}].map((b,i)=>(
-        <View key={i} style={{ position:"absolute", top:sz*b.t, left:sz*b.l,
-            width:sz*b.r*2, height:sz*b.r*2, borderRadius:sz*b.r,
-            backgroundColor:"#b0bec5", opacity:b.o }} />
-      ))}
+      <View style={{ position:"absolute", bottom:sz*0.05, left:sz*0.14, width:sz*0.3, height:sz*0.3, borderRadius:sz*0.15, backgroundColor:"#5d4037", borderWidth:2, borderColor:"#3e2723" }} />
+      <View style={{ position:"absolute", bottom:sz*0.05, left:sz*0.56, width:sz*0.3, height:sz*0.3, borderRadius:sz*0.15, backgroundColor:"#5d4037", borderWidth:2, borderColor:"#3e2723" }} />
     </View>
   );
+}
+// ── Snake tail — simple tapered tail pointing LEFT (tile 0) ─────────────────
+function SnakeTail({ size = 40 }) {
+  const s = size;
+  return (
+    <View style={{ width: s, height: s, alignItems: 'center', justifyContent: 'center' }}>
+      {/* Body connector */}
+      <View style={{
+        position: 'absolute', right: 0, top: s * 0.3,
+        width: s * 0.55, height: s * 0.4,
+        backgroundColor: '#27ae60', borderRadius: s * 0.06,
+      }} />
+      {/* Tapered tail tip pointing left */}
+      <View style={{
+        position: 'absolute', left: s * 0.04, top: s * 0.35,
+        width: 0, height: 0,
+        borderTopWidth: s * 0.15,
+        borderBottomWidth: s * 0.15,
+        borderRightWidth: s * 0.38,
+        borderTopColor: 'transparent',
+        borderBottomColor: 'transparent',
+        borderRightColor: '#2ecc71',
+      }} />
+      {/* Scale shine */}
+      <View style={{
+        position: 'absolute', right: s * 0.12, top: s * 0.32,
+        width: s * 0.22, height: s * 0.14,
+        backgroundColor: 'rgba(255,255,255,0.1)',
+        borderRadius: s * 0.06,
+      }} />
+    </View>
+  );
+}
+
+function buildSnakeRows(be) {
+  const rows = [];
+  for (let r = 0; r <= be; r += BOARD_COLS) {
+    const row = [];
+    for (let t = r; t < r + BOARD_COLS && t <= be; t++) row.push(t);
+    if (Math.floor(r / BOARD_COLS) % 2 === 1) row.reverse();
+    rows.push(row);
+  }
+  return rows.reverse();
 }
 
 function SnakeBoard({ board, players, myPosition, myPlayerName, myPlayerColor, highlightPos, boardEnd, tileSize }) {
-  const { width: winW } = useWindowDimensions();
-  const sz = tileSize || Math.min(96, Math.max(44, Math.floor((winW - 32) / BOARD_COLS)));
-  const rows = buildSnakeRows(boardEnd);
+  const sz = tileSize || 40;
+  const M  = Math.max(1, Math.round(sz * 0.03)); // tight gap — more connected look
+  const R  = sz * 0.42;  // very round
+  const tp = sz + M * 2; // tile pitch
+
+  const rows  = buildSnakeRows(boardEnd);
+  const nRows = rows.length;
+
   const playersAt = (i) => players.filter(p => (p.position||0) === i);
-  const spaceType = (i) => {
-    if (i === 0 || i === boardEnd) return "normal";
-    const d = board[i]; if (d?.type) return d.type;
-    return (Array.isArray(board) && board.find(s => s?.index === i))?.type || "normal";
-  };
-  const tileStyle = (i) => {
-    const cfg = SPACE_CFG[spaceType(i)] || SPACE_CFG.normal;
-    const isMe = i === myPosition, isHL = i === highlightPos;
-    const artTypes = ["lava","trap","cannon"];
-    const isArt = artTypes.includes(spaceType(i)) || i === boardEnd;
-    return {
-      backgroundColor: isArt ? "transparent" : cfg.bg,
-      borderColor: isHL||isMe ? "#fff" : cfg.border,
-      borderWidth: isHL||isMe ? 3 : 1.5,
-      transform: [{scale: isHL ? 1.12 : 1}],
-      overflow: "visible",
-    };
-  };
-  return (
-    <View style={bS.board}>
-      {rows.map((row,ri) => (
-        <View key={ri} style={bS.row}>
-          {row.map(i => {
-            const here = playersAt(i), type = spaceType(i), cfg = SPACE_CFG[type]||SPACE_CFG.normal;
-            return (
-              <View key={i} style={[bS.tile, {width:sz,height:sz}, tileStyle(i)]}>
-                {i===boardEnd ? <SnakeHead size={sz}/>
-                 : i===0     ? null
-                 : type==="lava"    ? <LavaTile sz={sz}/>
-                 : type==="trap"    ? <TrapTile sz={sz}/>
-                 : type==="cannon"  ? <CannonTile sz={sz}/>
-                 : type==="mystery"
-                    ? <View style={[bS.mysteryBadge,{width:sz*0.52,height:sz*0.52}]}><Text style={[bS.mysteryBadgeTxt,{fontSize:sz*0.34}]}>?</Text></View>
-                    : <Text style={{fontSize:sz*0.26,color:"#4a6a4a",fontWeight:"bold"}}>{i}</Text>}
-                {here.length > 0 && (
-                  <View style={bS.tokenRow}>
-                    {here.map((p, pi) => {
-                      const isMe = p.name === myPlayerName;
-                      if (isMe) return <Pawn key={pi} color={p.color||myPlayerColor||"#00c781"} size={sz*0.36}/>;
-                      // Other players: plain coloured dot
-                      return <View key={pi} style={[bS.otherDot, {backgroundColor: p.color||"#888", width:sz*0.2, height:sz*0.2, borderRadius:sz*0.1}]} />;
-                    })}
-                  </View>
-                )}
-              </View>
-            );
-          })}
+  const spaceType = (i) => (Array.isArray(board) && board.find(sp => sp?.index === i))?.type || 'normal';
+  // Head faces the direction OPPOSITE its body. Body extends from head toward tile (boardEnd-1).
+  // Head faces AWAY from the corner connector below it.
+  // Corner connector aligns with the path entry into top row, which is on the side
+  // where the row below ends. Path direction in top row goes FROM connector AWAY from it.
+  // Head is at end of path. Direction snake LAST moved = direction head faces.
+  // In a R→L array [end, end-1, ...], end-1 is to the RIGHT visually → snake came from right
+  //   → snake last moved LEFT → head faces LEFT
+  // In a L→R array [..., end-1, end], end-1 is to the LEFT visually → snake came from left
+  //   → snake last moved RIGHT → head faces RIGHT
+  // So: head faces LEFT if head is FIRST element of row (R→L row)
+  //     head faces RIGHT if head is LAST element of row (L→R row)
+  // INVERTED from user feedback — they want head facing toward the open space/away from body's long extent
+  // The body actually extends in the corner-direction (downward through corner). So in 2D:
+  //   head faces opposite the corner side. Corner is on the side where row-below ends.
+  //   Row below = ri=1, rowIndex of below = nRows - 2
+  //   belowEndsRight = (nRows - 2) % 2 === 0
+  //   If belowEndsRight, corner is on RIGHT below head → head faces LEFT (away)
+  //   If !belowEndsRight, corner is on LEFT below head → head faces RIGHT (away)
+  const _belowRowIdx_top = nRows - 2;
+  const _cornerOnRight   = _belowRowIdx_top >= 0 && _belowRowIdx_top % 2 === 0;
+  const headFacesLeft = _cornerOnRight; // head faces away from corner
+
+  // ── Base tile style — uniform dark green, strong 3D bevel ─────────────────
+  const base = (isHL, isMe) => ({
+    width:sz, height:sz, borderRadius:R,
+    backgroundColor: '#27ae60',
+    borderTopWidth:2,   borderLeftWidth:2,
+    borderBottomWidth:6, borderRightWidth:5,
+    borderTopColor:   isHL||isMe ? '#fff' : '#5ddb8a',
+    borderLeftColor:  isHL||isMe ? '#fff' : '#5ddb8a',
+    borderBottomColor:isHL||isMe ? '#fff' : '#0d5c2a',
+    borderRightColor: isHL||isMe ? '#fff' : '#176b33',
+    transform:[{scale: isHL ? 1.1 : 1}],
+    alignItems:'center', justifyContent:'center',
+    position:'relative', overflow:'visible',
+  });
+
+  // ── Draw special tile content ─────────────────────────────────────────────
+  const tileContent = (i) => {
+    const type = spaceType(i);
+    if (i === boardEnd) return <SnakeHead size={sz*0.92} facesLeft={headFacesLeft}/>;
+    if (i === 0)        return <SnakeTail size={sz*0.92}/>;
+
+    if (type === 'lava') return (
+      <View style={{position:'absolute',top:0,left:0,right:0,bottom:0,borderRadius:R,
+        backgroundColor:'#991b1b',overflow:'hidden',
+        borderTopWidth:2.5,borderTopColor:'#e74c3c',
+        borderLeftWidth:2,borderLeftColor:'#c0392b',
+        borderBottomWidth:6,borderBottomColor:'#3a0a02',
+        borderRightWidth:5,borderRightColor:'#5a1207'}}>
+        {/* Lava texture spots */}
+        <View style={{position:'absolute',top:sz*0.08,left:sz*0.1,width:sz*0.2,height:sz*0.16,
+          borderRadius:sz*0.1,backgroundColor:'#a52a1a',opacity:0.6}}/>
+        <View style={{position:'absolute',top:sz*0.55,right:sz*0.08,width:sz*0.18,height:sz*0.14,
+          borderRadius:sz*0.08,backgroundColor:'#a52a1a',opacity:0.5}}/>
+        {/* Glowing center pool */}
+        <View style={{position:'absolute',top:'50%',left:'50%',
+          marginLeft:-sz*0.22,marginTop:-sz*0.22,
+          width:sz*0.44,height:sz*0.44,borderRadius:sz*0.22,
+          backgroundColor:'#ff5722',
+          borderTopWidth:2,borderTopColor:'#ffab40',
+          borderLeftWidth:1.5,borderLeftColor:'#ff8a65',
+          borderBottomWidth:3,borderBottomColor:'#bf360c',
+          borderRightWidth:2,borderRightColor:'#dd2c00',
+          alignItems:'center',justifyContent:'center'}}>
+          {/* Inner hot core */}
+          <View style={{width:sz*0.24,height:sz*0.24,borderRadius:sz*0.12,
+            backgroundColor:'#ffeb3b',
+            borderTopWidth:1,borderTopColor:'#fff59d',
+            borderBottomWidth:2,borderBottomColor:'#f57f17',
+            alignItems:'center',justifyContent:'center'}}>
+            {/* Brightest spot */}
+            <View style={{width:sz*0.1,height:sz*0.1,borderRadius:sz*0.05,
+              backgroundColor:'#fff',opacity:0.85}}/>
+          </View>
         </View>
-      ))}
+        {/* Glow ring around center */}
+        <View style={{position:'absolute',top:'50%',left:'50%',
+          marginLeft:-sz*0.3,marginTop:-sz*0.3,
+          width:sz*0.6,height:sz*0.6,borderRadius:sz*0.3,
+          borderWidth:1.5,borderColor:'rgba(255,140,0,0.4)'}}/>
+        {/* Lava cracks radiating outward */}
+        <View style={{position:'absolute',top:sz*0.15,left:sz*0.18,width:sz*0.18,height:1.5,
+          backgroundColor:'#ff8c00',transform:[{rotate:'-30deg'}]}}/>
+        <View style={{position:'absolute',bottom:sz*0.15,right:sz*0.18,width:sz*0.18,height:1.5,
+          backgroundColor:'#ff8c00',transform:[{rotate:'-30deg'}]}}/>
+      </View>
+    );
+
+    if (type === 'cannon') return (
+      <View style={{position:'absolute',top:0,left:0,right:0,bottom:0,
+        alignItems:'center',justifyContent:'center'}}>
+        {/* Perfect circle shadow */}
+        <View style={{position:'absolute',bottom:sz*0.1,
+          width:sz*0.28,height:sz*0.28,borderRadius:sz*0.14,
+          backgroundColor:'rgba(0,40,120,0.6)',opacity:0.5}}/>
+
+        <View style={{alignItems:'center',justifyContent:'center'}}>
+          {/* Outer glow ring */}
+          <View style={{position:'absolute',
+            width:sz*0.58,height:sz*0.58,borderRadius:sz*0.29,
+            backgroundColor:'rgba(56,189,248,0.12)',
+            borderWidth:1.5,borderColor:'rgba(56,189,248,0.3)'}}/>
+          {/* Mid glow ring */}
+          <View style={{position:'absolute',
+            width:sz*0.48,height:sz*0.48,borderRadius:sz*0.24,
+            backgroundColor:'rgba(14,165,233,0.18)',
+            borderWidth:1.5,borderColor:'rgba(125,211,252,0.5)'}}/>
+
+          {/* Main orb */}
+          <View style={{width:sz*0.38,height:sz*0.38,borderRadius:sz*0.19,
+            backgroundColor:'#0369a1',
+            borderTopWidth:3,borderTopColor:'#7dd3fc',
+            borderLeftWidth:2.5,borderLeftColor:'#38bdf8',
+            borderBottomWidth:4,borderBottomColor:'#0c4a6e',
+            borderRightWidth:2.5,borderRightColor:'#0284c7',
+            alignItems:'center',justifyContent:'center'}}>
+            {/* Inner glowing core */}
+            <View style={{width:sz*0.22,height:sz*0.22,borderRadius:sz*0.11,
+              backgroundColor:'#38bdf8',
+              borderTopWidth:2,borderTopColor:'#e0f2fe',
+              borderBottomWidth:2,borderBottomColor:'#0369a1',
+              alignItems:'center',justifyContent:'center'}}>
+              {/* Brightest center point */}
+              <View style={{width:sz*0.1,height:sz*0.1,borderRadius:sz*0.05,
+                backgroundColor:'#e0f2fe',opacity:0.9}}/>
+            </View>
+            {/* Highlight arc top-left */}
+            <View style={{position:'absolute',top:sz*0.04,left:sz*0.04,
+              width:sz*0.1,height:sz*0.06,borderRadius:sz*0.04,
+              backgroundColor:'rgba(224,242,254,0.6)',
+              transform:[{rotate:'-35deg'}]}}/>
+          </View>
+
+          {/* Energy sparks radiating outward — 4 directions */}
+          {[
+            {top:-sz*0.06,left:sz*0.16,rotate:'0deg'},
+            {top:sz*0.16,right:-sz*0.06,rotate:'90deg'},
+            {bottom:-sz*0.06,left:sz*0.16,rotate:'180deg'},
+            {top:sz*0.16,left:-sz*0.06,rotate:'270deg'},
+          ].map((pos,k)=>(
+            <View key={k} style={{position:'absolute',...pos,
+              width:sz*0.07,height:sz*0.03,
+              borderRadius:sz*0.015,
+              backgroundColor:'#7dd3fc',opacity:0.9}}/>
+          ))}
+          {/* Diagonal sparks */}
+          {[
+            {top:sz*0.02,left:sz*0.02,rotate:'-45deg'},
+            {top:sz*0.02,right:sz*0.02,rotate:'45deg'},
+            {bottom:sz*0.02,left:sz*0.02,rotate:'45deg'},
+            {bottom:sz*0.02,right:sz*0.02,rotate:'-45deg'},
+          ].map((pos,k)=>(
+            <View key={k} style={{position:'absolute',...pos,
+              width:sz*0.05,height:sz*0.02,
+              borderRadius:sz*0.01,
+              backgroundColor:'#bae6fd',opacity:0.7}}/>
+          ))}
+        </View>
+      </View>
+    );
+
+    if (type === 'trap') return (
+      <View style={{position:'absolute',top:0,left:0,right:0,bottom:0,
+        alignItems:'center',justifyContent:'center'}}>
+        {/* Shadow — ellipse fitting the circle beneath */}
+        <View style={{position:'absolute',bottom:sz*0.14,
+          width:sz*0.38,height:sz*0.12,
+          borderRadius:sz*0.06,
+          backgroundColor:'rgba(154,52,18,0.65)',opacity:0.6}}/>
+
+        <View style={{alignItems:'center',justifyContent:'center'}}>
+          {/* Dark pulsing outer ring */}
+          <View style={{position:'absolute',
+            width:sz*0.64,height:sz*0.64,borderRadius:sz*0.32,
+            backgroundColor:'rgba(234,88,12,0.1)',
+            borderWidth:2,borderColor:'rgba(251,146,60,0.4)'}}/>
+          {/* Jagged energy ring */}
+          <View style={{position:'absolute',
+            width:sz*0.52,height:sz*0.52,borderRadius:sz*0.26,
+            backgroundColor:'transparent',
+            borderWidth:2.5,borderColor:'#ea580c'}}/>
+          {/* Inner crackling ring */}
+          <View style={{position:'absolute',
+            width:sz*0.4,height:sz*0.4,borderRadius:sz*0.2,
+            backgroundColor:'rgba(234,88,12,0.12)',
+            borderWidth:1.5,borderColor:'rgba(253,186,116,0.5)'}}/>
+
+          {/* Dark sinister core */}
+          <View style={{width:sz*0.28,height:sz*0.28,borderRadius:sz*0.14,
+            backgroundColor:'#9a3412',
+            borderTopWidth:2,borderTopColor:'#fb923c',
+            borderLeftWidth:2,borderLeftColor:'#ea580c',
+            borderBottomWidth:4,borderBottomColor:'#431407',
+            borderRightWidth:3,borderRightColor:'#7c2d12',
+            alignItems:'center',justifyContent:'center'}}>
+            {/* Glowing evil center */}
+            <View style={{width:sz*0.14,height:sz*0.14,borderRadius:sz*0.07,
+              backgroundColor:'#f97316',
+              borderTopWidth:1.5,borderTopColor:'#fed7aa',
+              borderBottomWidth:2,borderBottomColor:'#7c2d12',
+              alignItems:'center',justifyContent:'center'}}>
+              <View style={{width:sz*0.06,height:sz*0.06,borderRadius:sz*0.03,
+                backgroundColor:'#fef9c3',opacity:0.95}}/>
+            </View>
+          </View>
+
+          {/* SKULL-like crossbones / rune marks — 4 sharp daggers pointing inward */}
+          {[0,90,180,270].map((deg,k)=>(
+            <View key={k} style={{position:'absolute',
+              width:sz*0.07,height:sz*0.07,
+              alignItems:'center',justifyContent:'center',
+              transform:[
+                {rotate: deg+'deg'},
+                {translateY: -sz*0.24}
+              ]}}>
+              {/* Dagger blade */}
+              <View style={{width:0,height:0,
+                borderLeftWidth:sz*0.035,borderRightWidth:sz*0.035,
+                borderBottomWidth:sz*0.065,
+                borderLeftColor:'transparent',borderRightColor:'transparent',
+                borderBottomColor:'#fb923c'}}/>
+              {/* Dagger base */}
+              <View style={{width:sz*0.05,height:sz*0.02,
+                backgroundColor:'#ef4444',marginTop:-sz*0.005,
+                borderRadius:sz*0.01}}/>
+            </View>
+          ))}
+
+          {/* Small blood-red dots at 45° positions */}
+          {[45,135,225,315].map((deg,k)=>(
+            <View key={k} style={{position:'absolute',
+              width:sz*0.04,height:sz*0.04,borderRadius:sz*0.02,
+              backgroundColor:'#f97316',opacity:0.9,
+              transform:[
+                {rotate: deg+'deg'},
+                {translateX: sz*0.22}
+              ]}}/>
+          ))}
+        </View>
+      </View>
+    );
+
+    if (type === 'mystery') return (
+      // Mystery box 25% bigger, floats higher above tile
+      <View style={{position:'absolute', top:-sz*0.36, left:0, right:0,
+        alignItems:'center', zIndex:10}}>
+        {/* Flat ellipse shadow on tile surface */}
+        <View style={{position:'absolute', bottom:-sz*0.22,
+          width:sz*0.44, height:sz*0.09,
+          borderRadius:sz*0.045,
+          backgroundColor:'rgba(0,0,0,0.55)',
+          opacity:0.55}}/>
+
+        {/* 3D CUBE — 25% bigger */}
+        <View style={{width:sz*0.58, height:sz*0.55, position:'relative'}}>
+
+          {/* TOP FACE — horizontal diamond */}
+          <View style={{position:'absolute', top:0, left:sz*0.05,
+            width:sz*0.48, height:sz*0.225}}>
+            <View style={{position:'absolute', top:0, left:0,
+              width:0, height:0,
+              borderRightWidth:sz*0.24, borderTopWidth:sz*0.1125,
+              borderRightColor:'#e9d5ff', borderTopColor:'transparent'}}/>
+            <View style={{position:'absolute', bottom:0, left:0,
+              width:0, height:0,
+              borderRightWidth:sz*0.24, borderBottomWidth:sz*0.1125,
+              borderRightColor:'#ddd6fe', borderBottomColor:'transparent'}}/>
+            <View style={{position:'absolute', top:0, right:0,
+              width:0, height:0,
+              borderLeftWidth:sz*0.24, borderTopWidth:sz*0.1125,
+              borderLeftColor:'#c4b5fd', borderTopColor:'transparent'}}/>
+            <View style={{position:'absolute', bottom:0, right:0,
+              width:0, height:0,
+              borderLeftWidth:sz*0.24, borderBottomWidth:sz*0.1125,
+              borderLeftColor:'#a78bfa', borderBottomColor:'transparent'}}/>
+            <View style={{position:'absolute', top:sz*0.05, left:sz*0.08,
+              width:sz*0.04, height:sz*0.04, borderRadius:sz*0.02,
+              backgroundColor:'rgba(255,255,255,0.9)'}}/>
+          </View>
+
+          {/* LEFT FACE */}
+          <View style={{position:'absolute', top:sz*0.19, left:sz*0.05,
+            width:sz*0.24, height:sz*0.33,
+            backgroundColor:'#a78bfa',
+            transform:[{skewY:'30deg'}],
+            borderTopWidth:1, borderTopColor:'#d8b4fe',
+            borderLeftWidth:2, borderLeftColor:'#9333ea',
+            borderBottomWidth:3, borderBottomColor:'#5b21b6',
+            overflow:'hidden'}}>
+            <View style={{position:'absolute', top:sz*0.05, left:sz*0.05,
+              width:sz*0.025, height:sz*0.025, borderRadius:sz*0.012,
+              backgroundColor:'rgba(255,182,193,0.7)'}}/>
+            <View style={{position:'absolute', top:sz*0.15, left:sz*0.11,
+              width:sz*0.022, height:sz*0.022, borderRadius:sz*0.011,
+              backgroundColor:'rgba(135,206,250,0.7)'}}/>
+            <View style={{position:'absolute', bottom:sz*0.05, left:sz*0.06,
+              width:sz*0.028, height:sz*0.028, borderRadius:sz*0.014,
+              backgroundColor:'rgba(255,255,255,0.5)'}}/>
+          </View>
+
+          {/* RIGHT FACE */}
+          <View style={{position:'absolute', top:sz*0.19, right:sz*0.05,
+            width:sz*0.24, height:sz*0.33,
+            backgroundColor:'#9333ea',
+            transform:[{skewY:'-30deg'}],
+            borderTopWidth:1, borderTopColor:'#c4b5fd',
+            borderRightWidth:2, borderRightColor:'#5b21b6',
+            borderBottomWidth:3, borderBottomColor:'#3b0764',
+            alignItems:'center', justifyContent:'center',
+            overflow:'hidden'}}>
+            <Text style={{transform:[{skewY:'30deg'}],
+              color:'#fff', fontSize:sz*0.2, fontWeight:'900',
+              textShadowColor:'rgba(40,20,100,0.9)',
+              textShadowOffset:{width:1,height:1}, textShadowRadius:2}}>?</Text>
+            <View style={{position:'absolute', top:sz*0.05, right:sz*0.05,
+              width:sz*0.025, height:sz*0.025, borderRadius:sz*0.012,
+              backgroundColor:'rgba(221,160,221,0.7)'}}/>
+            <View style={{position:'absolute', bottom:sz*0.06, right:sz*0.08,
+              width:sz*0.028, height:sz*0.028, borderRadius:sz*0.014,
+              backgroundColor:'rgba(173,216,230,0.6)'}}/>
+          </View>
+
+          {/* Center edge line */}
+          <View style={{position:'absolute', top:sz*0.19,
+            width:1.5, height:sz*0.3,
+            backgroundColor:'rgba(60,30,100,0.5)'}}/>
+        </View>
+      </View>
+    );
+
+    // Normal tile: just number
+    return <Text style={{fontSize:sz*0.27,color:'rgba(0,0,0,0.32)',fontWeight:'700'}}>{i}</Text>;
+  };
+
+  const tileView = (i) => {
+    const here = playersAt(i);
+    const isMe = i === myPosition;
+    const isHL = i === highlightPos;
+    const type = spaceType(i);
+    const isLava = type === 'lava';
+
+    return (
+      <View key={i} style={base(isHL, isMe)}>
+        {tileContent(i)}
+        {here.length > 0 && (
+          <>
+            {/* Red arrow above tile if I am here */}
+            {isMe && (
+              <View style={{position:'absolute',top:-sz*0.45,left:0,right:0,alignItems:'center'}}>
+                <View style={{width:0,height:0,
+                  borderLeftWidth:sz*0.18,borderRightWidth:sz*0.18,borderTopWidth:sz*0.22,
+                  borderLeftColor:'transparent',borderRightColor:'transparent',
+                  borderTopColor:'#ef4444'}}/>
+                <View style={{width:0,height:0,marginTop:-sz*0.22,
+                  borderLeftWidth:sz*0.13,borderRightWidth:sz*0.13,borderTopWidth:sz*0.16,
+                  borderLeftColor:'transparent',borderRightColor:'transparent',
+                  borderTopColor:'#fca5a5'}}/>
+              </View>
+            )}
+            <View style={{position:'absolute',bottom:2,left:0,right:0,
+              flexDirection:'row',flexWrap:'wrap',justifyContent:'center',alignItems:'flex-end'}}>
+              {here.map((p,pi) => p.name===myPlayerName
+                ? <Pawn key={pi} color={p.color||myPlayerColor||'#3dd68c'} size={sz*0.36}/>
+                : <View key={pi} style={{width:sz*0.2,height:sz*0.2,borderRadius:sz*0.1,
+                    backgroundColor:p.color||'#888',borderWidth:1,borderColor:'rgba(0,0,0,0.4)'}}/>
+              )}
+            </View>
+          </>
+        )}
+      </View>
+    );
+  };
+
+  // Corner tile — same green bevel
+  const cornerTile = () => (
+    <View style={{width:sz,height:sz,borderRadius:R,
+      backgroundColor:'#27ae60',
+      borderTopWidth:2,borderLeftWidth:2,borderBottomWidth:6,borderRightWidth:5,
+      borderTopColor:'#5ddb8a',borderLeftColor:'#5ddb8a',
+      borderBottomColor:'#0d5c2a',borderRightColor:'#176b33'}}/>
+  );
+
+  // ── KEY FIX: all rows use paddingLeft=tp so tiles sit in cols 1..(BOARD_COLS)
+  //    Corners go at col 0 (left) or col BOARD_COLS+1 (right)
+  //    Container width = (BOARD_COLS+2)*tp, all rows SAME x alignment
+  const rowW = (BOARD_COLS + 2) * tp;
+
+  return (
+    <View style={{alignSelf:'center'}}>
+      {rows.map((row, ri) => {
+        // rowIndex: 0 = bottom row (contains tile 0). Increases going UP.
+        // Bottom row goes L→R, alternates. R→L rows already have array reversed.
+        const rowIndex  = nRows - 1 - ri;
+        const isLast    = ri === nRows - 1;     // ri = nRows-1 means bottom row visually
+        // The corner sits BELOW each row (between it and the row VISUALLY BELOW)
+        // The path goes UP from a row to the row above through this corner
+        // L→R rows (rowIndex even): exit is RIGHT side, so corner above is on RIGHT
+        // R→L rows (rowIndex odd): exit is LEFT side, so corner above is on LEFT
+        // BUT ri=0 is TOP row visually, so ri-1 doesn't exist; corner above ri=0 is below the head
+        // Actually corner connector is rendered AFTER each row except the bottom (last visually)
+        // Connector connects this row to the row ri+1 (which is visually below this one)
+        // Path comes UP from row below. So this connector is the EXIT of row ri+1 (the one below).
+        // Row ri+1 has rowIndex = nRows-1-(ri+1) = nRows-2-ri
+        const belowRowIndex = nRows - 2 - ri;
+        const belowEndsRight = belowRowIndex % 2 === 0;
+
+        // ALL rows occupy the SAME horizontal span: cols 1 through BOARD_COLS.
+        // All use paddingLeft = tp.
+        // For partial top row (head's row), tiles get pushed to RIGHT side if R→L, LEFT if L→R
+        const isShortRow = row.length < BOARD_COLS;
+        const goesRight  = rowIndex % 2 === 0;
+        // For short row: align tiles to the side where the path enters
+        // L→R short row: enters from left → align flex-start
+        // R→L short row: enters from right → align flex-end
+        // Wait: short row = top row = LAST row in path = where head ends
+        // Path enters this row from below (corner from row below)
+        // Then goes through the row to the head
+        // L→R row: enters at left side (from below-left corner), so tiles fill from LEFT
+        // R→L row: enters at right side (from below-right corner), so tiles fill from RIGHT
+        // R→L row reversed in array: array starts with HIGHEST tile (head if last)
+        //   But R→L means head is at LEFT visually, so we want array[0]=head on LEFT
+        //   So R→L row tiles render flex-start with paddingLeft=tp gives head at col 1
+        //   But path enters R→L row from RIGHT (below-right corner)
+        //   That means tile 30 (path entry) should be on the RIGHT of the row
+        //   With reversed array [39,38,...,30], rendering flex-start puts 39 at col 1, 30 at col row.length
+        //   We want 30 (entry) at col BOARD_COLS, 39 (head/exit) at col BOARD_COLS-row.length+1
+        //   So R→L short rows: align with paddingRight=tp, justifyContent flex-end
+        //   Then 30 ends at col BOARD_COLS, 39 at col BOARD_COLS-row.length+1
+        const alignToRight = !goesRight; // R→L rows align to right edge
+
+        return (
+          <View key={ri} style={{width:rowW}}>
+            {/* Tile row */}
+            <View style={{flexDirection:'row', width:rowW,
+              paddingLeft:  alignToRight ? 0 : tp,
+              paddingRight: alignToRight ? tp : 0,
+              justifyContent: alignToRight ? 'flex-end' : 'flex-start'}}>
+              {row.map(i => (
+                <View key={i} style={{margin:M}}>
+                  {tileView(i)}
+                </View>
+              ))}
+            </View>
+            {/* Corner BELOW this row connecting to row below.
+                belowEndsRight tells which side the row below exits = which side this corner sits */}
+            {!isLast && (
+              <View style={{flexDirection:'row', width:rowW,
+                paddingLeft:  belowEndsRight ? 0 : tp,
+                paddingRight: belowEndsRight ? tp : 0,
+                justifyContent: belowEndsRight ? 'flex-end' : 'flex-start'}}>
+                <View style={{margin:M}}>
+                  {cornerTile()}
+                </View>
+              </View>
+            )}
+          </View>
+        );
+      })}
     </View>
   );
 }
-const bS = StyleSheet.create({
-  board:    {paddingBottom:8},
-  row:      {flexDirection:"row",justifyContent:"center",marginBottom:4},
-  tile:     {borderRadius:9,margin:2,alignItems:"center",justifyContent:"center",position:"relative"},
-  tokenRow: {position:"absolute",bottom:2,left:0,right:0,flexDirection:"row",flexWrap:"wrap",justifyContent:"center",alignItems:"flex-end",gap:1},
-  otherDot:  {borderWidth:1.5, borderColor:"rgba(0,0,0,0.4)"},
-  token:    {margin:1,borderWidth:1.5,borderColor:"rgba(255,255,255,0.4)"},
-  mysteryBadge:   {backgroundColor:"#8e44ad",borderRadius:6,alignItems:"center",justifyContent:"center"},
-  mysteryBadgeTxt:{color:"#fff",fontWeight:"900"},
-});
+
 
 function CloseBtn({ onPress }) {
   return (
@@ -571,7 +762,13 @@ function Legend() {
     <View style={S.legend}>
       {Object.entries(SPACE_CFG).map(([t, cfg]) => (
         <View key={t} style={S.legendItem}>
-          <View style={[S.legendSwatch, {backgroundColor:cfg.bg,borderColor:cfg.border}]}/>
+          <View style={[S.legendSwatch, {
+            backgroundColor:cfg.bg, borderColor:cfg.border,
+            borderTopWidth:1.5, borderLeftWidth:1.5,
+            borderBottomWidth:3, borderRightWidth:3,
+            borderTopColor:'rgba(255,255,255,0.22)', borderLeftColor:'rgba(255,255,255,0.22)',
+            borderBottomColor:'rgba(0,0,0,0.5)', borderRightColor:'rgba(0,0,0,0.4)',
+          }]}/>
           <Text style={[S.legendTxt, {color:cfg.border}]}>{t.charAt(0).toUpperCase()+t.slice(1)}</Text>
         </View>
       ))}
@@ -594,7 +791,8 @@ export default function BoardGameScreen({ route, navigation }) {
 
   // Dynamic tile sizes — recalculate when window resizes (tab minimize/restore)
   const { width: winW, height: winH } = useWindowDimensions();
-  const BASE_TILE = Math.min(96, Math.max(44, Math.floor((winW - 32) / BOARD_COLS)));
+  const tileByW    = Math.floor((winW - 32) / (BOARD_COLS + 1));
+  const BASE_TILE  = Math.min(64, Math.max(28, tileByW));
   const HOST_TILE = Math.min(96, Math.max(48, Math.floor((winW * 0.65 - 32) / BOARD_COLS)));
   // Responsive scale: 1.0 on a comfortable 480×800 window, scales down linearly for smaller
   const rs = Math.min(1, Math.max(0.55, winH / 800, winW / 480));
@@ -1477,7 +1675,7 @@ export default function BoardGameScreen({ route, navigation }) {
   const applySpaceRoll = useCallback(async (type, roll) => {
     const sess = sessionRef.current;
     if (!sess) { setSrType(null); exitMoving(); return; }
-    const be  = sess.settings?.boardSize || 25;
+    const be  = sess.settings?.boardSize || 40;
     // Use the captured landing position — NOT myStateRef.position which may be stale
     // if the Firestore snapshot hasn't fired yet when the player taps Roll
     const cur = srLandingPos.current ?? (myStateRef.current?.position || 0);
@@ -1510,7 +1708,7 @@ export default function BoardGameScreen({ route, navigation }) {
   const movePlayer = useCallback(async (spaces) => {
     const me=myStateRef.current, sess=sessionRef.current;
     if (!me||!sess) { setPhaseSync("questions"); setDiceValue(null); return; }
-    const be=sess.settings?.boardSize||25, op=me.position||0, np=Math.min(op+spaces,be);
+    const be=sess.settings?.boardSize||40, op=me.position||0, np=Math.min(op+spaces,be);
     setPhaseSync("moving");
     const safetyTimer = setTimeout(() => { if (phaseRef.current === "moving") setPhaseSync("rolled"); }, 8000);
     for (let c=op; c<=np; c++) { setHighlightPos(c); scrollToPos(c,be); await new Promise(r=>setTimeout(r,280)); }
@@ -1608,7 +1806,7 @@ export default function BoardGameScreen({ route, navigation }) {
 
   const board    = session?.board || [];
   const players  = session?.players || [];
-  const boardEnd = session?.settings?.boardSize || 25;
+  const boardEnd = session?.settings?.boardSize || 40;
   const myPos    = myState?.position || 0;
   const showCA   = session?.settings?.showAnswersAfter !== false;
   const badLuck  = myState?.badLuckExpires && myState.badLuckExpires > Date.now();
@@ -1633,7 +1831,8 @@ export default function BoardGameScreen({ route, navigation }) {
         </View>
         <View style={S.hostBody}>
           <ScrollView ref={boardRef} style={{flex:1}} contentContainerStyle={{padding:12}}>
-            <SnakeBoard board={board} players={players} myPosition={-1} myPlayerName={playerName} myPlayerColor={playerColor} highlightPos={null} boardEnd={boardEnd} tileSize={HOST_TILE}/>
+            <SnakeBoard board={board} players={players} myPosition={-1} myPlayerName={playerName} myPlayerColor={playerColor} highlightPos={null} boardEnd={boardEnd}
+              tileSize={Math.min(HOST_TILE, Math.floor((winH * 0.74) / (Math.ceil((boardEnd+1)/BOARD_COLS)+1)))}/>
             <Legend/>
           </ScrollView>
           <View style={S.hostSide}>
@@ -1690,14 +1889,15 @@ export default function BoardGameScreen({ route, navigation }) {
 
       <View style={S.main}>
         {showMap && (
-          <ScrollView ref={boardRef} contentContainerStyle={{padding:10, paddingBottom:64}}>
-            <SnakeBoard board={board} players={players} myPosition={myPos} myPlayerName={playerName} myPlayerColor={playerColor} highlightPos={highlightPos} boardEnd={boardEnd} tileSize={BASE_TILE}/>
+          <View style={{flex:1, alignItems:"center", justifyContent:"center", overflow:"hidden"}}>
+            <SnakeBoard board={board} players={players} myPosition={myPos} myPlayerName={playerName} myPlayerColor={playerColor} highlightPos={highlightPos} boardEnd={boardEnd}
+              tileSize={Math.min(BASE_TILE, Math.floor((winH * 0.74) / (Math.ceil((boardEnd+1)/BOARD_COLS)+1)))}/>
             <Legend/>
-          </ScrollView>
+          </View>
         )}
 
         {!showMap && phase==="questions" && (
-          <ScrollView contentContainerStyle={[S.qScroll, isMobile && {padding:10, paddingBottom:80}]}>
+          <ScrollView style={{flex:1}} contentContainerStyle={[S.qScroll, isMobile && {padding:10, paddingBottom:80}]}>
             <View style={S.rollBar}>
               {[0,1,2].map(i=><View key={i} style={[S.rollDot,i<cc&&S.rollDotOn]}/>)}
               <Text style={S.rollTxt2}>{ROLL_AT-cc} more correct to roll</Text>
@@ -1757,7 +1957,7 @@ export default function BoardGameScreen({ route, navigation }) {
         )}
 
         {phase==="rolling" && (
-          <View style={S.diceBox}>
+          <View style={[S.diceBox, showMap && {borderTopWidth:1, borderTopColor:"#222"}]}>
             <Text style={{color:"#fff",fontSize:Math.max(16,20*rs),fontWeight:"bold",textAlign:"center"}}>Roll the Dice!</Text>
             {doubleRollsLeft>0&&<Text style={[S.luckTxt,{color:"#9b59b6",fontSize:Math.max(11,14*rs)}]}>Double Roll active!</Text>}
             {effLuck>0&&doubleRollsLeft===0&&<Text style={[S.luckTxt,{fontSize:Math.max(11,14*rs)}]}>Luck {dispLuck}%</Text>}
@@ -2247,7 +2447,7 @@ const S = StyleSheet.create({
   hudEndBtnTxt:{ color:"#ff6b6b", fontSize:16, fontWeight:"700" },
   timerTrack: { width:"100%", height:7, backgroundColor:"#1a1a1a" },
   timerFill:  { height:7, backgroundColor:"#00c781", alignSelf:"flex-start" },
-  main: { flex:1 },
+  main: { flex:1, flexDirection:"column" },
   qScroll:    { flexGrow:1, justifyContent:"center", padding:12, paddingBottom:80 },
   qCard:      { gap:10 },
   rollBar:    { flexDirection:"row", alignItems:"center", justifyContent:"center", gap:10, marginBottom:14 },
@@ -2269,14 +2469,14 @@ const S = StyleSheet.create({
   legendItem: { flexDirection:"row", alignItems:"center", gap:5 },
   legendSwatch:{ width:16, height:16, borderRadius:3, borderWidth:1.5 },
   legendTxt:  { fontSize:12, fontWeight:"600" },
-  diceBox:    { flex:1, alignItems:"center", justifyContent:"flex-end", gap:10, backgroundColor:"#0d0d0d", padding:14, paddingBottom:110 },
+  diceBox:    { alignItems:"center", justifyContent:"center", gap:8, backgroundColor:"#111", paddingVertical:12, paddingHorizontal:20, paddingBottom:84 },
   diceTtl:    { color:"#fff", fontSize:26, fontWeight:"bold", textAlign:"center" },
   luckTxt:    { color:"#888", fontSize:13, textAlign:"center" },
   diceFace:   { fontSize:72, color:"#fff" },
   diceRes:    { color:"#00c781", fontSize:24, fontWeight:"bold" },
   rollBtn:    { backgroundColor:"#00c781", paddingVertical:13, paddingHorizontal:32, borderRadius:14 },
   rollTxtBig: { color:"#000", fontSize:17, fontWeight:"bold" },
-  movingBox:  { flex:1, alignItems:"center", justifyContent:"center", gap:16, backgroundColor:"#0d0d0d", paddingBottom:72 },
+  movingBox:  { alignItems:"center", justifyContent:"center", gap:16, backgroundColor:"#0d0d0d", paddingVertical:20 },
   movingTxt:  { color:"#aaa", fontSize:18 },
   rolledBox:  { flex:1, alignItems:"center", justifyContent:"center", gap:16, backgroundColor:"#0d0d0d" },
   rolledEmoji:{ fontSize:64 },

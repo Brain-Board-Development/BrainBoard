@@ -11,15 +11,15 @@ import { db } from "../firebaseConfig";
 import { doc, onSnapshot, updateDoc, getDoc } from "firebase/firestore";
 
 const SPACE_POOL = [
-  "mystery", "mystery", "mystery", "mystery", "mystery", "mystery",
-  "normal",
+  "mystery", "mystery", "mystery",
+  "normal", "normal",
   "lava",
   "cannon",
   "trap",
 ];
 
 const calcBoardSize = (n) =>
-  Math.min(150, Math.round(9.14 * Math.pow(Math.max(1, n - 1), 0.714) + 25));
+  Math.min(150, Math.max(40, Math.round(5 * Math.max(0, n - 1) + 40)));
 
 function Pawn({ color, size = 14 }) {
   const c = color || "#888";
@@ -634,6 +634,9 @@ export default function Lobby({ route, navigation }) {
           <TouchableOpacity style={S.leaveBtn} onPress={() => setShowLeave(true)}>
             <Text style={S.leaveTxt}>Leave</Text>
           </TouchableOpacity>
+          <TouchableOpacity style={S.tutorialBarBtn} onPress={() => setShowTutorial(true)}>
+            <Text style={S.tutorialBarBtnTxt}>Tutorial</Text>
+          </TouchableOpacity>
           <TouchableOpacity style={[S.lockBtn, locked && S.lockOn]} onPress={toggleLock}>
             <Text style={[S.lockTxt, locked && { color: "#00c781" }]}>
               {locked ? "LOCKED" : "OPEN"}
@@ -643,7 +646,7 @@ export default function Lobby({ route, navigation }) {
             style={({hovered, pressed}) => [
               S.startBtn,
               (players.length === 0 || starting) && S.startOff,
-              Platform.OS === 'web' && hovered && players.length > 0 && !starting && { backgroundColor: '#00e090', transform: [{ scale: 1.04 }] },
+              Platform.OS === 'web' && hovered && players.length > 0 && !starting && { borderColor: '#fff', borderWidth: 2.5 },
               pressed && { opacity: 0.8 },
             ]}
             onPress={handleStartGame}
@@ -656,6 +659,9 @@ export default function Lobby({ route, navigation }) {
         <View style={S.hostBar}>
           <TouchableOpacity style={[S.leaveBtn, {flex:1, maxWidth:200}]} onPress={() => setShowLeave(true)}>
             <Text style={S.leaveTxt}>Leave Game</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={S.tutorialBarBtn} onPress={() => setShowTutorial(true)}>
+            <Text style={S.tutorialBarBtnTxt}>Tutorial</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -735,54 +741,26 @@ export default function Lobby({ route, navigation }) {
               <View style={S.tutDivider}/>
               <Text style={S.tutSecTitle}>Board Spaces</Text>
 
-              {/* Normal */}
-              <View style={S.tutTileRow}>
-                <View style={[S.tutTileBox, {backgroundColor:'#1a2a1a', borderColor:'#2a4a2a'}]}>
-                  <Text style={{color:'#4a6a4a', fontWeight:'bold', fontSize:13}}>42</Text>
+              {[
+                {bg:'#27ae60',btc:'#33cc77',bbc:'#145a32',label:'42',title:'Normal Space',desc:'Nothing happens. Just move forward and keep answering!'},
+                {bg:'#c0392b',btc:'#e74c3c',bbc:'#7b241c',label:'🔥',title:'Lava',desc:"You've landed in lava! Roll the dice — you'll be pushed backwards by that many spaces."},
+                {bg:'#0369a1',btc:'#38bdf8',bbc:'#0c4a6e',label:'✦',title:'Cannon',desc:"A magical blue orb launches you forward! Roll the dice to see how many spaces you fly."},
+                {bg:'#ea580c',btc:'#fb923c',bbc:'#7c2d12',label:'✕',title:'Trap',desc:"An evil rune curse traps you! Answer a bonus question to break free or lose progress."},
+                {bg:'#8b5cf6',btc:'#c4b5fd',bbc:'#5b2c6f',label:'?',title:'Mystery Box',desc:'A random item is awarded — could be good or bad. Items go into your inventory.'},
+              ].map(({bg,btc,bbc,label,title,desc})=>(
+                <View key={title} style={[S.tutStep,{flexDirection:'row',alignItems:'center',paddingVertical:10}]}>
+                  <View style={{width:48,height:48,borderRadius:18,backgroundColor:bg,
+                    borderTopWidth:2,borderLeftWidth:2,borderBottomWidth:5,borderRightWidth:5,
+                    borderTopColor:btc,borderLeftColor:btc,borderBottomColor:bbc,borderRightColor:bbc,
+                    alignItems:'center',justifyContent:'center',marginRight:12}}>
+                    <Text style={{color:'#fff',fontWeight:'900',fontSize:label.length>1?20:16}}>{label}</Text>
+                  </View>
+                  <View style={{flex:1}}>
+                    <Text style={S.tutStepTitle}>{title}</Text>
+                    <Text style={S.tutStepDesc}>{desc}</Text>
+                  </View>
                 </View>
-                <View style={S.tutTileDesc}>
-                  <Text style={S.tutTileTitle}>Normal Space</Text>
-                  <Text style={S.tutTileText}>Nothing happens. Just move forward and keep answering!</Text>
-                </View>
-              </View>
-
-              {/* Lava */}
-              <View style={S.tutTileRow}>
-                <LavaTile sz={56}/>
-                <View style={S.tutTileDesc}>
-                  <Text style={S.tutTileTitle}>Lava</Text>
-                  <Text style={S.tutTileText}>You've landed in molten lava! Roll the dice — you'll be pushed <Text style={S.tutBold}>backwards</Text> by that many spaces. Avoid at all costs.</Text>
-                </View>
-              </View>
-
-              {/* Trap */}
-              <View style={S.tutTileRow}>
-                <TrapTile sz={56}/>
-                <View style={S.tutTileDesc}>
-                  <Text style={S.tutTileTitle}>Trap</Text>
-                  <Text style={S.tutTileText}>A spiked pit! You must answer a <Text style={S.tutBold}>bonus question</Text> correctly to escape. Get it wrong and you'll lose progress.</Text>
-                </View>
-              </View>
-
-              {/* Cannon */}
-              <View style={S.tutTileRow}>
-                <CannonTile sz={56}/>
-                <View style={S.tutTileDesc}>
-                  <Text style={S.tutTileTitle}>Cannon</Text>
-                  <Text style={S.tutTileText}>You're loaded into a cannon! Roll the dice — you'll be launched <Text style={S.tutBold}>forward</Text> by that many extra spaces. A lucky break!</Text>
-                </View>
-              </View>
-
-              {/* Mystery */}
-              <View style={S.tutTileRow}>
-                <View style={[S.tutTileBox, {backgroundColor:'#160a22', borderColor:'#8e44ad'}]}>
-                  <Text style={{color:'#a855f7', fontWeight:'900', fontSize:22}}>?</Text>
-                </View>
-                <View style={S.tutTileDesc}>
-                  <Text style={S.tutTileTitle}>Mystery Box</Text>
-                  <Text style={S.tutTileText}>A random item is awarded — could be good or bad. Items go into your inventory and can be used any time.</Text>
-                </View>
-              </View>
+              ))}
 
               {/* ── ITEMS ── */}
               <View style={S.tutDivider}/>
@@ -900,6 +878,8 @@ const S = StyleSheet.create({
   startOff:   { backgroundColor: "#1e1e1e", opacity: 0.4 },
   startTxt:   { color: "#000", fontSize: 16, fontWeight: "bold" },
   leaveBtn:   { backgroundColor: "#2a0000", borderRadius: 12, paddingVertical: 12, paddingHorizontal: 18, alignItems: "center", borderWidth: 1, borderColor: "#5a0000" },
+  tutorialBarBtn:    { backgroundColor: "#0d1e2e", borderRadius: 12, paddingVertical: 12, paddingHorizontal: 18, alignItems: "center", borderWidth: 1, borderColor: "#3498db" },
+  tutorialBarBtnTxt: { color: "#3498db", fontSize: 13, fontWeight: "bold" },
   leaveTxt:   { color: "#ff6b6b", fontSize: 13, fontWeight: "bold" },
   overlay:    { flex: 1, backgroundColor: "rgba(0,0,0,0.88)", justifyContent: "center", alignItems: "center" },
   modal:      { backgroundColor: "#1e1e1e", borderRadius: 20, padding: 28, width: "85%", maxWidth: 360, borderWidth: 1, borderColor: "#333" },

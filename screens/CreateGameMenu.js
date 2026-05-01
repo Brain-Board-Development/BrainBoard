@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, TextInput, ScrollView, Image, ActivityIndicator, Pressable, Platform, useWindowDimensions,
+  View, Text, StyleSheet, TouchableOpacity, TextInput, ScrollView, Image, ActivityIndicator, Pressable, Platform, useWindowDimensions, KeyboardAvoidingView,
 } from "react-native";
 import { db, auth } from '../firebaseConfig';
 import {
@@ -281,7 +281,7 @@ export default function CreateGameMenu({ navigation, route }) {
 
       <View style={[styles.mainLayout, isMobile && {flexDirection:"column"}]}>
         {/* Left: Question Navigator */}
-        <View style={styles.leftSidebar}>
+        <View style={[styles.leftSidebar, isMobile && {width:"100%", maxWidth:"100%", minWidth:0, borderRightWidth:0, borderBottomWidth:1, borderBottomColor:"#222", maxHeight:200}]}>
           <TouchableOpacity style={styles.addQuestionBtn} onPress={addQuestion}>
             <Text style={styles.addQuestionText}>+ Add Question</Text>
           </TouchableOpacity>
@@ -475,7 +475,7 @@ export default function CreateGameMenu({ navigation, route }) {
         </ScrollView>
 
         {/* Right: Summary & Actions */}
-        <ScrollView style={[styles.rightSidebar, isMobile && {width:"100%", borderLeftWidth:0, borderTopWidth:1, borderTopColor:"#222", maxHeight: 300}]} contentContainerStyle={{padding:16}} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={true}>
+        <ScrollView style={[styles.rightSidebar, isMobile && {width:"100%", minWidth:0, maxWidth:"100%", borderLeftWidth:0, borderTopWidth:1, borderTopColor:"#222", maxHeight: 300}]} contentContainerStyle={{padding:16}} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={true}>
           <View style={styles.summary}>
             <Text style={styles.summaryTitle}>Game Summary</Text>
             <Text style={styles.summaryText}>{questions.length} Question(s)</Text>
@@ -517,10 +517,10 @@ const styles = StyleSheet.create({
   gameTitleInput: { fontSize: 22, fontWeight: 'bold', color: '#fff', backgroundColor: 'transparent', borderBottomWidth: 2, borderBottomColor: '#00c781', paddingBottom: 8, marginBottom: 12 },
   tagsInput: { fontSize: 14, color: '#aaa', backgroundColor: '#222', padding: 12, borderRadius: 8 },
   mainLayout: { flex: 1, flexDirection: 'row' }, // overridden inline
-  leftSidebar: { width: 300, backgroundColor: '#0d0d0d', padding: 20, borderRightWidth: 1, borderRightColor: '#222' },
+  leftSidebar: { width: '22%', minWidth: 180, maxWidth: 280, backgroundColor: '#0d0d0d', padding: 14, borderRightWidth: 1, borderRightColor: '#222' },
   addQuestionBtn: { backgroundColor: '#00c781', padding: 16, borderRadius: 12, alignItems: 'center', marginBottom: 20 },
   addQuestionText: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
-  questionList: { flex: 1, minHeight: 0 },
+  questionList: { flex: 1, minHeight: 0, maxHeight: 9999 },
   questionThumb: { backgroundColor: '#1e1e1e', borderRadius: 12, padding: 12, marginBottom: 12, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: 'transparent', position: 'relative' },
   questionThumbSelected: { borderColor: '#00c781', backgroundColor: '#003322' },
   questionThumbNoAnswer: { borderColor: '#e74c3c' },
@@ -532,7 +532,7 @@ const styles = StyleSheet.create({
   reorderButtons: { flexDirection: 'column', marginLeft: 8 },
   reorderText: { color: '#00c781', fontSize: 18, fontWeight: 'bold' },
   disabledReorder: { opacity: 0.3 },
-  centerEditor: { flexGrow: 1, padding: 24, backgroundColor: '#111' },
+  centerEditor: { flexGrow: 1, padding: 16, backgroundColor: '#111' },
   editorLabel: { fontSize: 18, color: '#aaa', marginBottom: 12 },
   typeRow:       { flexDirection: 'row', gap: 8, marginBottom: 16 },
   typeBtn:       { flex: 1, backgroundColor: '#1e1e1e', padding: 10, borderRadius: 10, alignItems: 'center', borderWidth: 2, borderColor: '#333' },
@@ -561,7 +561,7 @@ const styles = StyleSheet.create({
   settingLabel: { color: '#aaa', marginRight: 12 },
   timeInput: { backgroundColor: '#1e1e1e', color: '#fff', width: 60, padding: 10, borderRadius: 8, textAlign: 'center' },
   seconds: { color: '#aaa', marginLeft: 8 },
-  rightSidebar: { width: 400, backgroundColor: '#0d0d0d', borderLeftWidth: 1, borderLeftColor: '#222' },
+  rightSidebar: { width: '28%', minWidth: 200, maxWidth: 360, backgroundColor: '#0d0d0d', borderLeftWidth: 1, borderLeftColor: '#222' },
   summary: { flex: 1 },
   summaryTitle: { fontSize: 20, fontWeight: 'bold', color: '#fff', marginBottom: 20 },
   summaryText: { color: '#ccc', fontSize: 16, marginBottom: 12 },

@@ -315,6 +315,15 @@ export default function SoloQuiz({ navigation, route }) {
           {curQ.question}
         </Text>
 
+        {/* Question image */}
+        {curQ.imageUrl ? (
+          <Image
+            source={{ uri: curQ.imageUrl }}
+            style={{ width: '100%', height: Math.max(140, winH * 0.18), borderRadius: 10, marginBottom: Math.max(10, 14 * rs), backgroundColor: '#1a1a1a' }}
+            resizeMode="contain"
+          />
+        ) : null}
+
         {/* Feedback banner */}
         {feedback && showAnswersAfter && (
           <Animated.View style={[S.feedbackBanner, {
