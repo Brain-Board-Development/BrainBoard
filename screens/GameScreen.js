@@ -107,7 +107,7 @@ function InfoModal({ visible, title, message, onDismiss }) {
   return (
     <Modal visible={!!visible} transparent animationType="fade">
       <View style={S.overlay}>
-        <View style={S.modal}>
+        <View style={[S.modal, {width:"88%",maxWidth:360,padding:24}]}>
           <Text style={S.mTtl}>{title}</Text>
           <Text style={S.mTxt}>{message}</Text>
           <TouchableOpacity style={S.mBtn} onPress={onDismiss}>
@@ -472,11 +472,11 @@ export default function GameScreen({ route, navigation }) {
 
       <Modal visible={showLeave} transparent animationType="fade">
         <View style={S.overlay}>
-          <View style={S.modal}>
+          <View style={[S.modal, {width:"88%",maxWidth:360,padding:24}]}>
             <Text style={S.mTtl}>Leave Game?</Text>
             <Text style={S.mTxt}>Are you sure you want to leave?</Text>
             <View style={{ flexDirection: "row", gap: 12 }}>
-              <TouchableOpacity style={[S.mBtn, { flex: 1, backgroundColor: "#2a2a2a" }]} onPress={() => setShowLeave(false)}>
+              <TouchableOpacity style={[S.mBtn, { flex: 1, backgroundColor: "#00c781" }]} onPress={() => setShowLeave(false)}>
                 <Text style={S.mBtnTxt}>Stay</Text>
               </TouchableOpacity>
               <TouchableOpacity style={[S.mBtn, { flex: 1, backgroundColor: "#c0392b" }]} onPress={handleLeave}>

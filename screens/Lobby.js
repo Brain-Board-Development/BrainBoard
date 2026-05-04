@@ -19,7 +19,7 @@ const SPACE_POOL = [
 ];
 
 const calcBoardSize = (n) =>
-  Math.min(150, Math.max(40, Math.round(5 * Math.max(0, n - 1) + 40)));
+  Math.min(150, Math.max(15, Math.round(5 * Math.max(0, n - 1) + 40)));
 
 function Pawn({ color, size = 14 }) {
   const c = color || "#888";
@@ -568,7 +568,7 @@ export default function Lobby({ route, navigation }) {
         {/* Host-plays name & color picker — only shown when setting is on */}
         {isHost && session?.settings?.hostPlays ? (
           <View style={S.hostPickerBox}>
-            <Text style={S.hostPickerTitle}>🎮 You're playing! Enter your name</Text>
+            <Text style={S.hostPickerTitle}>You're playing! Enter your name</Text>
             <TextInput
               style={[S.hostNameInput, hostNameErr && S.hostNameInputErr]}
               placeholder="Your name…"

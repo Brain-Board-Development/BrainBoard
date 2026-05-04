@@ -220,6 +220,7 @@ export default function CreateGameMenu({ navigation, route }) {
       numQuestions: questions.length,
       coverImage,
       creatorId: auth.currentUser.uid,
+      creatorName: userData?.username || userData?.displayName || auth.currentUser.email || 'Unknown',
       updatedAt: new Date().toISOString(),
       isPublished: false,
     };

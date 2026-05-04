@@ -17,6 +17,7 @@ import {
 } from 'firebase/firestore';
 import { signOut } from 'firebase/auth';
 
+
 const ConfirmationModal = ({ isOpen, title, message, onConfirm, onCancel, confirmText = 'Confirm', cancelText = 'Cancel' }) => {
   if (!isOpen) return null;
   return (
@@ -77,25 +78,56 @@ export default function Dashboard({ navigation, route }) {
     if (!userToken) { navigation.replace('Home'); return; }
 
     const userDoc = await getDoc(doc(db, 'users', userToken));
-    if (userDoc.exists()) setUserData(userDoc.data());
+    const myUserData = userDoc.exists() ? userDoc.data() : {};
+    if (userDoc.exists()) setUserData(myUserData);
+    const myUsername = myUserData.username || myUserData.displayName || myUserData.email || 'Me';
 
     const myQ = query(collection(db, 'games'), where('creatorId', '==', userToken));
     const mySnap = await getDocs(myQ);
-    setMyGames(mySnap.docs.map(d => ({ id: d.id, ...d.data(), isPublished: d.data().isPublished || false })));
+    const myGamesData = mySnap.docs.map(d => ({ id: d.id, ...d.data(), isPublished: d.data().isPublished || false, creatorName: myUsername || d.data().creatorName || 'Me' }));
+    setMyGames(myGamesData);
+    // Backfill creatorName on games that don't have it stored
+    myGamesData.forEach(g => {
+      if (!g.creatorName || g.creatorName === 'Unknown') {
+        updateDoc(doc(db, 'games', g.id), { creatorName: myUsername }).catch(()=>{});
+      }
+    });
 
-    const pubQ = query(collection(db, 'games'), where('isPublished', '==', true));
-    const pubSnap = await getDocs(pubQ);
-    const pubRaw = pubSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+    // Fetch ALL games (not just published) to backfill creatorName everywhere
+    const allGamesSnap = await getDocs(collection(db, 'games'));
+    const allGames = allGamesSnap.docs.map(d => ({ id: d.id, ...d.data() }));
 
-    const creatorIds = Array.from(new Set(pubRaw.map(g => g.creatorId).filter(Boolean)));
+    // Get ALL unique creatorIds
+    const allCreatorIds = Array.from(new Set(allGames.map(g => g.creatorId).filter(Boolean)));
     const usersMap = {};
-    if (creatorIds.length) {
+    if (allCreatorIds.length) {
       try {
-        const snaps = await Promise.all(creatorIds.map(id => getDoc(doc(db, 'users', id))));
-        snaps.forEach(s => { if (s.exists()) { const u = s.data(); usersMap[s.id] = u.username || u.displayName || u.email || 'Unknown'; } });
-      } catch {}
+        const snaps = await Promise.all(allCreatorIds.map(id => getDoc(doc(db, 'users', id))));
+        snaps.forEach(snap => {
+          if (snap.exists()) {
+            const u = snap.data();
+            const name = u.username || u.displayName || u.name || (u.email ? u.email.split('@')[0] : null);
+            if (name) usersMap[snap.id] = name;
+          }
+        });
+      } catch(e) { console.warn('user lookup err', e); }
     }
-    setPublicGames(pubRaw.map(g => ({ ...g, creatorName: usersMap[g.creatorId] || 'Unknown' })));
+
+    // Write creatorName to every game that is missing it
+    const writes = [];
+    allGames.forEach(g => {
+      const name = usersMap[g.creatorId];
+      if (name && g.creatorName !== name) {
+        writes.push(updateDoc(doc(db, 'games', g.id), { creatorName: name }).catch(e => console.warn('write fail', g.id, e)));
+      }
+    });
+    if (writes.length) await Promise.all(writes);
+
+    // Display only published games
+    const pubGamesData = allGames
+      .filter(g => g.isPublished)
+      .map(g => ({ ...g, creatorName: usersMap[g.creatorId] || g.creatorName || 'Anonymous' }));
+    setPublicGames(pubGamesData);
   }, [navigation]);
 
   // Re-fetch every time the screen comes into focus (e.g. returning from CreateGameMenu)
@@ -212,7 +244,7 @@ export default function Dashboard({ navigation, route }) {
           <View style={S.publishedBadge}><Text style={S.badgeTxt}>Published</Text></View>
         )}
         <Text style={[S.gameTitle, { fontSize: Math.max(12, 14 * rs) }]} numberOfLines={2}>{item.title}</Text>
-        <Text style={[S.creatorTxt, { fontSize: Math.max(10, 12 * rs) }]} numberOfLines={1}>{item.creatorName || 'Unknown'}</Text>
+        <Text style={[S.creatorTxt, { fontSize: Math.max(10, 12 * rs) }]} numberOfLines={1}>{item.creatorName || 'Anonymous'}</Text>
         <Text style={[S.gameDetails, { fontSize: Math.max(10, 12 * rs) }]}>{item.numQuestions || 0} questions</Text>
         {isMine && (
           <TouchableOpacity
@@ -459,7 +491,7 @@ export default function Dashboard({ navigation, route }) {
                     <Text style={S.closePreview}>×</Text>
                   </TouchableOpacity>
                 </View>
-                <Text style={S.previewCreator}>{previewModal.game.creatorName || 'Unknown'}</Text>
+                <Text style={S.previewCreator}>{previewModal.game.creatorName || 'Anonymous'}</Text>
                 <Text style={S.previewQCount}>{previewModal.game.numQuestions || 0} questions</Text>
                 <View style={S.previewToggleRow}>
                   <Switch value={showAnswersInPreview} onValueChange={setShowAnswersInPreview} trackColor={{ false: '#333', true: '#00c781' }} thumbColor={showAnswersInPreview ? '#fff' : '#ccc'} />

@@ -15,6 +15,12 @@ import {
 import { db, auth } from "../firebaseConfig";
 import { doc, onSnapshot, updateDoc, runTransaction, getDoc, deleteField } from "firebase/firestore";
 
+// Dynamic BOARD_COLS: base 10, increases for very large boards
+function calcBoardCols(boardEnd) {
+  if (boardEnd <= 80) return 10;
+  if (boardEnd <= 120) return 12;
+  return 14;
+}
 const BOARD_COLS = 10;
 
 // ── Module-level shuffle helpers — defined here so onSnapshot closure is NEVER stale ──
@@ -234,41 +240,52 @@ function CannonTile({ sz }) {
 function SnakeTail({ size = 40 }) {
   const s = size;
   return (
-    <View style={{ width: s, height: s, alignItems: 'center', justifyContent: 'center' }}>
-      {/* Body connector */}
-      <View style={{
-        position: 'absolute', right: 0, top: s * 0.3,
-        width: s * 0.55, height: s * 0.4,
-        backgroundColor: '#27ae60', borderRadius: s * 0.06,
-      }} />
-      {/* Tapered tail tip pointing left */}
-      <View style={{
-        position: 'absolute', left: s * 0.04, top: s * 0.35,
-        width: 0, height: 0,
-        borderTopWidth: s * 0.15,
-        borderBottomWidth: s * 0.15,
-        borderRightWidth: s * 0.38,
-        borderTopColor: 'transparent',
-        borderBottomColor: 'transparent',
-        borderRightColor: '#2ecc71',
-      }} />
-      {/* Scale shine */}
-      <View style={{
-        position: 'absolute', right: s * 0.12, top: s * 0.32,
-        width: s * 0.22, height: s * 0.14,
-        backgroundColor: 'rgba(255,255,255,0.1)',
-        borderRadius: s * 0.06,
-      }} />
+    <View style={{ width: s, height: s, alignItems: 'center', justifyContent: 'center', overflow: 'visible' }}>
+      {/* Tail extends from tile's left edge all the way left */}
+      <View style={{ position: 'absolute', right: s * 0.35, flexDirection: 'row', alignItems: 'center' }}>
+        {/* Curvy tip — wavy S-shape made of overlapping ovals */}
+        <View style={{ width: s * 0.12, height: s * 0.1, borderRadius: s * 0.05,
+          backgroundColor: '#2ecc71', marginRight: -s * 0.02,
+          transform: [{rotate: '15deg'}] }}/>
+        <View style={{ width: s * 0.12, height: s * 0.12, borderRadius: s * 0.06,
+          backgroundColor: '#27ae60',
+          borderTopWidth: 1, borderTopColor: '#5ddb8a',
+          borderBottomWidth: 2, borderBottomColor: '#145a32',
+          marginRight: -s * 0.02,
+          transform: [{rotate: '-10deg'}] }}/>
+        {/* Thin neck */}
+        <View style={{ width: s * 0.14, height: s * 0.16,
+          borderRadius: s * 0.04,
+          backgroundColor: '#27ae60',
+          borderTopWidth: 1, borderTopColor: '#5ddb8a',
+          borderBottomWidth: 2, borderBottomColor: '#145a32',
+          marginRight: -s * 0.01 }}/>
+        {/* Mid taper */}
+        <View style={{ width: s * 0.18, height: s * 0.26,
+          borderRadius: s * 0.06,
+          backgroundColor: '#2ecc71',
+          borderTopWidth: 1.5, borderTopColor: '#5ddb8a',
+          borderBottomWidth: 3, borderBottomColor: '#145a32',
+          marginRight: -s * 0.02 }}/>
+        {/* Wide base connecting to tile */}
+        <View style={{ width: s * 0.26, height: s * 0.4,
+          borderRadius: s * 0.08,
+          backgroundColor: '#27ae60',
+          borderTopWidth: 2, borderTopColor: '#5ddb8a',
+          borderBottomWidth: 4, borderBottomColor: '#0d5c2a',
+          marginRight: -s * 0.03 }}/>
+      </View>
     </View>
   );
 }
 
-function buildSnakeRows(be) {
+function buildSnakeRows(be, cols) {
+  const C = cols || BOARD_COLS;
   const rows = [];
-  for (let r = 0; r <= be; r += BOARD_COLS) {
+  for (let r = 0; r <= be; r += C) {
     const row = [];
-    for (let t = r; t < r + BOARD_COLS && t <= be; t++) row.push(t);
-    if (Math.floor(r / BOARD_COLS) % 2 === 1) row.reverse();
+    for (let t = r; t < r + C && t <= be; t++) row.push(t);
+    if (Math.floor(r / C) % 2 === 1) row.reverse();
     rows.push(row);
   }
   return rows.reverse();
@@ -280,7 +297,8 @@ function SnakeBoard({ board, players, myPosition, myPlayerName, myPlayerColor, h
   const R  = sz * 0.42;  // very round
   const tp = sz + M * 2; // tile pitch
 
-  const rows  = buildSnakeRows(boardEnd);
+  const COLS  = calcBoardCols(boardEnd);
+  const rows  = buildSnakeRows(boardEnd, COLS);
   const nRows = rows.length;
 
   const playersAt = (i) => players.filter(p => (p.position||0) === i);
@@ -632,9 +650,9 @@ function SnakeBoard({ board, players, myPosition, myPlayerName, myPlayerColor, h
         {tileContent(i)}
         {here.length > 0 && (
           <>
-            {/* Red arrow above tile if I am here */}
+            {/* Red arrow above tile if I am here — zIndex 20 to be ABOVE mystery box */}
             {isMe && (
-              <View style={{position:'absolute',top:-sz*0.45,left:0,right:0,alignItems:'center'}}>
+              <View style={{position:'absolute',top:-sz*0.45,left:0,right:0,alignItems:'center',zIndex:20}}>
                 <View style={{width:0,height:0,
                   borderLeftWidth:sz*0.18,borderRightWidth:sz*0.18,borderTopWidth:sz*0.22,
                   borderLeftColor:'transparent',borderRightColor:'transparent',
@@ -669,9 +687,7 @@ function SnakeBoard({ board, players, myPosition, myPlayerName, myPlayerColor, h
   );
 
   // ── KEY FIX: all rows use paddingLeft=tp so tiles sit in cols 1..(BOARD_COLS)
-  //    Corners go at col 0 (left) or col BOARD_COLS+1 (right)
-  //    Container width = (BOARD_COLS+2)*tp, all rows SAME x alignment
-  const rowW = (BOARD_COLS + 2) * tp;
+  const rowW = (COLS + 2) * tp;
 
   return (
     <View style={{alignSelf:'center'}}>
@@ -791,7 +807,7 @@ export default function BoardGameScreen({ route, navigation }) {
 
   // Dynamic tile sizes — recalculate when window resizes (tab minimize/restore)
   const { width: winW, height: winH } = useWindowDimensions();
-  const tileByW    = Math.floor((winW - 32) / (BOARD_COLS + 1));
+  const tileByW    = Math.floor((winW - 32) / 17); // placeholder, recalculated after session loads
   const BASE_TILE  = Math.min(64, Math.max(28, tileByW));
   const HOST_TILE = Math.min(96, Math.max(48, Math.floor((winW * 0.65 - 32) / BOARD_COLS)));
   // Responsive scale: 1.0 on a comfortable 480×800 window, scales down linearly for smaller
@@ -815,6 +831,8 @@ export default function BoardGameScreen({ route, navigation }) {
   const curQ = (shuffledDeck && shuffledDeck.length > 0) ? (shuffledDeck[cycleIdx] ?? null) : null;
 
   const [selAns, setSelAns] = useState(null);
+  // Reset answer state whenever question index changes
+  useEffect(() => { setSelAns(null); setAnsFB(null); setMultiSelAnswers([]); }, [qIdx]);
   const [multiSelAnswers, setMultiSelAnswers] = useState([]);
   const [ansFB,  setAnsFB]  = useState(null);
 
@@ -910,6 +928,7 @@ export default function BoardGameScreen({ route, navigation }) {
   const [flashData,  setFlashData]  = useState(null);
   const [zoomImage,  setZoomImage]  = useState(null);
   const [gameOverDone, setGameOverDone] = useState(false);
+  const [showLeave,    setShowLeave]    = useState(false);
   const boardRef   = useRef(null);
   const sessionRef = useRef(null);
   const myStateRef = useRef(null);
@@ -1069,7 +1088,9 @@ export default function BoardGameScreen({ route, navigation }) {
     setAnsFB(null);
     setMultiSelAnswers([]);
     // When qIdx wraps to the start of a new cycle, build a completely fresh deck
+    // Also ensure the last question of prev cycle != first question of new cycle
     if (qIdx > 0 && qIdx % qList.length === 0) {
+      const lastQIdx = qList.length > 1 ? qList[(qIdx - 1) % qList.length]?.question : null;
       const randQ = sessionRef.current?.settings?.randomizeQuestions !== false;
       const randA = sessionRef.current?.settings?.randomizeAnswers   !== false;
       setShuffledDeck(buildFreshDeck(qList, randQ, randA));
@@ -1185,7 +1206,7 @@ export default function BoardGameScreen({ route, navigation }) {
       // FIX: actually remove from inventory — this was missing, causing infinite deflector
       removeFromInventory(item.id);
       setDeflectorActive(true);
-      setDeflectorSecsLeft(30);
+      setDeflectorCharges(2); setDeflectorSecsLeft(30);
       clearTimeout(deflectorTimerRef.current);
       clearInterval(deflectorSecsRef.current);
       deflectorTimerRef.current = setTimeout(() => { setDeflectorActive(false); setDeflectorSecsLeft(0); }, 30000);
@@ -1260,7 +1281,7 @@ export default function BoardGameScreen({ route, navigation }) {
     }
     switch (mBoxKey) {
       case "immunity": {
-        setImmunityLeft(2); setImmunitySecsLeft(45);
+        setImmunityLeft(2); setImmunitySecsLeft(30);
         clearTimeout(immunityTimerRef.current); clearInterval(immunitySecsRef.current);
         immunityTimerRef.current = setTimeout(() => { setImmunityLeft(0); setImmunitySecsLeft(0); }, 45000);
         immunitySecsRef.current  = setInterval(() => setImmunitySecsLeft(s => { if(s<=1){ clearInterval(immunitySecsRef.current); return 0; } return s-1; }), 1000);
@@ -1527,12 +1548,29 @@ export default function BoardGameScreen({ route, navigation }) {
     if (correct) {
       const ns = streak+1, nc = cc+1;
       setStreak(ns); setLuck(Math.min(40, ns>=2 ? luck+5 : luck));
-      setTotal(prev => { const next=prev+1; const trigger=isSolo?(Math.random()<0.30):(next%6===0); if(trigger) addToInventory("mystery_box","mystery box"); return next; });
+      // Write streak/luck to Firestore for host leaderboard
+      const newLuck = Math.min(40, ns>=2 ? luck+5 : luck);
+      if (sessionId && playerName) {
+        const sess = sessionRef.current;
+        if (sess?.players) {
+          const upd = sess.players.map(p => p.name===playerName ? {...p, streak:ns, luck:newLuck} : p);
+          updateDoc(doc(db,"gameSessions",sessionId), {players:upd}).catch(()=>{});
+        }
+      }
+      setTotal(prev => { const next=prev+1; const trigger=isSolo?(Math.random()<0.30):(next%6===0); if(trigger) { addToInventory("mystery_box","mystery box"); }
+      if (ns === 20) { addToInventory("nuke","Nuke — stuns ALL other players!"); } return next; });
       if (nc >= ROLL_AT) { setCc(0); setTimeout(() => { setPhaseSync("rolling"); setDiceValue(null); }, 1400); }
       else { setCc(nc); setTimeout(() => setQIdx(i => i+1), 1400); }
     } else {
       setStreak(0); setLuck(0);
       setTimeout(() => setQIdx(i => i+1), 1400);
+      if (sessionId && playerName) {
+        const sess = sessionRef.current;
+        if (sess?.players) {
+          const upd = sess.players.map(p => p.name===playerName ? {...p, streak:0, luck:0} : p);
+          updateDoc(doc(db,"gameSessions",sessionId), {players:upd}).catch(()=>{});
+        }
+      }
     }
   }, [streak, cc, luck, addToInventory, setPhaseSync]);
 
@@ -1762,7 +1800,7 @@ export default function BoardGameScreen({ route, navigation }) {
 
   const handleTrapFail = async () => {
     clearInterval(trapRef.current);
-    setTrapEvent(null); setPhaseSync("questions"); setDiceValue(null); setQIdx(i=>i+1);
+    setTrapEvent(null); setTimeout(()=>{ setPhaseSync("questions"); setDiceValue(null); setQIdx(i=>i+1); }, 1500);
     await updateDoc(doc(db,"gameSessions",sessionId), {
       [`activeStuns.${playerName}`]: { by: "Trap", id: Date.now() },
     }).catch(console.error);
@@ -1770,7 +1808,7 @@ export default function BoardGameScreen({ route, navigation }) {
 
   const resolveEvent = async (opts={}) => {
     clearInterval(trapRef.current);
-    setTrapEvent(null); setPhaseSync("questions"); setDiceValue(null); setQIdx(i=>i+1);
+    setTrapEvent(null); setTimeout(()=>{ setPhaseSync("questions"); setDiceValue(null); setQIdx(i=>i+1); }, 1500);
     if (trapEvent?.question && !opts.correct) {
       await updateDoc(doc(db,"gameSessions",sessionId), {
         [`activeStuns.${playerName}`]: { by: "Trap", id: Date.now() },
@@ -1832,22 +1870,44 @@ export default function BoardGameScreen({ route, navigation }) {
         <View style={S.hostBody}>
           <ScrollView ref={boardRef} style={{flex:1}} contentContainerStyle={{padding:12}}>
             <SnakeBoard board={board} players={players} myPosition={-1} myPlayerName={playerName} myPlayerColor={playerColor} highlightPos={null} boardEnd={boardEnd}
-              tileSize={Math.min(HOST_TILE, Math.floor((winH * 0.74) / (Math.ceil((boardEnd+1)/BOARD_COLS)+1)))}/>
+              tileSize={Math.min(Math.floor((winW-420)/(calcBoardCols(boardEnd)+2)), Math.floor((winH*0.88)/(Math.ceil((boardEnd+1)/calcBoardCols(boardEnd))+1)), 72)}/>
             <Legend/>
           </ScrollView>
           <View style={S.hostSide}>
             <Text style={S.lbTitle}>Leaderboard</Text>
             {sorted.slice(0,10).map((p,i)=>(
-              <View key={p.name} style={S.lbRow}>
-                <Text style={S.lbRank}>#{i+1}</Text>
-                <Pawn color={p.color||"#888"} size={26}/>
-                <Text style={S.lbName} numberOfLines={1}>{p.name}</Text>
-                <Text style={S.lbPos}>{p.position||0}/{boardEnd}</Text>
+              <View key={p.name} style={[S.lbRow,{paddingVertical:10,paddingHorizontal:12}]}>
+                <Text style={[S.lbRank,{fontSize:16,minWidth:32}]}>#{i+1}</Text>
+                <Pawn color={p.color||"#888"} size={24}/>
+                <View style={{flex:1,marginLeft:8,marginRight:8}}>
+                  <Text style={[S.lbName,{fontSize:14}]} numberOfLines={1}>{p.name}</Text>
+                  <View style={{flexDirection:"row",marginTop:2}}>
+                    <Text style={{color:"#f39c12",fontSize:11,marginRight:10}}>Streak x{p.streak||0}</Text>
+                    <Text style={{color:"#2ecc71",fontSize:11}}>Luck {p.luck||0}%</Text>
+                  </View>
+                </View>
+                <Text style={[S.lbPos,{fontSize:15,fontWeight:"bold"}]}>{p.position||0}/{boardEnd}</Text>
               </View>
             ))}
           </View>
         </View>
-        {session?.status==="ended"&&!gameOverDone&&<GameOverModal session={session} myPos={-1} boardEnd={boardEnd} onExit={()=>{setGameOverDone(true);exitGame();}}/>}
+        <Modal visible={showLeave} transparent animationType="fade">
+        <View style={S.mOverlay}>
+          <View style={S.mBox}>
+            <Text style={S.mTtl}>Leave Game?</Text>
+            <Text style={S.mDesc}>Are you sure you want to leave?</Text>
+            <View style={{flexDirection:"row",gap:12,marginTop:16}}>
+              <TouchableOpacity style={[S.rollBtn,{flex:1,backgroundColor:"#00c781"}]} onPress={()=>setShowLeave(false)}>
+                <Text style={S.rollTxtBig}>Stay</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[S.rollBtn,{flex:1,backgroundColor:"#c0392b"}]} onPress={()=>{setShowLeave(false);exitGame();}}>
+                <Text style={S.rollTxtBig}>Leave</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+      {session?.status==="ended"&&!gameOverDone&&<GameOverModal session={session} myPos={-1} boardEnd={boardEnd} onExit={()=>{setGameOverDone(true);exitGame();}}/>}
       </SafeAreaView>
     );
   }
@@ -1858,26 +1918,30 @@ export default function BoardGameScreen({ route, navigation }) {
   return (
     <SafeAreaView style={[S.container, isStunned&&S.containerStunned]}>
 
-      <View style={[S.hud, isStunned&&S.hudStunned, {paddingVertical:Math.max(6,12*rs),paddingHorizontal:Math.max(6,10*rs),gap:Math.max(4,6*rs)}]}>
-        {[["STREAK",streak>0?`x${streak}`:String(streak),streak>0?"#f39c12":null],
-          ["LUCK",`${dispLuck}%`,badLuck?"#e74c3c":null],
-          ["SPACE",`${myPos}/${boardEnd}`,playerColor],
-        ].map(([lbl,val,col])=>(
-          <View key={lbl} style={{alignItems:"center",paddingHorizontal:Math.max(4,7*rs),minWidth:Math.max(36,44*rs)}}>
-            <Text style={{color:"#555",fontSize:Math.max(8,10*rs),letterSpacing:1,fontWeight:"700"}}>{lbl}</Text>
-            <Text style={{color:col||"#fff",fontSize:Math.max(16,22*rs),fontWeight:"bold",marginTop:2}}>{val}</Text>
+      <View style={[S.hud, isStunned&&S.hudStunned, {paddingVertical:Math.max(6,10*rs),paddingHorizontal:Math.max(6,10*rs),flexWrap:"wrap",rowGap:6}]}>
+        {[["STREAK","x"+streak,streak>0?"#f39c12":"#888","streak"],
+          ["LUCK",`${dispLuck}%`,badLuck?"#e74c3c":"#2ecc71","luck"],
+          ["SPACE",`${myPos}/${boardEnd}`,playerColor,"space"],
+        ].map(([lbl,val,col,icon])=>(
+          <View key={lbl} style={{alignItems:"center",paddingHorizontal:Math.max(6,10*rs),minWidth:Math.max(48,58*rs)}}>
+            <Text style={{color:"#777",fontSize:Math.max(10,13*rs),letterSpacing:1,fontWeight:"800"}}>{lbl}</Text>
+            <Text style={{color:col||"#fff",fontSize:Math.max(20,28*rs),fontWeight:"bold",marginTop:2}}>{val}</Text>
           </View>
         ))}
-        {immunityLeft>0&&<View style={{alignItems:"center",paddingHorizontal:Math.max(3,6*rs)}}><Text style={{color:"#555",fontSize:Math.max(8,10*rs),fontWeight:"700"}}>SHIELD</Text><Text style={{color:"#2ecc71",fontSize:Math.max(12,18*rs),fontWeight:"bold",marginTop:2}}>{immunityLeft}·{immunitySecsLeft}s</Text></View>}
-        {deflectorActive&&<View style={{alignItems:"center",paddingHorizontal:Math.max(3,6*rs)}}><Text style={{color:"#555",fontSize:Math.max(8,10*rs),fontWeight:"700"}}>REFLECT</Text><Text style={{color:"#00bcd4",fontSize:Math.max(12,18*rs),fontWeight:"bold",marginTop:2}}>{deflectorSecsLeft}ss</Text></View>}
-        {doubleRollsLeft>0&&<View style={{alignItems:"center",paddingHorizontal:Math.max(3,6*rs)}}><Text style={{color:"#555",fontSize:Math.max(8,10*rs),fontWeight:"700"}}>2×ROLL</Text><Text style={{color:"#9b59b6",fontSize:Math.max(12,18*rs),fontWeight:"bold",marginTop:2}}>×{doubleRollsLeft}</Text></View>}
-        {gameLeft!=null&&<View style={{alignItems:"center",paddingHorizontal:Math.max(3,6*rs)}}><Text style={{color:"#555",fontSize:Math.max(8,10*rs),fontWeight:"700"}}>TIME</Text><Text style={{color:gameLeft<=30?"#e74c3c":"#fff",fontSize:Math.max(12,18*rs),fontWeight:"bold",marginTop:2}}>{formatTime(gameLeft)}</Text></View>}
-        <Pressable style={({hovered,pressed})=>[S.qBtn,phase==="questions"&&!showMap&&S.qBtnActive,{paddingHorizontal:Math.max(8,13*rs),paddingVertical:Math.max(6,10*rs)}, Platform.OS==='web'&&hovered&&{backgroundColor:'#002800',borderColor:'#00c781'}, pressed&&{opacity:0.8}]} onPress={forceQuestions}>
+        {immunityLeft>0&&<View style={{alignItems:"center",paddingHorizontal:Math.max(3,6*rs)}}><Text style={{color:"#555",fontSize:Math.max(10,13*rs),fontWeight:"800"}}>SHIELD</Text><Text style={{color:"#2ecc71",fontSize:Math.max(16,24*rs),fontWeight:"bold",marginTop:2}}>{immunityLeft}·{immunitySecsLeft}s</Text></View>}
+        {deflectorActive&&<View style={{alignItems:"center",paddingHorizontal:Math.max(3,6*rs)}}><Text style={{color:"#555",fontSize:Math.max(10,13*rs),fontWeight:"800"}}>REFLECT</Text><Text style={{color:"#00bcd4",fontSize:Math.max(12,18*rs),fontWeight:"bold",marginTop:2}}>{deflectorSecsLeft}ss</Text></View>}
+        {doubleRollsLeft>0&&<View style={{alignItems:"center",paddingHorizontal:Math.max(3,6*rs)}}><Text style={{color:"#555",fontSize:Math.max(10,13*rs),fontWeight:"800"}}>2×ROLL</Text><Text style={{color:"#9b59b6",fontSize:Math.max(12,18*rs),fontWeight:"bold",marginTop:2}}>×{doubleRollsLeft}</Text></View>}
+
+        <Pressable style={({hovered,pressed})=>[S.qBtn,phase==="questions"&&!showMap&&S.qBtnActive,{paddingHorizontal:Math.max(6,10*rs),paddingVertical:Math.max(4,7*rs)}, Platform.OS==='web'&&hovered&&{backgroundColor:'#002800',borderColor:'#00c781'}, pressed&&{opacity:0.8}]} onPress={forceQuestions}>
           <Text style={[S.qBtnTxt,{fontSize:Math.max(9,11*rs)}]}>Questions</Text>
         </Pressable>
-        <Pressable style={({hovered,pressed})=>[S.mapBtn,showMap&&S.mapBtnOn,{paddingHorizontal:Math.max(8,13*rs),paddingVertical:Math.max(6,10*rs)}, Platform.OS==='web'&&hovered&&{backgroundColor:'#001a12',borderColor:'#00c781'}, pressed&&{opacity:0.8}]} onPress={()=>setViewMode(v=>v==="map"?"questions":"map")}>
+        <Pressable style={({hovered,pressed})=>[S.mapBtn,showMap&&S.mapBtnOn,{paddingHorizontal:Math.max(6,10*rs),paddingVertical:Math.max(4,7*rs)}, Platform.OS==='web'&&hovered&&{backgroundColor:'#001a12',borderColor:'#00c781'}, pressed&&{opacity:0.8}]} onPress={()=>setViewMode(v=>v==="map"?"questions":"map")}>
           <Text style={[S.mapBtnTxt,{fontSize:Math.max(10,13*rs)}]}>Map</Text>
         </Pressable>
+        {gameLeft!=null&&<View style={{alignItems:"center",paddingHorizontal:Math.max(4,8*rs)}}><Text style={{color:"#777",fontSize:Math.max(9,11*rs),fontWeight:"800"}}>TIME</Text><Text style={{color:gameLeft<=30?"#e74c3c":"#fff",fontSize:Math.max(16,22*rs),fontWeight:"bold"}}>{formatTime(gameLeft)}</Text></View>}
+        <TouchableOpacity style={{backgroundColor:"#2a0000",borderRadius:8,paddingHorizontal:Math.max(8,12*rs),paddingVertical:Math.max(4,7*rs),borderWidth:1,borderColor:"#5a0000",marginLeft:"auto"}} onPress={()=>setShowLeave(true)}>
+          <Text style={{color:"#ff6b6b",fontSize:Math.max(10,12*rs),fontWeight:"bold"}}>Leave</Text>
+        </TouchableOpacity>
         {hostIsPlaying&&<TouchableOpacity style={[S.hudEndBtn,{paddingHorizontal:Math.max(8,12*rs),paddingVertical:Math.max(6,10*rs)}]} onPress={async()=>{await updateDoc(doc(db,"gameSessions",sessionId),{status:"ended"}).catch(console.error);exitGame();}}><Text style={[S.hudEndBtnTxt,{fontSize:Math.max(10,13*rs)}]}>End</Text></TouchableOpacity>}
       </View>
 
@@ -1891,7 +1955,7 @@ export default function BoardGameScreen({ route, navigation }) {
         {showMap && (
           <View style={{flex:1, alignItems:"center", justifyContent:"center", overflow:"hidden"}}>
             <SnakeBoard board={board} players={players} myPosition={myPos} myPlayerName={playerName} myPlayerColor={playerColor} highlightPos={highlightPos} boardEnd={boardEnd}
-              tileSize={Math.min(BASE_TILE, Math.floor((winH * 0.74) / (Math.ceil((boardEnd+1)/BOARD_COLS)+1)))}/>
+              tileSize={Math.min(Math.floor((winW-32)/(calcBoardCols(boardEnd)+2)), Math.floor((winH*0.78)/(Math.ceil((boardEnd+1)/calcBoardCols(boardEnd))+1)), 72)}/>
             <Legend/>
           </View>
         )}
@@ -2363,7 +2427,23 @@ export default function BoardGameScreen({ route, navigation }) {
         </Animated.View>
       )}
 
-      <TouchableOpacity style={S.leaveBtn} onPress={handleLeave}><Text style={S.leaveBtnTxt}>Leave</Text></TouchableOpacity>
+      {/* Leave confirmation modal — PLAYER VIEW */}
+      <Modal visible={showLeave} transparent animationType="fade">
+        <View style={S.mOverlay}>
+          <View style={S.mBox}>
+            <Text style={S.mTtl}>Leave Game?</Text>
+            <Text style={S.mDesc}>Are you sure you want to leave?</Text>
+            <View style={{flexDirection:"row",gap:12,marginTop:16}}>
+              <TouchableOpacity style={[S.rollBtn,{flex:1,backgroundColor:"#00c781"}]} onPress={()=>setShowLeave(false)}>
+                <Text style={S.rollTxtBig}>Stay</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[S.rollBtn,{flex:1,backgroundColor:"#c0392b"}]} onPress={()=>{setShowLeave(false);exitGame();}}>
+                <Text style={S.rollTxtBig}>Leave</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
     </SafeAreaView>
   );
@@ -2516,7 +2596,7 @@ const S = StyleSheet.create({
   endBtn:     { backgroundColor:"#c0392b", paddingVertical:10, paddingHorizontal:22, borderRadius:12 },
   endBtnTxt:  { color:"#fff", fontWeight:"bold", fontSize:15 },
   hostBody:   { flex:1, flexDirection:"row" },
-  hostSide:   { width:380, backgroundColor:"#0a0a0a", padding:24, borderLeftWidth:1, borderLeftColor:"#222" },
+  hostSide:   { width:400, backgroundColor:"#0a0a0a", padding:20, borderLeftWidth:1, borderLeftColor:"#222" },
   lbTitle:    { color:"#00c781", fontSize:32, fontWeight:"bold", marginBottom:24 },
   lbRow:      { flexDirection:"row", alignItems:"center", paddingVertical:18, borderBottomWidth:1, borderBottomColor:"#1a1a1a" },
   lbRank:     { color:"#fff", width:60, fontSize:28, fontWeight:"bold" },

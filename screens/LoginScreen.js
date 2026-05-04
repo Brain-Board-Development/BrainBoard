@@ -99,10 +99,10 @@ export default function LoginScreen({ navigation }) {
           />
           {!!identifierError && <Text style={S.err}>{identifierError}</Text>}
 
-          <View style={S.pwRow}>
+          <View style={{ backgroundColor: "#1e1e1e", borderRadius: 10, borderWidth: 2, borderColor: borderColor(password, passwordError), marginBottom: 10, width: "100%", flexDirection: "row", alignItems: "center", paddingLeft: 14, paddingRight: 4 }}>
             <TextInput
               ref={passwordRef}
-              style={[S.input, { borderColor: borderColor(password, passwordError), flex: 1 }]}
+              style={{ flex: 1, color: "#fff", fontSize: 16, paddingVertical: 12 }}
               placeholder="Password" placeholderTextColor="#888"
               secureTextEntry={!showPassword}
               value={password} onChangeText={v => { setPassword(v); validatePassword(v); }}
@@ -152,8 +152,8 @@ const S = StyleSheet.create({
   form:      { maxWidth: 400, marginBottom: 10 },
   input:     { backgroundColor: "#1e1e1e", borderRadius: 10, paddingHorizontal: 14, paddingVertical: 12, color: "#fff", fontSize: 16, borderWidth: 2, marginBottom: 10, width: "100%" },
   pwRow:     { flexDirection: "row", alignItems: "center", marginBottom: 4 },
-  eyeBtn:    { paddingLeft: 10, paddingVertical: 12 },
-  eyeTxt:    { fontSize: 18 },
+  eyeBtn:    { backgroundColor: "#1a3d2a", borderRadius: 8, paddingHorizontal: 14, paddingVertical: 8, marginRight: 6 },
+  eyeTxt:    { color: "#00c781", fontSize: 14, fontWeight: "bold", letterSpacing: 0.5 },
   err:       { color: "#ff4d4d", fontSize: 12, marginBottom: 6 },
   link:      { color: "#00c781", fontSize: 14, fontWeight: "bold" },
   btn:       { backgroundColor: "#00c781", paddingVertical: 14, paddingHorizontal: 24, borderRadius: 10, alignItems: "center", maxWidth: 400, marginVertical: 4 },
