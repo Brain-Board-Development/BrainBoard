@@ -24,7 +24,7 @@ function calcTileSize(boardEnd, screenW, screenH, isHost) {
   const nRows = Math.ceil((boardEnd + 1) / COLS);
   const totalVisualRows = nRows + Math.max(0, nRows - 1);
   
-  const reservedH = isHost ? 60 : 260;
+  const reservedH = isHost ? 60 : 300;
   const availH = screenH - reservedH;
   const availW = isHost ? (screenW - 660) : (screenW - 16);
   
@@ -1061,25 +1061,35 @@ export default function BoardGameScreen({ route, navigation }) {
       ));
 
       if (myStunEntry) {
-        if (!activeStunRef.current) {
+        const stunId = myStunEntry.id || 0;
+        if (!activeStunRef.current || activeStunRef.current !== stunId) {
           // Newly stunned — fire exactly once per stun event
-          activeStunRef.current = true;
-          if (duelActive) {
-            // 1v1 is running — queue stun, show after duel ends
+          activeStunRef.current = stunId;
+          if (duelActive && myStunEntry.reason !== "nuke") {
+            // Regular stun during 1v1 — queue, show after duel ends
             setPendingStun(myStunEntry);
           } else {
+            // Nuke stun or no duel — apply immediately
+            if (duelActive) {
+              // Force exit duel — nuke cancels everything
+              clearInterval(duelCountdownRef.current);
+              setDuelCountdown(null);
+              setDuelView("active");
+              duelSeenRef.current = false;
+            }
             setIsStunned(true);
             setStunBy(myStunEntry.by || "");
             setStunRecovery(0);
             setStunQIdx(0);
             setStunSelAns(null);
+            setPhaseSync("questions");
           }
         }
         // If already stunned (activeStunRef.current === true), do nothing — don't reset counters
       } else {
         if (activeStunRef.current) {
           // Stun cleared in Firestore
-          activeStunRef.current = false;
+          activeStunRef.current = null;
           setIsStunned(false);
           setPendingStun(null);
         }
@@ -1124,13 +1134,42 @@ export default function BoardGameScreen({ route, navigation }) {
             setDuelCountdown(null);
             setDuelView("done");
             setPhaseSync("duel");
+            // Auto-dismiss after 8 seconds — only set ONCE
+            if (!duelAutoDismissRef.current) {
+              duelAutoDismissRef.current = setTimeout(() => {
+                duelAutoDismissRef.current = null;
+                const curSess = sessionRef.current;
+                if (curSess?.activeDuel?.status === "done") {
+                  updateDoc(doc(db,"gameSessions",sessionId), {activeDuel:null}).catch(()=>{});
+                  setDuelView("active");
+                  setPhaseSync("questions");
+                  setQIdx(i => i+1);
+                }
+              }, 8000);
+            }
           }
         }
       } else {
-        duelSeenRef.current = false;
-        clearInterval(duelCountdownRef.current);
-        setDuelCountdown(null);
-        setDuelView("active");
+        // Duel ended or was canceled (e.g. by nuke)
+        clearTimeout(duelAutoDismissRef.current);
+        duelAutoDismissRef.current = null;
+        if (duelSeenRef.current) {
+          // Was in a duel that just got cleared — return to questions
+          duelSeenRef.current = false;
+          clearInterval(duelCountdownRef.current);
+          setDuelCountdown(null);
+          setDuelView("active");
+          // Only transition if we're still in duel phase
+          if (phaseRef.current === "duel") {
+            setPhaseSync("questions");
+            setQIdx(i => i+1);
+          }
+        } else {
+          duelSeenRef.current = false;
+          clearInterval(duelCountdownRef.current);
+          setDuelCountdown(null);
+          setDuelView("active");
+        }
       }
     });
   }, [sessionId, playerName, playerUid, isHost, hostIsPlaying]);
@@ -1227,7 +1266,28 @@ export default function BoardGameScreen({ route, navigation }) {
     clearInterval(trapRef.current); setTrapEvent(null); setTrapAnswered(false);
   }, [setPhaseSync]);
 
-  const exitMoving = () => { setPhaseSync("rolled"); setDiceValue(null); };
+  const exitMoving = () => {
+    if (!isStunned) {
+      setPhaseSync("rolled");
+      // Auto-return to questions after showing the result briefly
+      setTimeout(() => {
+        if (phaseRef.current === "rolled") {
+          setPhaseSync("questions");
+          setDiceValue(null);
+          setQIdx(i => i+1);
+        }
+      }, 1800);
+    }
+    setDiceValue(null);
+  };
+  
+  // Clean up trap timer when phase changes away from trap
+  useEffect(() => {
+    if (trapEvent === null) {
+      clearInterval(trapRef.current);
+    }
+    return () => clearInterval(trapRef.current);
+  }, [trapEvent]);
 
   const showItemToast = useCallback((type, reason) => {
     const def = INVENTORY_DEFS[type];
@@ -1279,7 +1339,7 @@ export default function BoardGameScreen({ route, navigation }) {
             ? {...p, notification: nukeNotif}
             : {...p, notification: {...nukeNotif, text: "You were NUKED by " + playerName + "! 💥"}}
         );
-        const duelCancel = sess.activeDuel?.status === "active" ? {activeDuel: null} : {};
+        const duelCancel = sess.activeDuel ? {activeDuel: null} : {};
         updateDoc(doc(db, "gameSessions", sessionId), {players: updP, ...stunWrites, ...duelCancel}).catch(console.error);
       }
       setNotif("💥 NUKE deployed! All players stunned!");
@@ -1580,11 +1640,16 @@ export default function BoardGameScreen({ route, navigation }) {
       }
     }
 
-    if (ad[othKey]) {
-      await updateDoc(doc(db,"gameSessions",sessionId), {activeDuel:null}).catch(console.error);
-    } else {
-      await updateDoc(doc(db,"gameSessions",sessionId), {[`activeDuel.${myKey}`]:true}).catch(console.error);
-    }
+    // Mark ourselves as dismissed
+    await updateDoc(doc(db,"gameSessions",sessionId), {[`activeDuel.${myKey}`]:true}).catch(console.error);
+    // Check fresh data to see if other player already dismissed
+    try {
+      const freshSnap = await getDoc(doc(db,"gameSessions",sessionId));
+      const freshAd = freshSnap.data()?.activeDuel;
+      if (freshAd && freshAd[othKey]) {
+        await updateDoc(doc(db,"gameSessions",sessionId), {activeDuel:null}).catch(console.error);
+      }
+    } catch(e) { console.warn("dismiss check failed", e); }
     setDuelView("active");
     // Brief pause so the transition doesn't feel jarring
     setTimeout(() => {
@@ -1871,7 +1936,10 @@ export default function BoardGameScreen({ route, navigation }) {
 
   const handleTrapFail = async () => {
     clearInterval(trapRef.current);
-    setTrapEvent(null); setPhaseSync("trap_escaped");
+    setTrapEvent(null);
+    // Go straight to stun — no "Escaped!" screen for failures
+    setPhaseSync("questions");
+    setDiceValue(null);
     await updateDoc(doc(db,"gameSessions",sessionId), {
       [`activeStuns.${playerName}`]: { by: "Trap", id: Date.now() },
     }).catch(console.error);
@@ -1879,11 +1947,16 @@ export default function BoardGameScreen({ route, navigation }) {
 
   const resolveEvent = async (opts={}) => {
     clearInterval(trapRef.current);
-    setTrapEvent(null); setPhaseSync("trap_escaped");
+    setTrapEvent(null);
     if (trapEvent?.question && !opts.correct) {
+      // Wrong answer — go directly to questions, stun will kick in from Firestore
+      setPhaseSync("questions"); setDiceValue(null);
       await updateDoc(doc(db,"gameSessions",sessionId), {
         [`activeStuns.${playerName}`]: { by: "Trap", id: Date.now() },
       }).catch(console.error);
+    } else {
+      // Correct — show "Escaped!" screen
+      setPhaseSync("trap_escaped");
     }
   };
 
@@ -2072,7 +2145,7 @@ export default function BoardGameScreen({ route, navigation }) {
 
       <View style={S.main}>
         {showMap && (
-          <ScrollView style={{flex:1}} contentContainerStyle={{alignItems:"center", justifyContent:"center", flexGrow:1, paddingVertical:4}}>
+          <ScrollView style={{flex:1, maxHeight: winH - 300}} contentContainerStyle={{alignItems:"center", justifyContent:"center", flexGrow:1, paddingVertical:4}}>
             <SnakeBoard board={board} players={players} myPosition={myPos} myPlayerName={playerName} myPlayerColor={playerColor} highlightPos={highlightPos} boardEnd={boardEnd}
               tileSize={calcTileSize(boardEnd, winW, winH, false)}/>
             <Legend/>
@@ -2679,7 +2752,7 @@ const S = StyleSheet.create({
   legendItem: { flexDirection:"row", alignItems:"center", gap:5 },
   legendSwatch:{ width:16, height:16, borderRadius:3, borderWidth:1.5 },
   legendTxt:  { fontSize:12, fontWeight:"600" },
-  diceBox:    { alignItems:"center", justifyContent:"center", gap:8, backgroundColor:"#111", paddingVertical:10, paddingHorizontal:16, paddingBottom:64 },
+  diceBox:    { alignItems:"center", justifyContent:"center", gap:6, backgroundColor:"#111", paddingVertical:8, paddingHorizontal:16, paddingBottom:56 },
   diceTtl:    { color:"#fff", fontSize:26, fontWeight:"bold", textAlign:"center" },
   luckTxt:    { color:"#888", fontSize:13, textAlign:"center" },
   diceFace:   { fontSize:72, color:"#fff" },
@@ -2691,7 +2764,7 @@ const S = StyleSheet.create({
   rolledBox:  { flex:1, alignItems:"center", justifyContent:"center", gap:16, backgroundColor:"#0d0d0d" },
   rolledEmoji:{ fontSize:64 },
   rolledTtl:  { color:"#fff", fontSize:26, fontWeight:"bold" },
-  hotbar:     { position:"absolute", bottom:0, left:0, right:0, flexDirection:"row", alignItems:"center", justifyContent:"center", gap:6, paddingVertical:5, paddingHorizontal:8, paddingBottom:8, backgroundColor:"rgba(0,0,0,0.95)", borderTopWidth:1, borderTopColor:"#333" },
+  hotbar:     { position:"absolute", bottom:0, left:0, right:0, flexDirection:"row", alignItems:"center", justifyContent:"center", gap:4, paddingVertical:3, paddingHorizontal:8, paddingBottom:4, backgroundColor:"rgba(0,0,0,0.95)", borderTopWidth:1, borderTopColor:"#333" },
   hotbarSlot: { flex:1, maxWidth:100, height:46, borderRadius:10, backgroundColor:"#1a1a1a", borderWidth:1.5, borderColor:"#333", alignItems:"center", justifyContent:"center", flexDirection:"row", gap:4 },
   hotbarSlotFull: { backgroundColor:"#1e1a00" },
   hotbarEmoji:{ fontSize:18 },
