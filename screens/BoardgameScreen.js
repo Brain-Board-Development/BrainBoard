@@ -15,13 +15,25 @@ import {
 import { db, auth } from "../firebaseConfig";
 import { doc, onSnapshot, updateDoc, runTransaction, getDoc, deleteField } from "firebase/firestore";
 
-// Dynamic BOARD_COLS: base 10, increases for very large boards
-function calcBoardCols(boardEnd) {
-  if (boardEnd <= 80) return 10;
-  if (boardEnd <= 120) return 12;
-  return 14;
+const BOARD_COLS = 20;
+function calcBoardCols(boardEnd) { return BOARD_COLS; }
+
+// Auto-compute tile size so board + roll button always fit on screen
+function calcTileSize(boardEnd, screenW, screenH, isHost) {
+  const COLS = calcBoardCols(boardEnd);
+  const nRows = Math.ceil((boardEnd + 1) / COLS);
+  const totalVisualRows = nRows + Math.max(0, nRows - 1);
+  
+  const reservedH = isHost ? 60 : 260;
+  const availH = screenH - reservedH;
+  const availW = isHost ? (screenW - 660) : (screenW - 16);
+  
+  const tileByH = Math.floor(availH / (totalVisualRows * 1.07));
+  const tileByW = Math.floor(availW / ((COLS + 2) * 1.07));
+  
+  // Higher caps for bigger tiles
+  return Math.max(18, Math.min(tileByW, tileByH, isHost ? 90 : 90));
 }
-const BOARD_COLS = 10;
 
 // ── Module-level shuffle helpers — defined here so onSnapshot closure is NEVER stale ──
 function fyShuffleArr(arr) {
@@ -79,7 +91,8 @@ const SOLO_MYSTERY_KEYS = Object.keys(SOLO_MYSTERY_DEFS);
 
 const INVENTORY_DEFS = {
   mystery_box: { emoji:"", label:"Mystery Box", desc:"Open for a random effect" },
-  deflector:   { emoji:"", label:"Deflector",   desc:"Reflect next effect (30 s)" },
+  deflector:   { emoji:"🛡", label:"Deflector",   desc:"Reflect next effect (30 s)" },
+  nuke:        { emoji:"💥", label:"NUKE",        desc:"Stun ALL other players!" },
 };
 
 const DICE_EMOJI = ["⚀","⚁","⚂","⚃","⚄","⚅"];
@@ -239,41 +252,36 @@ function CannonTile({ sz }) {
 // ── Snake tail — simple tapered tail pointing LEFT (tile 0) ─────────────────
 function SnakeTail({ size = 40 }) {
   const s = size;
+  // Tail is ~60% of tile height, extends ~80% of tile width to the left
   return (
     <View style={{ width: s, height: s, alignItems: 'center', justifyContent: 'center', overflow: 'visible' }}>
-      {/* Tail extends from tile's left edge all the way left */}
-      <View style={{ position: 'absolute', right: s * 0.35, flexDirection: 'row', alignItems: 'center' }}>
-        {/* Curvy tip — wavy S-shape made of overlapping ovals */}
-        <View style={{ width: s * 0.12, height: s * 0.1, borderRadius: s * 0.05,
-          backgroundColor: '#2ecc71', marginRight: -s * 0.02,
-          transform: [{rotate: '15deg'}] }}/>
+      <View style={{ position: 'absolute', right: s * 0.92, flexDirection: 'row', alignItems: 'center' }}>
+        {/* Wavy tip */}
         <View style={{ width: s * 0.12, height: s * 0.12, borderRadius: s * 0.06,
+          backgroundColor: '#2ecc71', transform: [{rotate: '15deg'}] }}/>
+        <View style={{ width: s * 0.14, height: s * 0.15, borderRadius: s * 0.07,
           backgroundColor: '#27ae60',
-          borderTopWidth: 1, borderTopColor: '#5ddb8a',
-          borderBottomWidth: 2, borderBottomColor: '#145a32',
-          marginRight: -s * 0.02,
-          transform: [{rotate: '-10deg'}] }}/>
-        {/* Thin neck */}
-        <View style={{ width: s * 0.14, height: s * 0.16,
-          borderRadius: s * 0.04,
+          borderTopWidth: 1.5, borderTopColor: '#5ddb8a',
+          borderBottomWidth: 2.5, borderBottomColor: '#145a32',
+          marginLeft: -s * 0.02, transform: [{rotate: '-8deg'}] }}/>
+        {/* Neck */}
+        <View style={{ width: s * 0.18, height: s * 0.22, borderRadius: s * 0.06,
           backgroundColor: '#27ae60',
-          borderTopWidth: 1, borderTopColor: '#5ddb8a',
-          borderBottomWidth: 2, borderBottomColor: '#145a32',
-          marginRight: -s * 0.01 }}/>
-        {/* Mid taper */}
-        <View style={{ width: s * 0.18, height: s * 0.26,
-          borderRadius: s * 0.06,
-          backgroundColor: '#2ecc71',
           borderTopWidth: 1.5, borderTopColor: '#5ddb8a',
           borderBottomWidth: 3, borderBottomColor: '#145a32',
-          marginRight: -s * 0.02 }}/>
-        {/* Wide base connecting to tile */}
-        <View style={{ width: s * 0.26, height: s * 0.4,
-          borderRadius: s * 0.08,
-          backgroundColor: '#27ae60',
+          marginLeft: -s * 0.02 }}/>
+        {/* Mid body */}
+        <View style={{ width: s * 0.22, height: s * 0.34, borderRadius: s * 0.08,
+          backgroundColor: '#2ecc71',
           borderTopWidth: 2, borderTopColor: '#5ddb8a',
-          borderBottomWidth: 4, borderBottomColor: '#0d5c2a',
-          marginRight: -s * 0.03 }}/>
+          borderBottomWidth: 4, borderBottomColor: '#145a32',
+          marginLeft: -s * 0.03 }}/>
+        {/* Wide base — connects flush to tile 0 */}
+        <View style={{ width: s * 0.28, height: s * 0.48, borderRadius: s * 0.1,
+          backgroundColor: '#27ae60',
+          borderTopWidth: 2.5, borderTopColor: '#5ddb8a',
+          borderBottomWidth: 5, borderBottomColor: '#0d5c2a',
+          marginLeft: -s * 0.04 }}/>
       </View>
     </View>
   );
@@ -547,56 +555,30 @@ function SnakeBoard({ board, players, myPosition, myPlayerName, myPlayerColor, h
     );
 
     if (type === 'mystery') return (
-      // Mystery box 25% bigger, floats higher above tile
       <View style={{position:'absolute', top:-sz*0.36, left:0, right:0,
         alignItems:'center', zIndex:10}}>
-        {/* Flat ellipse shadow on tile surface */}
-        <View style={{position:'absolute', bottom:-sz*0.22,
-          width:sz*0.44, height:sz*0.09,
-          borderRadius:sz*0.045,
-          backgroundColor:'rgba(0,0,0,0.55)',
-          opacity:0.55}}/>
+        {/* Ellipse shadow */}
+        <View style={{position:'absolute', bottom:-sz*0.16,
+          width:sz*0.44, height:sz*0.1,
+          borderRadius:sz*0.05,
+          backgroundColor:'rgba(60,10,120,0.5)'}}/>
 
-        {/* 3D CUBE — 25% bigger */}
+
+        {/* 3D CUBE — faces overlap slightly to eliminate gaps */}
         <View style={{width:sz*0.58, height:sz*0.55, position:'relative'}}>
 
-          {/* TOP FACE — horizontal diamond */}
-          <View style={{position:'absolute', top:0, left:sz*0.05,
-            width:sz*0.48, height:sz*0.225}}>
-            <View style={{position:'absolute', top:0, left:0,
-              width:0, height:0,
-              borderRightWidth:sz*0.24, borderTopWidth:sz*0.1125,
-              borderRightColor:'#e9d5ff', borderTopColor:'transparent'}}/>
-            <View style={{position:'absolute', bottom:0, left:0,
-              width:0, height:0,
-              borderRightWidth:sz*0.24, borderBottomWidth:sz*0.1125,
-              borderRightColor:'#ddd6fe', borderBottomColor:'transparent'}}/>
-            <View style={{position:'absolute', top:0, right:0,
-              width:0, height:0,
-              borderLeftWidth:sz*0.24, borderTopWidth:sz*0.1125,
-              borderLeftColor:'#c4b5fd', borderTopColor:'transparent'}}/>
-            <View style={{position:'absolute', bottom:0, right:0,
-              width:0, height:0,
-              borderLeftWidth:sz*0.24, borderBottomWidth:sz*0.1125,
-              borderLeftColor:'#a78bfa', borderBottomColor:'transparent'}}/>
-            <View style={{position:'absolute', top:sz*0.05, left:sz*0.08,
-              width:sz*0.04, height:sz*0.04, borderRadius:sz*0.02,
-              backgroundColor:'rgba(255,255,255,0.9)'}}/>
-          </View>
-
-          {/* LEFT FACE */}
-          <View style={{position:'absolute', top:sz*0.19, left:sz*0.05,
-            width:sz*0.24, height:sz*0.33,
+          {/* LEFT FACE — drawn first, slightly wider to fill gap */}
+          <View style={{position:'absolute', top:sz*0.17, left:sz*0.04,
+            width:sz*0.26, height:sz*0.36,
             backgroundColor:'#a78bfa',
             transform:[{skewY:'30deg'}],
-            borderTopWidth:1, borderTopColor:'#d8b4fe',
             borderLeftWidth:2, borderLeftColor:'#9333ea',
             borderBottomWidth:3, borderBottomColor:'#5b21b6',
             overflow:'hidden'}}>
             <View style={{position:'absolute', top:sz*0.05, left:sz*0.05,
               width:sz*0.025, height:sz*0.025, borderRadius:sz*0.012,
               backgroundColor:'rgba(255,182,193,0.7)'}}/>
-            <View style={{position:'absolute', top:sz*0.15, left:sz*0.11,
+            <View style={{position:'absolute', top:sz*0.16, left:sz*0.11,
               width:sz*0.022, height:sz*0.022, borderRadius:sz*0.011,
               backgroundColor:'rgba(135,206,250,0.7)'}}/>
             <View style={{position:'absolute', bottom:sz*0.05, left:sz*0.06,
@@ -604,18 +586,17 @@ function SnakeBoard({ board, players, myPosition, myPlayerName, myPlayerColor, h
               backgroundColor:'rgba(255,255,255,0.5)'}}/>
           </View>
 
-          {/* RIGHT FACE */}
-          <View style={{position:'absolute', top:sz*0.19, right:sz*0.05,
-            width:sz*0.24, height:sz*0.33,
+          {/* RIGHT FACE — overlaps left face center by 1-2px */}
+          <View style={{position:'absolute', top:sz*0.17, right:sz*0.04,
+            width:sz*0.26, height:sz*0.36,
             backgroundColor:'#9333ea',
             transform:[{skewY:'-30deg'}],
-            borderTopWidth:1, borderTopColor:'#c4b5fd',
             borderRightWidth:2, borderRightColor:'#5b21b6',
             borderBottomWidth:3, borderBottomColor:'#3b0764',
             alignItems:'center', justifyContent:'center',
             overflow:'hidden'}}>
             <Text style={{transform:[{skewY:'30deg'}],
-              color:'#fff', fontSize:sz*0.2, fontWeight:'900',
+              color:'#fff', fontSize:sz*0.22, fontWeight:'900',
               textShadowColor:'rgba(40,20,100,0.9)',
               textShadowOffset:{width:1,height:1}, textShadowRadius:2}}>?</Text>
             <View style={{position:'absolute', top:sz*0.05, right:sz*0.05,
@@ -626,10 +607,39 @@ function SnakeBoard({ board, players, myPosition, myPlayerName, myPlayerColor, h
               backgroundColor:'rgba(173,216,230,0.6)'}}/>
           </View>
 
-          {/* Center edge line */}
-          <View style={{position:'absolute', top:sz*0.19,
-            width:1.5, height:sz*0.3,
-            backgroundColor:'rgba(60,30,100,0.5)'}}/>
+          {/* TOP FACE — diamond, drawn LAST so it covers the top edges of both faces */}
+          <View style={{position:'absolute', top:0, left:sz*0.04,
+            width:sz*0.5, height:sz*0.24}}>
+            {/* Upper-left quadrant */}
+            <View style={{position:'absolute', top:0, left:0,
+              width:0, height:0,
+              borderRightWidth:sz*0.25, borderTopWidth:sz*0.12,
+              borderRightColor:'#e9d5ff', borderTopColor:'transparent'}}/>
+            {/* Lower-left quadrant */}
+            <View style={{position:'absolute', bottom:0, left:0,
+              width:0, height:0,
+              borderRightWidth:sz*0.25, borderBottomWidth:sz*0.12,
+              borderRightColor:'#ddd6fe', borderBottomColor:'transparent'}}/>
+            {/* Upper-right quadrant */}
+            <View style={{position:'absolute', top:0, right:0,
+              width:0, height:0,
+              borderLeftWidth:sz*0.25, borderTopWidth:sz*0.12,
+              borderLeftColor:'#c4b5fd', borderTopColor:'transparent'}}/>
+            {/* Lower-right quadrant */}
+            <View style={{position:'absolute', bottom:0, right:0,
+              width:0, height:0,
+              borderLeftWidth:sz*0.25, borderBottomWidth:sz*0.12,
+              borderLeftColor:'#b794f4', borderBottomColor:'transparent'}}/>
+            {/* Shine dot */}
+            <View style={{position:'absolute', top:sz*0.05, left:sz*0.1,
+              width:sz*0.04, height:sz*0.04, borderRadius:sz*0.02,
+              backgroundColor:'rgba(255,255,255,0.9)'}}/>
+          </View>
+
+          {/* Center vertical edge — thin dark line where faces meet */}
+          <View style={{position:'absolute', top:sz*0.19, alignSelf:'center',
+            width:1.5, height:sz*0.32,
+            backgroundColor:'rgba(40,15,80,0.6)'}}/>
         </View>
       </View>
     );
@@ -686,7 +696,7 @@ function SnakeBoard({ board, players, myPosition, myPlayerName, myPlayerColor, h
       borderBottomColor:'#0d5c2a',borderRightColor:'#176b33'}}/>
   );
 
-  // ── KEY FIX: all rows use paddingLeft=tp so tiles sit in cols 1..(BOARD_COLS)
+  // ── KEY FIX: all rows use paddingLeft=tp so tiles sit in cols 1..(COLS)
   const rowW = (COLS + 2) * tp;
 
   return (
@@ -708,10 +718,10 @@ function SnakeBoard({ board, players, myPosition, myPlayerName, myPlayerColor, h
         const belowRowIndex = nRows - 2 - ri;
         const belowEndsRight = belowRowIndex % 2 === 0;
 
-        // ALL rows occupy the SAME horizontal span: cols 1 through BOARD_COLS.
+        // ALL rows occupy the SAME horizontal span: cols 1 through COLS.
         // All use paddingLeft = tp.
         // For partial top row (head's row), tiles get pushed to RIGHT side if R→L, LEFT if L→R
-        const isShortRow = row.length < BOARD_COLS;
+        const isShortRow = row.length < COLS;
         const goesRight  = rowIndex % 2 === 0;
         // For short row: align tiles to the side where the path enters
         // L→R short row: enters from left → align flex-start
@@ -727,9 +737,9 @@ function SnakeBoard({ board, players, myPosition, myPlayerName, myPlayerColor, h
         //   But path enters R→L row from RIGHT (below-right corner)
         //   That means tile 30 (path entry) should be on the RIGHT of the row
         //   With reversed array [39,38,...,30], rendering flex-start puts 39 at col 1, 30 at col row.length
-        //   We want 30 (entry) at col BOARD_COLS, 39 (head/exit) at col BOARD_COLS-row.length+1
+        //   We want 30 (entry) at col COLS, 39 (head/exit) at col COLS-row.length+1
         //   So R→L short rows: align with paddingRight=tp, justifyContent flex-end
-        //   Then 30 ends at col BOARD_COLS, 39 at col BOARD_COLS-row.length+1
+        //   Then 30 ends at col COLS, 39 at col COLS-row.length+1
         const alignToRight = !goesRight; // R→L rows align to right edge
 
         return (
@@ -807,9 +817,8 @@ export default function BoardGameScreen({ route, navigation }) {
 
   // Dynamic tile sizes — recalculate when window resizes (tab minimize/restore)
   const { width: winW, height: winH } = useWindowDimensions();
-  const tileByW    = Math.floor((winW - 32) / 17); // placeholder, recalculated after session loads
-  const BASE_TILE  = Math.min(64, Math.max(28, tileByW));
-  const HOST_TILE = Math.min(96, Math.max(48, Math.floor((winW * 0.65 - 32) / BOARD_COLS)));
+  // Tile size is computed inline at each <SnakeBoard> call based on boardEnd
+  // Host tile size is also computed inline
   // Responsive scale: 1.0 on a comfortable 480×800 window, scales down linearly for smaller
   const rs = Math.min(1, Math.max(0.55, winH / 800, winW / 480));
   const isMobile = winW < 500;
@@ -911,11 +920,14 @@ export default function BoardGameScreen({ route, navigation }) {
   const lastNotifId = useRef(0);
 
   const [duelCountdown, setDuelCountdown] = useState(null);
+
   const duelCountdownRef = useRef(null);
   const duelSeenRef      = useRef(false);
 
   const [duelAnswered, setDuelAnswered] = useState(false);
   const [duelView,     setDuelView]     = useState("active");
+
+
   const lastDuelRound  = useRef(-1);
 
   const [gameLeft,  setGameLeft]  = useState(null);
@@ -929,6 +941,8 @@ export default function BoardGameScreen({ route, navigation }) {
   const [zoomImage,  setZoomImage]  = useState(null);
   const [gameOverDone, setGameOverDone] = useState(false);
   const [showLeave,    setShowLeave]    = useState(false);
+  const [showEndConfirm, setShowEndConfirm] = useState(false);
+  const [activityLog,    setActivityLog]    = useState([]);
   const boardRef   = useRef(null);
   const sessionRef = useRef(null);
   const myStateRef = useRef(null);
@@ -985,6 +999,47 @@ export default function BoardGameScreen({ route, navigation }) {
 
       setSession(data);
       setLoading(false);
+
+      // ── Activity Feed: capture ALL player notifications ──────────────────
+      const allP = data.players || [];
+      // Only capture notifications where the player IS the attacker (by field matches)
+      // This prevents duplicates from the same event being captured from every target
+      const seenIds = new Set();
+      allP.forEach(p => {
+        if (p.notification && p.notification.id && !seenIds.has(p.notification.id)) {
+          seenIds.add(p.notification.id);
+          const n = p.notification;
+          // Skip if this player is a target (not the source) — avoid duplicates
+          if (n.by && n.by !== p.name && n.target) return;
+          const byP = allP.find(x => x.name === n.by);
+          const tgtP = allP.find(x => x.name === n.target);
+          setActivityLog(prev => {
+            if (prev.some(e => e.id === n.id)) return prev;
+            return [{
+              feedText: n.feedText || n.text || "",
+              by: n.by || "",
+              byColor: byP?.color || n.byColor || "#fff",
+              target: n.target || "",
+              targetColor: tgtP?.color || n.targetColor || "#fff",
+              id: n.id,
+              time: Date.now()
+            }, ...prev].slice(0, 50);
+          });
+        }
+      });
+
+      // Capture duel results
+      if (data.activeDuel?.status === "done" && data.activeDuel?.winnerName) {
+        const did = "duel-" + (data.activeDuel.roundStartedAt || 0);
+        setActivityLog(prev => {
+          if (prev.some(e => e.id === did)) return prev;
+          const w = data.activeDuel.winnerName;
+          const l = data.activeDuel.challengerName === w ? data.activeDuel.opponentName : data.activeDuel.challengerName;
+          const wc = (data.players||[]).find(p => p.name === w)?.color || "#3498db";
+          const lc = (data.players||[]).find(p => p.name === l)?.color || "#e74c3c";
+          return [{text: w + " has won in a 1v1 against " + l, by: w, byColor: wc, target: l, targetColor: lc, id: did, time: Date.now()}, ...prev].slice(0, 50);
+        });
+      }
 
       if (!isHost || hostIsPlaying) {
         if (data.status === "abandoned") return;
@@ -1047,7 +1102,6 @@ export default function BoardGameScreen({ route, navigation }) {
             // would block a false countdown retrigger.
             if (!duelSeenRef.current && ad.currentRound === 0) {
               duelSeenRef.current = true;
-              // Delay 1s before showing countdown so both players have time to load
               setTimeout(() => {
                 setDuelCountdown(3);
                 clearInterval(duelCountdownRef.current);
@@ -1207,18 +1261,29 @@ export default function BoardGameScreen({ route, navigation }) {
       removeFromInventory(item.id);
       setDeflectorActive(true);
       setDeflectorCharges(2); setDeflectorSecsLeft(30);
-      clearTimeout(deflectorTimerRef.current);
-      clearInterval(deflectorSecsRef.current);
-      deflectorTimerRef.current = setTimeout(() => { setDeflectorActive(false); setDeflectorSecsLeft(0); }, 30000);
-      deflectorSecsRef.current  = setInterval(() => setDeflectorSecsLeft(s => { if(s<=1){ clearInterval(deflectorSecsRef.current); return 0; } return s-1; }), 1000);
+    } else if (item.type === "nuke") {
+      removeFromInventory(item.id);
       const sess = sessionRef.current;
-      if (sess) {
-        const exp = Date.now() + 30000;
-        const upd = (sess.players||[]).map(p =>
-          (playerUid&&p.uid===playerUid) || p.name===playerName ? {...p, deflectorExpires:exp} : p
+      if (sess && sessionId) {
+        const nukeNotif = {text: playerName + " NUKED the entire lobby! 💥", feedText: playerName + " NUKED the entire lobby! 💥", id: "nuke-" + Date.now(), by: playerName, byColor: playerColor};
+        // Write activeStuns for EVERY other player (this is what the stun detection reads)
+        const stunWrites = {};
+        (sess.players || []).forEach(p => {
+          if (p.name !== playerName) {
+            stunWrites["activeStuns." + p.name] = { by: playerName, id: Date.now(), reason: "nuke" };
+          }
+        });
+        // Also update player notifications and cancel active duel
+        const updP = (sess.players || []).map(p =>
+          p.name === playerName
+            ? {...p, notification: nukeNotif}
+            : {...p, notification: {...nukeNotif, text: "You were NUKED by " + playerName + "! 💥"}}
         );
-        updateDoc(doc(db,"gameSessions",sessionId), {players:upd}).catch(console.error);
+        const duelCancel = sess.activeDuel?.status === "active" ? {activeDuel: null} : {};
+        updateDoc(doc(db, "gameSessions", sessionId), {players: updP, ...stunWrites, ...duelCancel}).catch(console.error);
       }
+      setNotif("💥 NUKE deployed! All players stunned!");
+      setShowNotif(true); setTimeout(() => setShowNotif(false), 3000);
     }
   }, [removeFromInventory, playerName, playerUid, sessionId]);
 
@@ -1296,6 +1361,10 @@ export default function BoardGameScreen({ route, navigation }) {
         break;
       }
       case "doubleroll": setDoubleRollsLeft(2); break;
+      case "nuke": {
+        // Nuke should only come from inventory, not mystery box — skip
+        break;
+      }
     }
     closeMBox();
     if (willReturnToQ) setQIdx(i => i+1);
@@ -1371,13 +1440,13 @@ export default function BoardGameScreen({ route, navigation }) {
     switch (mBoxKey) {
       case "pushback": {
         const np = Math.max(0, (target.position||0) - 3);
-        const notif = {text:`You were pushed back 3 spaces by ${playerName}! `, id:Date.now()};
+        const notif = {text:`You were pushed back 3 spaces by ${playerName}!`, feedText:`${target.name} was pushed back by ${playerName}`, id:Date.now(), by:playerName, byColor:playerColor, target:target.name, targetColor:target.color||'#888'};
         const upd = (sess.players||[]).map(p => p.name===target.name ? {...p, position:np, notification:notif} : p);
         await updateDoc(doc(db,"gameSessions",sessionId), {players:upd}).catch(console.error);
         break;
       }
       case "stun": {
-        const notif = {text:`You've been stunned by ${playerName}!  Answer 3 in a row to recover.`, id:Date.now()};
+        const notif = {text:`You were stunned by ${playerName}! Answer 3 in a row to recover.`, feedText:`${target.name} was stunned by ${playerName}`, id:Date.now(), by:playerName, byColor:playerColor, target:target.name, targetColor:target.color||'#888'};
         await updateDoc(doc(db,"gameSessions",sessionId), {
           [`activeStuns.${target.name}`]: { by: playerName, id: Date.now() },
           players: (sess.players||[]).map(p => p.name===target.name ? {...p, notification:notif} : p),
@@ -1386,7 +1455,7 @@ export default function BoardGameScreen({ route, navigation }) {
       }
       case "badluck": {
         const exp = Date.now() + 45000;
-        const notif = {text:`${playerName} cursed you with Bad Luck Aura! 🌑 –30% Luck for 45s`, id:Date.now()};
+        const notif = {text:`${playerName} cursed you with Bad Luck! 🌑 -30% Luck for 45s`, feedText:`${target.name} was cursed by ${playerName}`, id:Date.now(), by:playerName, byColor:playerColor, target:target.name, targetColor:target.color||'#888'};
         const upd = (sess.players||[]).map(p => p.name===target.name ? {...p, badLuckExpires:exp, notification:notif} : p);
         await updateDoc(doc(db,"gameSessions",sessionId), {players:upd}).catch(console.error);
         break;
@@ -1403,7 +1472,7 @@ export default function BoardGameScreen({ route, navigation }) {
             status:"active", winnerName:null,
             challengerDismissed:false, opponentDismissed:false,
           };
-          const notif = {text:`${playerName} has challenged you to a 1v1! `, id:Date.now()};
+          const notif = {text:`${playerName} has challenged you to a 1v1!`, feedText:`${playerName} challenged ${target.name} to a 1v1!`, id:Date.now(), by:playerName, byColor:playerColor, target:target.name, targetColor:target.color||'#888'};
           const updP = (sess.players||[]).map(p => p.name===target.name ? {...p, notification:notif} : p);
           await updateDoc(doc(db,"gameSessions",sessionId), {activeDuel, players:updP}).catch(console.error);
         }
@@ -1557,8 +1626,8 @@ export default function BoardGameScreen({ route, navigation }) {
           updateDoc(doc(db,"gameSessions",sessionId), {players:upd}).catch(()=>{});
         }
       }
-      setTotal(prev => { const next=prev+1; const trigger=isSolo?(Math.random()<0.30):(next%6===0); if(trigger) { addToInventory("mystery_box","mystery box"); }
-      if (ns === 20) { addToInventory("nuke","Nuke — stuns ALL other players!"); } return next; });
+      setTotal(prev => { const next=prev+1; const trigger=isSolo?(Math.random()<0.30):(ns>0 && ns%6===0); if(trigger && ns !== 6) { addToInventory("mystery_box","mystery box"); }
+      if (ns === 6) { addToInventory("nuke","Nuke — stuns ALL other players!"); } return next; });
       if (nc >= ROLL_AT) { setCc(0); setTimeout(() => { setPhaseSync("rolling"); setDiceValue(null); }, 1400); }
       else { setCc(nc); setTimeout(() => setQIdx(i => i+1), 1400); }
     } else {
@@ -1778,10 +1847,12 @@ export default function BoardGameScreen({ route, navigation }) {
     if (type==="normal") { exitMoving(); return; }
     if (type==="mystery") { openMysteryBox(); return; }
     if (type==="lava"||type==="cannon") {
-      srLandingPos.current = pos; // capture exact position — avoids snapshot race in applySpaceRoll
+      srLandingPos.current = pos;
+
       setSrType(type); setSrValue(null); setSrRolling(false); setPhaseSync("space_roll"); return;
     }
     if (type==="trap") {
+
       const pool = qs?.length ? qs : [];
       if (pool.length) {
         const trapQ = pool[Math.floor(Math.random()*pool.length)];
@@ -1800,7 +1871,7 @@ export default function BoardGameScreen({ route, navigation }) {
 
   const handleTrapFail = async () => {
     clearInterval(trapRef.current);
-    setTrapEvent(null); setTimeout(()=>{ setPhaseSync("questions"); setDiceValue(null); setQIdx(i=>i+1); }, 1500);
+    setTrapEvent(null); setPhaseSync("trap_escaped");
     await updateDoc(doc(db,"gameSessions",sessionId), {
       [`activeStuns.${playerName}`]: { by: "Trap", id: Date.now() },
     }).catch(console.error);
@@ -1808,7 +1879,7 @@ export default function BoardGameScreen({ route, navigation }) {
 
   const resolveEvent = async (opts={}) => {
     clearInterval(trapRef.current);
-    setTrapEvent(null); setTimeout(()=>{ setPhaseSync("questions"); setDiceValue(null); setQIdx(i=>i+1); }, 1500);
+    setTrapEvent(null); setPhaseSync("trap_escaped");
     if (trapEvent?.question && !opts.correct) {
       await updateDoc(doc(db,"gameSessions",sessionId), {
         [`activeStuns.${playerName}`]: { by: "Trap", id: Date.now() },
@@ -1862,15 +1933,60 @@ export default function BoardGameScreen({ route, navigation }) {
           <Text style={S.hostTitle}>Brain Board — Host</Text>
           <View style={{flexDirection:"row",gap:12,alignItems:"center"}}>
             {gameLeft!=null&&<Text style={[S.timerTxt,gameLeft<=30&&{color:"#e74c3c"}]}>{formatTime(gameLeft)}</Text>}
-            <TouchableOpacity style={S.endBtn} onPress={async()=>{await updateDoc(doc(db,"gameSessions",sessionId),{status:"ended"}).catch(console.error);exitGame();}}>
+            <TouchableOpacity style={S.endBtn} onPress={()=>setShowEndConfirm(true)}>
               <Text style={S.endBtnTxt}>End Game</Text>
             </TouchableOpacity>
           </View>
         </View>
         <View style={S.hostBody}>
-          <ScrollView ref={boardRef} style={{flex:1}} contentContainerStyle={{padding:12}}>
+          {/* Activity Feed — left side */}
+          <View style={S.actFeed}>
+            <Text style={{color:"#00c781",fontSize:20,fontWeight:"900",marginBottom:12}}>Activity</Text>
+            <ScrollView style={{flex:1}} showsVerticalScrollIndicator={false}>
+
+              {activityLog.map((entry,i)=>{
+                const ft = entry.feedText || "";
+                // Build colored text from structured fields — no string parsing
+                // Find positions of by and target names in feedText
+                const segs = [];
+                if (entry.by && entry.target && ft.includes(entry.by) && ft.includes(entry.target)) {
+                  // Two-player event
+                  const names = [
+                    {name:entry.by, color:entry.byColor||"#fff"},
+                    {name:entry.target, color:entry.targetColor||"#fff"}
+                  ].sort((a,b) => ft.indexOf(a.name) - ft.indexOf(b.name));
+                  let pos = 0;
+                  names.forEach(n => {
+                    const ni = ft.indexOf(n.name, pos);
+                    if (ni > pos) segs.push({t:ft.slice(pos,ni), c:"#aaa", b:false});
+                    segs.push({t:n.name, c:n.color, b:true});
+                    pos = ni + n.name.length;
+                  });
+                  if (pos < ft.length) segs.push({t:ft.slice(pos), c:"#aaa", b:false});
+                } else if (entry.by && ft.includes(entry.by)) {
+                  // Single-player event (nuke etc)
+                  const ni = ft.indexOf(entry.by);
+                  if (ni > 0) segs.push({t:ft.slice(0,ni), c:"#aaa", b:false});
+                  segs.push({t:entry.by, c:entry.byColor||"#fff", b:true});
+                  segs.push({t:ft.slice(ni+entry.by.length), c:"#aaa", b:false});
+                } else {
+                  segs.push({t:ft, c:"#aaa", b:false});
+                }
+                return (
+                  <View key={entry.id||i} style={{marginBottom:10,paddingBottom:10,borderBottomWidth:1,borderBottomColor:"#1a1a1a"}}>
+                    <Text style={{fontSize:13,lineHeight:20}}>
+                      {segs.map((sg,si) => <Text key={si} style={{color:sg.c,fontWeight:sg.b?"bold":"normal"}}>{sg.t}</Text>)}
+                    </Text>
+                    <Text style={{color:"#444",fontSize:10,marginTop:3}}>{new Date(entry.time).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit",second:"2-digit"})}</Text>
+                  </View>
+                );
+              })}
+            </ScrollView>
+          </View>
+          {/* Board — center */}
+          <ScrollView ref={boardRef} style={{flex:1}} contentContainerStyle={{paddingHorizontal:12,paddingTop:8,paddingBottom:12,alignItems:"center",justifyContent:"center",flexGrow:1}}>
             <SnakeBoard board={board} players={players} myPosition={-1} myPlayerName={playerName} myPlayerColor={playerColor} highlightPos={null} boardEnd={boardEnd}
-              tileSize={Math.min(Math.floor((winW-420)/(calcBoardCols(boardEnd)+2)), Math.floor((winH*0.88)/(Math.ceil((boardEnd+1)/calcBoardCols(boardEnd))+1)), 72)}/>
+              tileSize={calcTileSize(boardEnd, winW, winH, true)}/>
             <Legend/>
           </ScrollView>
           <View style={S.hostSide}>
@@ -1880,7 +1996,7 @@ export default function BoardGameScreen({ route, navigation }) {
                 <Text style={[S.lbRank,{fontSize:16,minWidth:32}]}>#{i+1}</Text>
                 <Pawn color={p.color||"#888"} size={24}/>
                 <View style={{flex:1,marginLeft:8,marginRight:8}}>
-                  <Text style={[S.lbName,{fontSize:14}]} numberOfLines={1}>{p.name}</Text>
+                  <Text style={[S.lbName,{fontSize:14,color:p.color||"#fff"}]} numberOfLines={1}>{p.name}</Text>
                   <View style={{flexDirection:"row",marginTop:2}}>
                     <Text style={{color:"#f39c12",fontSize:11,marginRight:10}}>Streak x{p.streak||0}</Text>
                     <Text style={{color:"#2ecc71",fontSize:11}}>Luck {p.luck||0}%</Text>
@@ -1891,22 +2007,25 @@ export default function BoardGameScreen({ route, navigation }) {
             ))}
           </View>
         </View>
-        <Modal visible={showLeave} transparent animationType="fade">
-        <View style={S.mOverlay}>
-          <View style={S.mBox}>
-            <Text style={S.mTtl}>Leave Game?</Text>
-            <Text style={S.mDesc}>Are you sure you want to leave?</Text>
-            <View style={{flexDirection:"row",gap:12,marginTop:16}}>
-              <TouchableOpacity style={[S.rollBtn,{flex:1,backgroundColor:"#00c781"}]} onPress={()=>setShowLeave(false)}>
-                <Text style={S.rollTxtBig}>Stay</Text>
+
+      {/* End Game confirmation */}
+      <Modal visible={showEndConfirm} transparent animationType="fade">
+        <View style={{flex:1,backgroundColor:"rgba(0,0,0,0.7)",justifyContent:"center",alignItems:"center"}}>
+          <View style={{backgroundColor:"#1e1e1e",borderRadius:18,padding:28,width:"92%",maxWidth:480,borderWidth:1,borderColor:"#333"}}>
+            <Text style={{color:"#fff",fontSize:22,fontWeight:"900",marginBottom:8}}>End Game?</Text>
+            <Text style={{color:"#aaa",fontSize:15,marginBottom:24}}>This will end the game for all players.</Text>
+            <View style={{flexDirection:"row",gap:14}}>
+              <TouchableOpacity style={{flex:1,backgroundColor:"#2a2a2a",borderRadius:12,paddingVertical:16,alignItems:"center"}} onPress={()=>setShowEndConfirm(false)}>
+                <Text style={{color:"#fff",fontSize:17,fontWeight:"bold"}}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[S.rollBtn,{flex:1,backgroundColor:"#c0392b"}]} onPress={()=>{setShowLeave(false);exitGame();}}>
-                <Text style={S.rollTxtBig}>Leave</Text>
+              <TouchableOpacity style={{flex:1,backgroundColor:"#c0392b",borderRadius:12,paddingVertical:16,alignItems:"center"}} onPress={async()=>{setShowEndConfirm(false);await updateDoc(doc(db,"gameSessions",sessionId),{status:"ended"}).catch(console.error);exitGame();}}>
+                <Text style={{color:"#fff",fontSize:17,fontWeight:"bold"}}>End Game</Text>
               </TouchableOpacity>
             </View>
           </View>
         </View>
       </Modal>
+        
       {session?.status==="ended"&&!gameOverDone&&<GameOverModal session={session} myPos={-1} boardEnd={boardEnd} onExit={()=>{setGameOverDone(true);exitGame();}}/>}
       </SafeAreaView>
     );
@@ -1953,13 +2072,24 @@ export default function BoardGameScreen({ route, navigation }) {
 
       <View style={S.main}>
         {showMap && (
-          <View style={{flex:1, alignItems:"center", justifyContent:"center", overflow:"hidden"}}>
+          <ScrollView style={{flex:1}} contentContainerStyle={{alignItems:"center", justifyContent:"center", flexGrow:1, paddingVertical:4}}>
             <SnakeBoard board={board} players={players} myPosition={myPos} myPlayerName={playerName} myPlayerColor={playerColor} highlightPos={highlightPos} boardEnd={boardEnd}
-              tileSize={Math.min(Math.floor((winW-32)/(calcBoardCols(boardEnd)+2)), Math.floor((winH*0.78)/(Math.ceil((boardEnd+1)/calcBoardCols(boardEnd))+1)), 72)}/>
+              tileSize={calcTileSize(boardEnd, winW, winH, false)}/>
             <Legend/>
-          </View>
+          </ScrollView>
         )}
 
+
+        {phase === "trap_escaped" && (
+          <View style={{flex:1, alignItems:"center", justifyContent:"center"}}>
+            <Text style={{color:"#2ecc71", fontSize:28, fontWeight:"900", marginBottom:8}}>Escaped!</Text>
+            <Text style={{color:"#aaa", fontSize:15, marginBottom:24}}>You broke free from the trap.</Text>
+            <TouchableOpacity style={[S.rollBtn, {paddingHorizontal:40, paddingVertical:14, backgroundColor:"#00c781"}]}
+              onPress={()=>{ setPhaseSync("questions"); setDiceValue(null); setQIdx(i=>i+1); }}>
+              <Text style={S.rollTxtBig}>Back to Questions</Text>
+            </TouchableOpacity>
+          </View>
+        )}
         {!showMap && phase==="questions" && (
           <ScrollView style={{flex:1}} contentContainerStyle={[S.qScroll, isMobile && {padding:10, paddingBottom:80}]}>
             <View style={S.rollBar}>
@@ -2429,16 +2559,16 @@ export default function BoardGameScreen({ route, navigation }) {
 
       {/* Leave confirmation modal — PLAYER VIEW */}
       <Modal visible={showLeave} transparent animationType="fade">
-        <View style={S.mOverlay}>
-          <View style={S.mBox}>
-            <Text style={S.mTtl}>Leave Game?</Text>
-            <Text style={S.mDesc}>Are you sure you want to leave?</Text>
-            <View style={{flexDirection:"row",gap:12,marginTop:16}}>
-              <TouchableOpacity style={[S.rollBtn,{flex:1,backgroundColor:"#00c781"}]} onPress={()=>setShowLeave(false)}>
-                <Text style={S.rollTxtBig}>Stay</Text>
+        <View style={{flex:1,backgroundColor:"rgba(0,0,0,0.7)",justifyContent:"center",alignItems:"center"}}>
+          <View style={{backgroundColor:"#1e1e1e",borderRadius:18,padding:28,width:"92%",maxWidth:480,borderWidth:1,borderColor:"#333"}}>
+            <Text style={{color:"#fff",fontSize:22,fontWeight:"900",marginBottom:8}}>Leave Game?</Text>
+            <Text style={{color:"#aaa",fontSize:15,marginBottom:24}}>Are you sure you want to leave?</Text>
+            <View style={{flexDirection:"row",gap:14}}>
+              <TouchableOpacity style={{flex:1,backgroundColor:"#2a2a2a",borderRadius:12,paddingVertical:16,alignItems:"center"}} onPress={()=>setShowLeave(false)}>
+                <Text style={{color:"#fff",fontSize:17,fontWeight:"bold"}}>Stay</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[S.rollBtn,{flex:1,backgroundColor:"#c0392b"}]} onPress={()=>{setShowLeave(false);exitGame();}}>
-                <Text style={S.rollTxtBig}>Leave</Text>
+              <TouchableOpacity style={{flex:1,backgroundColor:"#c0392b",borderRadius:12,paddingVertical:16,alignItems:"center"}} onPress={()=>{setShowLeave(false);exitGame();}}>
+                <Text style={{color:"#fff",fontSize:17,fontWeight:"bold"}}>Leave</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -2527,7 +2657,7 @@ const S = StyleSheet.create({
   hudEndBtnTxt:{ color:"#ff6b6b", fontSize:16, fontWeight:"700" },
   timerTrack: { width:"100%", height:7, backgroundColor:"#1a1a1a" },
   timerFill:  { height:7, backgroundColor:"#00c781", alignSelf:"flex-start" },
-  main: { flex:1, flexDirection:"column" },
+  main: { flex:1, flexDirection:"column", overflow:"hidden" },
   qScroll:    { flexGrow:1, justifyContent:"center", padding:12, paddingBottom:80 },
   qCard:      { gap:10 },
   rollBar:    { flexDirection:"row", alignItems:"center", justifyContent:"center", gap:10, marginBottom:14 },
@@ -2549,7 +2679,7 @@ const S = StyleSheet.create({
   legendItem: { flexDirection:"row", alignItems:"center", gap:5 },
   legendSwatch:{ width:16, height:16, borderRadius:3, borderWidth:1.5 },
   legendTxt:  { fontSize:12, fontWeight:"600" },
-  diceBox:    { alignItems:"center", justifyContent:"center", gap:8, backgroundColor:"#111", paddingVertical:12, paddingHorizontal:20, paddingBottom:84 },
+  diceBox:    { alignItems:"center", justifyContent:"center", gap:8, backgroundColor:"#111", paddingVertical:10, paddingHorizontal:16, paddingBottom:64 },
   diceTtl:    { color:"#fff", fontSize:26, fontWeight:"bold", textAlign:"center" },
   luckTxt:    { color:"#888", fontSize:13, textAlign:"center" },
   diceFace:   { fontSize:72, color:"#fff" },
@@ -2596,7 +2726,8 @@ const S = StyleSheet.create({
   endBtn:     { backgroundColor:"#c0392b", paddingVertical:10, paddingHorizontal:22, borderRadius:12 },
   endBtnTxt:  { color:"#fff", fontWeight:"bold", fontSize:15 },
   hostBody:   { flex:1, flexDirection:"row" },
-  hostSide:   { width:400, backgroundColor:"#0a0a0a", padding:20, borderLeftWidth:1, borderLeftColor:"#222" },
+  actFeed: { width:280, backgroundColor:"#0a0a0a", padding:12, borderRightWidth:1, borderRightColor:"#222" },
+  hostSide:   { width:360, backgroundColor:"#0a0a0a", padding:16, borderLeftWidth:1, borderLeftColor:"#222" },
   lbTitle:    { color:"#00c781", fontSize:32, fontWeight:"bold", marginBottom:24 },
   lbRow:      { flexDirection:"row", alignItems:"center", paddingVertical:18, borderBottomWidth:1, borderBottomColor:"#1a1a1a" },
   lbRank:     { color:"#fff", width:60, fontSize:28, fontWeight:"bold" },
