@@ -47,8 +47,12 @@ export default function JoinGameScreen({ navigation }) {
       const data = sessionDoc.data();
 
       // Game already started?
-      if (data.status !== "lobby") {
-        showModal("Already Started", "This game has already started. You can no longer join.");
+      if (data.status !== "lobby" && data.isLobbyLocked) {
+        showModal("Game Locked", "This game has already started and is locked. Ask the host to unlock.");
+        return;
+      }
+      if (data.status === "ended" || data.status === "abandoned") {
+        showModal("Game Over", "This game has already ended.");
         return;
       }
 

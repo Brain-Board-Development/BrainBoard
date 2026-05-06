@@ -3,12 +3,14 @@
  */
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
+import { Audio } from "expo-av";
 import {
-  View, Text, StyleSheet, TextInput, TouchableOpacity,
+  View, Image, Text, StyleSheet, TextInput, TouchableOpacity,
   ActivityIndicator, SafeAreaView, FlatList, Modal, Animated, Platform, ScrollView,
 } from "react-native";
 import { db, auth } from "../firebaseConfig";
 import { doc, onSnapshot, updateDoc } from "firebase/firestore";
+import { useFocusEffect } from "@react-navigation/native";
 import { signInAnonymously } from "firebase/auth";
 
 // ── Nickname helpers ──────────────────────────────────────────────────────────
@@ -144,6 +146,7 @@ export default function GameScreen({ route, navigation }) {
   const usernameRef  = useRef("");
   const colorRef     = useRef(PRESET_COLORS[0]);
   const hasJoinedRef = useRef(false);
+  const navigatedRef = useRef(false);
   const sessionRef   = useRef(null);
 
   // Animated value for pawn pulse
@@ -166,6 +169,31 @@ export default function GameScreen({ route, navigation }) {
     loop.start();
     return () => loop.stop();
   }, []);
+
+  // ── Lobby music — loops, stops when screen loses focus ──────────────────
+  const lobbyMusicRef = useRef(null);
+  const [musicVol, setMusicVol] = useState(0.4);
+  useFocusEffect(
+    React.useCallback(() => {
+      let sound = null;
+      (async () => {
+        try {
+          await Audio.setAudioModeAsync({ playsInSilentModeIOS: true, staysActiveInBackground: false });
+          const result = await Audio.Sound.createAsync(
+            require('../assets/lobby_music.mp3'),
+            { isLooping: true, volume: 0.4, shouldPlay: true }
+          );
+          sound = result.sound;
+          lobbyMusicRef.current = sound;
+        } catch (e) { console.warn('Lobby music failed:', e); }
+      })();
+      return () => {
+        if (sound) { sound.stopAsync().then(() => sound.unloadAsync()).catch(()=>{}); }
+        if (lobbyMusicRef.current) { lobbyMusicRef.current.stopAsync().then(() => lobbyMusicRef.current?.unloadAsync()).catch(()=>{}); lobbyMusicRef.current = null; }
+      };
+    }, [])
+  );
+  useEffect(() => { lobbyMusicRef.current?.setVolumeAsync(musicVol).catch(()=>{}); }, [musicVol]);
 
   // Auto-generate nickname when host has nicknames enabled
   // nicknamesEnabled is a plain variable (not a hook) so this useEffect is always called
@@ -200,7 +228,8 @@ export default function GameScreen({ route, navigation }) {
             setShowKicked(true);
             return;
           }
-          if (data.status === "playing") {
+          if ((data.status === "active" || data.status === "playing") && !navigatedRef.current) {
+            navigatedRef.current = true;
             navigation.replace("BoardGameScreen", {
               sessionId,
               gameId:      data.gameId || gameId,
@@ -247,10 +276,12 @@ export default function GameScreen({ route, navigation }) {
         score: 0, position: 0, correctStreak: 0, totalCorrect: 0, luck: 0, stunned: false,
       };
       const currentPlayers = sessionRef.current ? sessionRef.current.players || [] : [];
+      // Set BEFORE updateDoc — updateDoc triggers onSnapshot synchronously via local cache
+      hasJoinedRef.current = true;
+      setHasJoined(true);
       await updateDoc(doc(db, "gameSessions", sessionId), {
         players: [...currentPlayers, newPlayer],
       });
-      setHasJoined(true);
     } catch (err) {
       console.error("Join error:", err);
     }
@@ -340,6 +371,12 @@ export default function GameScreen({ route, navigation }) {
         >
           <Text style={S.joinTxt}>Join Game →</Text>
         </TouchableOpacity>
+        <View style={{flexDirection:"row",alignItems:"center",gap:8,marginTop:16}}>
+          <Image source={require("../assets/audio_symbol.png")} style={{width:20,height:20,tintColor:"#00c781"}} />
+            <input type="range" min="0" max="100" value={Math.round(musicVol*100)}
+              onChange={e=>setMusicVol(Number(e.target.value)/100)}
+              style={{width:80,accentColor:"#00c781"}}/>
+        </View>
 
         <TouchableOpacity style={S.leaveBtn} onPress={() => navigation.navigate("JoinGameScreen")}>
           <Text style={S.leaveTxt}>Leave</Text>
@@ -365,6 +402,12 @@ export default function GameScreen({ route, navigation }) {
     <SafeAreaView style={S.container}>
       <Text style={S.title}>Brain Board</Text>
       <Text style={S.waiting}>Waiting for the host to start…</Text>
+      <View style={{flexDirection:"row",alignItems:"center",gap:8,marginTop:10}}>
+        <Image source={require("../assets/audio_symbol.png")} style={{width:20,height:20,tintColor:"#00c781"}} />
+            <input type="range" min="0" max="100" value={Math.round(musicVol*100)}
+              onChange={e=>setMusicVol(Number(e.target.value)/100)}
+              style={{width:80,accentColor:"#00c781"}}/>
+      </View>
 
       <View style={S.myCard}>
         <PawnIcon color={selectedColor} size={48} />
@@ -471,16 +514,16 @@ export default function GameScreen({ route, navigation }) {
       
 
       <Modal visible={showLeave} transparent animationType="fade">
-        <View style={S.overlay}>
-          <View style={[S.modal, {width:"88%",maxWidth:360,padding:24}]}>
-            <Text style={S.mTtl}>Leave Game?</Text>
-            <Text style={S.mTxt}>Are you sure you want to leave?</Text>
-            <View style={{ flexDirection: "row", gap: 12 }}>
-              <TouchableOpacity style={[S.mBtn, { flex: 1, backgroundColor: "#00c781" }]} onPress={() => setShowLeave(false)}>
-                <Text style={S.mBtnTxt}>Stay</Text>
+        <View style={{flex:1,backgroundColor:"rgba(0,0,0,0.7)",justifyContent:"center",alignItems:"center"}}>
+          <View style={{backgroundColor:"#1e1e1e",borderRadius:18,padding:28,width:"92%",maxWidth:480,borderWidth:1,borderColor:"#333"}}>
+            <Text style={{color:"#fff",fontSize:22,fontWeight:"900",marginBottom:8}}>Leave Game?</Text>
+            <Text style={{color:"#aaa",fontSize:15,marginBottom:24}}>Are you sure you want to leave?</Text>
+            <View style={{flexDirection:"row",gap:14}}>
+              <TouchableOpacity style={{flex:1,backgroundColor:"#2a2a2a",borderRadius:12,paddingVertical:16,alignItems:"center"}} onPress={()=>setShowLeave(false)}>
+                <Text style={{color:"#fff",fontSize:17,fontWeight:"bold"}}>Stay</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[S.mBtn, { flex: 1, backgroundColor: "#c0392b" }]} onPress={handleLeave}>
-                <Text style={S.mBtnTxt}>Leave</Text>
+              <TouchableOpacity style={{flex:1,backgroundColor:"#c0392b",borderRadius:12,paddingVertical:16,alignItems:"center"}} onPress={handleLeave}>
+                <Text style={{color:"#fff",fontSize:17,fontWeight:"bold"}}>Leave</Text>
               </TouchableOpacity>
             </View>
           </View>

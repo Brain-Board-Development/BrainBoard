@@ -4,11 +4,13 @@
  */
 
 import React, { useState, useEffect, useRef, useMemo } from "react";
+import { Audio } from "expo-av";
 import {
-  View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, SafeAreaView, Modal, ScrollView, Animated, Dimensions, TextInput, Pressable, Platform, useWindowDimensions,
+  View, Image, Text, StyleSheet, TouchableOpacity, ActivityIndicator, SafeAreaView, Modal, ScrollView, Animated, Dimensions, TextInput, Pressable, Platform, useWindowDimensions,
 } from "react-native";
 import { db } from "../firebaseConfig";
 import { doc, onSnapshot, updateDoc, getDoc } from "firebase/firestore";
+import { useFocusEffect } from "@react-navigation/native";
 
 const SPACE_POOL = [
   "mystery", "mystery", "mystery",
@@ -19,7 +21,7 @@ const SPACE_POOL = [
 ];
 
 const calcBoardSize = (n) =>
-  Math.min(150, Math.max(15, Math.round(5 * Math.max(0, n - 1) + 40)));
+  Math.min(140, Math.max(15, Math.round(5 * Math.max(0, n - 1) + 40)));
 
 function Pawn({ color, size = 14 }) {
   const c = color || "#888";
@@ -343,6 +345,39 @@ export default function Lobby({ route, navigation }) {
     return () => loop.stop();
   }, []);
 
+  // ── Lobby music — loops, stops when screen loses focus ──────────────────
+  const lobbyMusicRef = useRef(null);
+  const [musicVol, setMusicVol] = useState(0.4);
+  useFocusEffect(
+    React.useCallback(() => {
+      let sound = null;
+      (async () => {
+        try {
+          await Audio.setAudioModeAsync({ playsInSilentModeIOS: true, staysActiveInBackground: false });
+          const result = await Audio.Sound.createAsync(
+            require('../assets/lobby_music.mp3'),
+            { isLooping: true, volume: 0.4, shouldPlay: true }
+          );
+          sound = result.sound;
+          lobbyMusicRef.current = sound;
+        } catch (e) { console.warn('Lobby music failed:', e); }
+      })();
+      // Cleanup: fires when screen LOSES focus (navigating away)
+      return () => {
+        if (sound) {
+          sound.stopAsync().then(() => sound.unloadAsync()).catch(()=>{});
+        }
+        if (lobbyMusicRef.current) {
+          lobbyMusicRef.current.stopAsync().then(() => lobbyMusicRef.current?.unloadAsync()).catch(()=>{});
+          lobbyMusicRef.current = null;
+        }
+      };
+    }, [])
+  );
+  useEffect(() => {
+    lobbyMusicRef.current?.setVolumeAsync(musicVol).catch(()=>{});
+  }, [musicVol]);
+
   useEffect(() => {
     if (!sessionId) return;
     return onSnapshot(doc(db, "gameSessions", sessionId), (snap) => {
@@ -534,6 +569,12 @@ export default function Lobby({ route, navigation }) {
           <Text style={S.pinLbl}>GAME PIN</Text>
           <Text style={S.pin}>{pin || "------"}</Text>
           <Text style={S.pinHint}>Share with players</Text>
+          <View style={{flexDirection:"row",alignItems:"center",gap:8,marginTop:12}}>
+            <Image source={require("../assets/audio_symbol.png")} style={{width:20,height:20,tintColor:"#00c781"}} />
+            <input type="range" min="0" max="100" value={Math.round(musicVol*100)}
+              onChange={e=>setMusicVol(Number(e.target.value)/100)}
+              style={{width:80,accentColor:"#00c781"}}/>
+          </View>
         </Animated.View>
 
         <Text style={S.countTxt}>{players.length} / {maxPlayers} players</Text>
@@ -633,9 +674,6 @@ export default function Lobby({ route, navigation }) {
         <View style={S.hostBar}>
           <TouchableOpacity style={S.leaveBtn} onPress={() => setShowLeave(true)}>
             <Text style={S.leaveTxt}>Leave</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={S.tutorialBarBtn} onPress={() => setShowTutorial(true)}>
-            <Text style={S.tutorialBarBtnTxt}>Tutorial</Text>
           </TouchableOpacity>
           <TouchableOpacity style={[S.lockBtn, locked && S.lockOn]} onPress={toggleLock}>
             <Text style={[S.lockTxt, locked && { color: "#00c781" }]}>

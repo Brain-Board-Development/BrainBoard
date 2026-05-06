@@ -4,6 +4,7 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
+import { Audio } from 'expo-av';
 import {
   View, Text, StyleSheet, TouchableOpacity, TextInput, ScrollView, Image, ActivityIndicator, Pressable, Platform, useWindowDimensions, KeyboardAvoidingView,
 } from "react-native";
@@ -40,7 +41,33 @@ export default function CreateGameMenu({ navigation, route }) {
   const [questions, setQuestions] = useState([]);
   const [selectedQuestionIndex, setSelectedQuestionIndex] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
+  const [musicVol, setMusicVol] = useState(0.35);
+  const bgMusicRef = useRef(null);
   const [isEditing, setIsEditing] = useState(false);
+
+  // ── Background music — loops while creating/editing a game ────────────────
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        await Audio.setAudioModeAsync({ playsInSilentModeIOS: true, staysActiveInBackground: false });
+        const { sound } = await Audio.Sound.createAsync(
+          require('../assets/creategame_music.mp3'),
+          { isLooping: true, volume: 0.35, shouldPlay: true }
+        );
+        if (!mounted) { sound.unloadAsync(); return; }
+        bgMusicRef.current = sound;
+      } catch (e) { console.warn('CreateGame music failed:', e); }
+    })();
+    return () => {
+      mounted = false;
+      if (bgMusicRef.current) {
+        bgMusicRef.current.stopAsync().then(() => bgMusicRef.current?.unloadAsync()).catch(()=>{});
+        bgMusicRef.current = null;
+      }
+    };
+  }, []);
+  useEffect(() => { bgMusicRef.current?.setVolumeAsync(musicVol).catch(()=>{}); }, [musicVol]);
 
   const coverInputRef = useRef(null);
   const questionInputRef = useRef(null);
@@ -234,7 +261,8 @@ export default function CreateGameMenu({ navigation, route }) {
         savedId = docRef.id;
       }
       if (host) {
-        navigation.navigate('HostGameMenu', { gameId: savedId });
+        bgMusicRef.current?.stopAsync().catch(()=>{});
+      navigation.navigate('HostGameMenu', { gameId: savedId });
       } else {
         navigation.goBack();
       }
@@ -258,11 +286,16 @@ export default function CreateGameMenu({ navigation, route }) {
       <input type="file" accept="image/jpeg,image/png,image/gif,image/webp" ref={questionInputRef} style={{ display: 'none' }} onChange={(e) => handleImageUpload(e, false)} />
 
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()}>
+        <TouchableOpacity onPress={() => { bgMusicRef.current?.stopAsync().catch(()=>{}); navigation.goBack(); }}>
           <Text style={styles.backBtn}>← Back</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle}>{isEditing ? 'Edit Game' : 'Create Game'}</Text>
-        <View style={{ width: 60 }} />
+        <View style={{flexDirection:"row",alignItems:"center",gap:6}}>
+          <Image source={require("../assets/audio_symbol.png")} style={{width:20,height:20,tintColor:"#00c781"}} />
+          <input type="range" min="0" max="100" value={Math.round(musicVol*100)}
+            onChange={e=>setMusicVol(Number(e.target.value)/100)}
+            style={{width:80,accentColor:"#00c781"}}/>
+        </View>
       </View>
 
       <View style={styles.coverSection}>

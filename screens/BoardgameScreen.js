@@ -8,9 +8,10 @@
  * 5. Deflector: removeFromInventory(item.id) actually called
  */
 
+import { Audio } from "expo-av";
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
-  View, Text, StyleSheet, TouchableOpacity, ScrollView, Animated, ActivityIndicator, SafeAreaView, Modal, Image, useWindowDimensions, Pressable, Platform,
+  View, Image, Text, StyleSheet, TouchableOpacity, ScrollView, Animated, ActivityIndicator, SafeAreaView, Modal, useWindowDimensions, Pressable, Platform,
 } from "react-native";
 import { db, auth } from "../firebaseConfig";
 import { doc, onSnapshot, updateDoc, runTransaction, getDoc, deleteField } from "firebase/firestore";
@@ -931,6 +932,10 @@ export default function BoardGameScreen({ route, navigation }) {
   const lastDuelRound  = useRef(-1);
 
   const [gameLeft,  setGameLeft]  = useState(null);
+  const countdownMusicRef = useRef(null);
+  const countdownMusicStarted = useRef(false);
+  const gameBeatRef = useRef(null);
+  const [musicVol, setMusicVol] = useState(0.3);
   const [qTimeLeft, setQTimeLeft] = useState(null);
   const gameTimerRef = useRef(null);
   const qTimerRef    = useRef(null);
@@ -941,6 +946,8 @@ export default function BoardGameScreen({ route, navigation }) {
   const [zoomImage,  setZoomImage]  = useState(null);
   const [gameOverDone, setGameOverDone] = useState(false);
   const [showLeave,    setShowLeave]    = useState(false);
+  const gameLocked = session?.isLobbyLocked || false;
+  const gamePin = session?.pin || "";
   const [showEndConfirm, setShowEndConfirm] = useState(false);
   const [activityLog,    setActivityLog]    = useState([]);
   const boardRef   = useRef(null);
@@ -1213,6 +1220,71 @@ export default function BoardGameScreen({ route, navigation }) {
     gameTimerRef.current = setInterval(tick, 1000);
     return () => clearInterval(gameTimerRef.current);
   }, [session?.gameEndsAt, isHost, sessionId]);
+
+  // ── Background game beat: loops during the entire game ───────────────────
+  useEffect(() => {
+    if (session?.status !== "active") return;
+    let mounted = true;
+    (async () => {
+      try {
+        const { sound } = await Audio.Sound.createAsync(
+          require('../assets/game_beat.mp3'),
+          { isLooping: true, volume: musicVol, shouldPlay: true }
+        );
+        if (!mounted) { sound.unloadAsync(); return; }
+        gameBeatRef.current = sound;
+      } catch (e) { console.warn('Game beat failed:', e); }
+    })();
+    return () => {
+      mounted = false;
+      gameBeatRef.current?.stopAsync().then(() => gameBeatRef.current?.unloadAsync()).catch(()=>{});
+      gameBeatRef.current = null;
+    };
+  }, [session?.status]);
+
+  // Volume control for game beat
+  useEffect(() => {
+    gameBeatRef.current?.setVolumeAsync(musicVol).catch(()=>{});
+    countdownMusicRef.current?.setVolumeAsync(Math.min(musicVol * 2, 1)).catch(()=>{});
+  }, [musicVol]);
+
+  // ── Countdown music: plays once during last ~25 seconds of the game ───────
+  useEffect(() => {
+    if (gameLeft == null || countdownMusicStarted.current) return;
+    if (gameLeft <= 26 && gameLeft > 0) {
+      countdownMusicStarted.current = true;
+      (async () => {
+        try {
+          await Audio.setAudioModeAsync({ playsInSilentModeIOS: true, staysActiveInBackground: false });
+          const { sound } = await Audio.Sound.createAsync(
+            require('../assets/countdown_music.mp3'),
+            { isLooping: false, volume: 0.6 }
+          );
+          countdownMusicRef.current = sound;
+          await sound.playAsync();
+          // Auto-unload when finished
+          sound.setOnPlaybackStatusUpdate((status) => {
+            if (status.didJustFinish) { sound.unloadAsync(); countdownMusicRef.current = null; }
+          });
+        } catch (e) { console.warn('Countdown music failed:', e); }
+      })();
+    }
+    // Stop when game ends (gameLeft hits 0)
+    if (gameLeft <= 0 && countdownMusicRef.current) {
+      countdownMusicRef.current.stopAsync().then(() => {
+        countdownMusicRef.current?.unloadAsync();
+        countdownMusicRef.current = null;
+      });
+    }
+    return () => {};
+  }, [gameLeft]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      countdownMusicRef.current?.unloadAsync();
+    };
+  }, []);
 
   // ── Question timer ────────────────────────────────────────────────────────
   useEffect(() => {
@@ -1975,6 +2047,8 @@ export default function BoardGameScreen({ route, navigation }) {
   };
 
   const exitGame = () => {
+    gameBeatRef.current?.stopAsync().then(()=>gameBeatRef.current?.unloadAsync()).catch(()=>{});
+    countdownMusicRef.current?.stopAsync().then(()=>countdownMusicRef.current?.unloadAsync()).catch(()=>{});
     const isReal = auth.currentUser && !auth.currentUser.isAnonymous;
     navigation.reset({index:0, routes:[{name:isReal?"Dashboard":"Home"}]});
   };
@@ -2004,8 +2078,26 @@ export default function BoardGameScreen({ route, navigation }) {
       <SafeAreaView style={S.container}>
         <View style={S.hostHeader}>
           <Text style={S.hostTitle}>Brain Board — Host</Text>
+          {/* Game PIN + Lock */}
+          <View style={{flexDirection:"row",alignItems:"center",gap:10}}>
+            {!gameLocked && <View style={{flexDirection:"row",alignItems:"center",gap:6}}>
+              <Text style={{color:"#888",fontSize:13,letterSpacing:2,fontWeight:"bold"}}>PIN</Text>
+              <Text style={{color:"#00c781",fontSize:28,fontWeight:"900",letterSpacing:4}}>{gamePin}</Text>
+            </View>}
+            <TouchableOpacity
+              style={{backgroundColor:gameLocked?"#002200":"#1a1a1a",borderWidth:1.5,borderColor:gameLocked?"#00c781":"#444",borderRadius:8,paddingHorizontal:12,paddingVertical:6}}
+              onPress={()=>updateDoc(doc(db,"gameSessions",sessionId),{isLobbyLocked:!gameLocked}).catch(console.error)}>
+              <Text style={{color:gameLocked?"#00c781":"#aaa",fontSize:12,fontWeight:"bold"}}>{gameLocked?"LOCKED":"OPEN"}</Text>
+            </TouchableOpacity>
+          </View>
           <View style={{flexDirection:"row",gap:12,alignItems:"center"}}>
             {gameLeft!=null&&<Text style={[S.timerTxt,gameLeft<=30&&{color:"#e74c3c"}]}>{formatTime(gameLeft)}</Text>}
+            <View style={{flexDirection:"row",alignItems:"center",gap:6,marginRight:8}}>
+              <Image source={require("../assets/audio_symbol.png")} style={{width:20,height:20,tintColor:"#00c781"}} />
+              <input type="range" min="0" max="100" value={Math.round(musicVol*100)}
+                onChange={e=>setMusicVol(Number(e.target.value)/100)}
+                style={{width:70,accentColor:"#00c781"}}/>
+            </View>
             <TouchableOpacity style={S.endBtn} onPress={()=>setShowEndConfirm(true)}>
               <Text style={S.endBtnTxt}>End Game</Text>
             </TouchableOpacity>
@@ -2134,6 +2226,12 @@ export default function BoardGameScreen({ route, navigation }) {
         <TouchableOpacity style={{backgroundColor:"#2a0000",borderRadius:8,paddingHorizontal:Math.max(8,12*rs),paddingVertical:Math.max(4,7*rs),borderWidth:1,borderColor:"#5a0000",marginLeft:"auto"}} onPress={()=>setShowLeave(true)}>
           <Text style={{color:"#ff6b6b",fontSize:Math.max(10,12*rs),fontWeight:"bold"}}>Leave</Text>
         </TouchableOpacity>
+        <View style={{flexDirection:"row",alignItems:"center",marginLeft:6}}>
+          <Image source={require("../assets/audio_symbol.png")} style={{width:20,height:20,tintColor:"#00c781"}} />
+          <input type="range" min="0" max="100" value={Math.round(musicVol*100)}
+            onChange={e=>setMusicVol(Number(e.target.value)/100)}
+            style={{width:60,accentColor:"#00c781",marginLeft:4}}/>
+        </View>
         {hostIsPlaying&&<TouchableOpacity style={[S.hudEndBtn,{paddingHorizontal:Math.max(8,12*rs),paddingVertical:Math.max(6,10*rs)}]} onPress={async()=>{await updateDoc(doc(db,"gameSessions",sessionId),{status:"ended"}).catch(console.error);exitGame();}}><Text style={[S.hudEndBtnTxt,{fontSize:Math.max(10,13*rs)}]}>End</Text></TouchableOpacity>}
       </View>
 
