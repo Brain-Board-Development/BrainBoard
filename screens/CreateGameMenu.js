@@ -30,7 +30,7 @@ const BLANK_QUESTION = {
 const blankQuestion = () => ({ ...BLANK_QUESTION });
 
 export default function CreateGameMenu({ navigation, route }) {
-  const { width: winW } = useWindowDimensions();
+  const { width: winW, height: winH } = useWindowDimensions();
   const isMobile = winW < 700;
   const gameId = route.params?.gameId;
   const initialTitle = route.params?.initialTitle || '';
@@ -44,6 +44,14 @@ export default function CreateGameMenu({ navigation, route }) {
   const [musicVol, setMusicVol] = useState(0.35);
   const bgMusicRef = useRef(null);
   const [isEditing, setIsEditing] = useState(false);
+  const [userData, setUserData] = useState(null);
+  useEffect(() => {
+    if (auth.currentUser) {
+      getDoc(doc(db, 'users', auth.currentUser.uid)).then(snap => {
+        if (snap.exists()) setUserData(snap.data());
+      }).catch(()=>{});
+    }
+  }, []);
 
   // ── Background music — loops while creating/editing a game ────────────────
   useEffect(() => {
@@ -117,6 +125,7 @@ export default function CreateGameMenu({ navigation, route }) {
   };
 
   const addQuestion = () => {
+    if (questions.length >= 100) { alert("Maximum of 100 questions reached."); return; }
     setQuestions(prev => {
       const next = [...prev, blankQuestion()];
       setSelectedQuestionIndex(next.length - 1);
@@ -247,7 +256,7 @@ export default function CreateGameMenu({ navigation, route }) {
       numQuestions: questions.length,
       coverImage,
       creatorId: auth.currentUser.uid,
-      creatorName: userData?.username || userData?.displayName || auth.currentUser.email || 'Unknown',
+      creatorName: userData?.username || userData?.displayName || auth.currentUser?.displayName || auth.currentUser?.email?.split('@')[0] || 'Unknown',
       updatedAt: new Date().toISOString(),
       isPublished: false,
     };
@@ -264,6 +273,7 @@ export default function CreateGameMenu({ navigation, route }) {
         bgMusicRef.current?.stopAsync().catch(()=>{});
       navigation.navigate('HostGameMenu', { gameId: savedId });
       } else {
+        bgMusicRef.current?.stopAsync().catch(()=>{});
         navigation.goBack();
       }
     } catch (err) {
@@ -315,11 +325,11 @@ export default function CreateGameMenu({ navigation, route }) {
 
       <View style={[styles.mainLayout, isMobile && {flexDirection:"column"}]}>
         {/* Left: Question Navigator */}
-        <View style={[styles.leftSidebar, isMobile && {width:"100%", maxWidth:"100%", minWidth:0, borderRightWidth:0, borderBottomWidth:1, borderBottomColor:"#222", maxHeight:200}]}>
+        <View style={[styles.leftSidebar, isMobile ? {width:"100%", maxWidth:"100%", minWidth:0, borderRightWidth:0, borderBottomWidth:1, borderBottomColor:"#222", maxHeight:200} : {maxHeight: "100%"}]}>
           <TouchableOpacity style={styles.addQuestionBtn} onPress={addQuestion}>
             <Text style={styles.addQuestionText}>+ Add Question</Text>
           </TouchableOpacity>
-          <ScrollView style={styles.questionList} showsVerticalScrollIndicator={true}>
+          <ScrollView style={[styles.questionList, {maxHeight: isMobile ? 180 : winH - 340}]} showsVerticalScrollIndicator={true}>
             {questions.map((q, i) => {
               const correctCount = q.correctAnswers?.filter(v=>v===true).length || 0;
               const hasCorrect = q.type==='multiSelect' ? correctCount >= 2 : correctCount >= 1;
@@ -551,10 +561,10 @@ const styles = StyleSheet.create({
   gameTitleInput: { fontSize: 22, fontWeight: 'bold', color: '#fff', backgroundColor: 'transparent', borderBottomWidth: 2, borderBottomColor: '#00c781', paddingBottom: 8, marginBottom: 12 },
   tagsInput: { fontSize: 14, color: '#aaa', backgroundColor: '#222', padding: 12, borderRadius: 8 },
   mainLayout: { flex: 1, flexDirection: 'row' }, // overridden inline
-  leftSidebar: { width: '22%', minWidth: 180, maxWidth: 280, backgroundColor: '#0d0d0d', padding: 14, borderRightWidth: 1, borderRightColor: '#222' },
+  leftSidebar: { width: '22%', minWidth: 180, maxWidth: 280, backgroundColor: '#0d0d0d', padding: 14, borderRightWidth: 1, borderRightColor: '#222', flexDirection: 'column', overflow: 'hidden' },
   addQuestionBtn: { backgroundColor: '#00c781', padding: 16, borderRadius: 12, alignItems: 'center', marginBottom: 20 },
   addQuestionText: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
-  questionList: { flex: 1, minHeight: 0, maxHeight: 9999 },
+  questionList: { flex: 1, minHeight: 0 },
   questionThumb: { backgroundColor: '#1e1e1e', borderRadius: 12, padding: 12, marginBottom: 12, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: 'transparent', position: 'relative' },
   questionThumbSelected: { borderColor: '#00c781', backgroundColor: '#003322' },
   questionThumbNoAnswer: { borderColor: '#e74c3c' },
